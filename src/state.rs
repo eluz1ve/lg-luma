@@ -263,6 +263,7 @@ pub struct State {
     /// Whether this instance runs as the TV's Home (the takeover is enabled).
     pub home_takeover: bool,
     pub home_edit: Option<HomeEdit>,
+    pub feeds: crate::feeds::FeedData,
 }
 
 impl State {
@@ -298,6 +299,7 @@ impl State {
             recents: crate::recents::Recents::default(),
             home_takeover: false,
             home_edit: None,
+            feeds: crate::feeds::FeedData::default(),
         }
     }
 
