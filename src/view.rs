@@ -3860,8 +3860,9 @@ fn match_dialog(
         } else {
             "esportsFreeNote"
         }),
-        Rect::new(panel.x + 40., panel.y + panel.h - 50., panel.w - 80., 22.),
-        text(14.4, 400, 0.),
+        // Up to two lines: the shared feed's note is long in some languages.
+        Rect::new(panel.x + 40., panel.y + panel.h - 64., panel.w - 80., 44.),
+        text(14.4, 400, 0.).leading(1.4),
         c(0xf5f5f5, 0.45),
         false,
     );
