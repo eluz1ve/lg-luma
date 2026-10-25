@@ -23,6 +23,7 @@ mod scroll_preview;
 mod sdl_events;
 mod state;
 mod storage;
+mod themes;
 mod vector;
 mod view;
 mod weather;

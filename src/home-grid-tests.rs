@@ -163,3 +163,35 @@ fn saved_layouts_ignore_unknown_blocks_and_fall_back_when_broken() {
     }
     assert_eq!(Preferences::default().home_layout, classic_layout());
 }
+
+#[test]
+fn every_theme_is_a_valid_layout_with_a_known_wallpaper() {
+    for theme in crate::themes::THEMES.iter() {
+        let layout = (theme.layout)();
+        let mut normalized = layout.clone();
+        normalize(&mut normalized, false, 0);
+        assert_eq!(normalized, layout, "{} normalises unchanged", theme.id);
+        assert!(
+            crate::model::BACKGROUNDS
+                .iter()
+                .any(|(id, _)| *id == theme.wallpaper),
+            "{}",
+            theme.id
+        );
+    }
+    assert_eq!(crate::themes::theme("unknown").id, "classic");
+}
+
+#[test]
+fn applying_a_theme_sets_its_layout_wallpaper_and_id() {
+    let mut preferences = crate::model::Preferences::default();
+    crate::themes::apply(&mut preferences, "cinema");
+    assert_eq!(preferences.home_theme, "cinema");
+    assert_eq!(preferences.background, "midnight");
+    assert_eq!(
+        preferences.home_layout,
+        (crate::themes::theme("cinema").layout)()
+    );
+    assert_eq!(crate::themes::THEMES[0].id, "classic");
+    assert_eq!((crate::themes::THEMES[0].layout)(), classic_layout());
+}
