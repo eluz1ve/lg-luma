@@ -385,13 +385,61 @@ pub fn scene_with_pill(
     out.draw.push(Draw::Clip(None));
     header(&mut out, state, assets, now, pill_x, pill_width);
     footer(&mut out, state, assets);
-    if let Some(overlay @ (Overlay::Options { .. } | Overlay::Keyboard)) = &state.overlay {
+    if let Some(
+        overlay @ (Overlay::Options { .. }
+        | Overlay::Keyboard
+        | Overlay::Block { .. }
+        | Overlay::AddBlock { .. }),
+    ) = &state.overlay
+    {
         out.controls.clear();
         let start = out.draw.len();
         out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x080b12, 0.70));
+        let language = state.preferences.language;
         match overlay {
             Overlay::Options { id, .. } => options(&mut out, state, assets, id),
             Overlay::Keyboard => keyboard(&mut out, state, assets),
+            Overlay::Block { kind, restore } => {
+                let rows: Vec<String> = state
+                    .block_actions(*kind, matches!(restore, Target::App(_)))
+                    .into_iter()
+                    .map(|action| match (action, restore) {
+                        (crate::state::BlockAction::Reorder, Target::App(id)) => {
+                            let title = state
+                                .inventory
+                                .apps
+                                .iter()
+                                .find(|app| &app.id == id)
+                                .map_or(id.as_str(), |app| app.title.as_str());
+                            language.format("blockReorderApp", &[("app", title)])
+                        }
+                        (action, _) => language.t(action.key()).to_owned(),
+                    })
+                    .collect();
+                menu(
+                    &mut out,
+                    state,
+                    assets,
+                    language.t(kind.name_key()),
+                    &rows,
+                    Target::BlockAction,
+                );
+            }
+            Overlay::AddBlock { .. } => {
+                let rows: Vec<String> = state
+                    .missing_blocks()
+                    .into_iter()
+                    .map(|kind| language.t(kind.name_key()).to_owned())
+                    .collect();
+                menu(
+                    &mut out,
+                    state,
+                    assets,
+                    language.t("addWidget"),
+                    &rows,
+                    Target::AddKind,
+                );
+            }
             Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
         }
         if let Some(opened) = state.panel_started {
@@ -837,7 +885,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let editing = state.home_edit.as_ref();
     if editing.is_some() {
         // The grid's cells, so a moved or resized block can be lined up.
-        for row in 0..crate::home_grid::bottom(&blocks) + 2 {
+        for row in 0..crate::home_grid::bottom(&blocks) + 1 {
             for column in 0..crate::home_grid::COLUMNS {
                 let cell = crate::home_grid::rect(&crate::home_grid::Block {
                     kind: BlockKind::Greeting,
@@ -846,11 +894,14 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
                     w: 1,
                     h: 1,
                 });
-                out.shape(
-                    Rect::new(cell.x, cell.y - s, cell.w, cell.h),
-                    10.,
-                    c(0xffffff, 0.045),
-                );
+                // Clear of the hints at the bottom of the screen.
+                if cell.y - s + cell.h <= 1010. {
+                    out.shape(
+                        Rect::new(cell.x, cell.y - s, cell.w, cell.h),
+                        10.,
+                        c(0xffffff, 0.045),
+                    );
+                }
             }
         }
     }
@@ -894,11 +945,15 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
                 block.w,
                 block.h
             );
+            let style = text(16., 500, 0.);
+            let width = assets.width(&label, style) + 24.;
+            let tag = Rect::new(rect.x + rect.w - width - 8., rect.y + 8., width, 30.);
+            out.shape(tag, 9., c(0x080b12, if active { 0.85 } else { 0.6 }));
             out.text(
                 label,
-                Rect::new(rect.x + 12., rect.y + rect.h - 30., rect.w - 24., 22.),
-                text(16., 500, 0.),
-                c(0xffffff, if active { 0.95 } else { 0.6 }),
+                Rect::new(tag.x + 12., tag.y + 6., width, 20.),
+                style,
+                c(0xffffff, if active { 0.95 } else { 0.7 }),
                 false,
             );
         }
@@ -2635,11 +2690,40 @@ fn footer(out: &mut Scene, state: &State, assets: &Assets) {
     // Hints are centred on y 1042; larger hints are also less faint.
     let k = state.preferences.ui_scale.scale();
     let style = text(14.4 * k, 400, 0.005);
+    let color = c(0xeeeeee, if k > 1. { 0.6 } else { 0.37 });
+    let (cap_y, text_y) = (1041.6 - 11.6 * k, 1042. - 9. * k);
+    if let Some(edit) = &state.home_edit {
+        // Editing a Home block: arrows move or resize it, OK keeps, Back restores.
+        let mut x = 84.;
+        for (key, width, label) in [
+            (
+                "← → ↑ ↓",
+                70.,
+                language.t(if edit.resize {
+                    "blockResize"
+                } else {
+                    "blockMove"
+                }),
+            ),
+            ("OK", 27., language.t("done")),
+            ("Back", 39., language.t("cancel")),
+        ] {
+            keycap(out, key, x, cap_y, width * k, false, k);
+            let label_x = x + (width + 8.) * k;
+            out.text(
+                label,
+                Rect::new(label_x, text_y, 300. * k, 20. * k),
+                style,
+                color,
+                false,
+            );
+            x = label_x + assets.width(label, style) + 25.6 * k;
+        }
+        return;
+    }
     if state.page == Page::Home && state.moving.is_none() {
         return;
     }
-    let color = c(0xeeeeee, if k > 1. { 0.6 } else { 0.37 });
-    let (cap_y, text_y) = (1041.6 - 11.6 * k, 1042. - 9. * k);
     if state.moving.is_some() {
         keycap(out, "← →", 84., cap_y, 42. * k, false, k);
         let label_x = 84. + 50. * k;
@@ -3062,4 +3146,60 @@ fn appearance_preview(out: &mut Scene, state: &State, assets: &Assets, top: f32)
         tile(out, state, assets, app, rect, true, false);
     }
     out.controls.truncate(controls);
+}
+
+/// A modal list of actions: a title and rows that activate `target(index)`.
+fn menu(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    title: &str,
+    rows: &[String],
+    target: fn(usize) -> Target,
+) {
+    let panel = Rect::new(
+        680.,
+        540. - (120. + rows.len() as f32 * 76.8) / 2.,
+        560.,
+        120. + rows.len() as f32 * 76.8,
+    );
+    out.modal = Some(panel);
+    out.shadow(panel, 27.2, 120., 25., 0.47);
+    out.draw.push(Draw::RoundedGradient(
+        panel,
+        27.2,
+        c(0x34383b, 0.96),
+        c(0x24282d, 0.988),
+    ));
+    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    out.text(
+        title,
+        Rect::new(717.8, panel.y + 34., 484.4, 42.),
+        text(32., 500, -0.04).leading(1.1),
+        WHITE,
+        false,
+    );
+    for (index, label) in rows.iter().enumerate() {
+        let rect = Rect::new(717.8, panel.y + 96. + index as f32 * 76.8, 484.4, 67.2);
+        let focused = state.focus == target(index);
+        out.shape(rect, 12., c(0xffffff, if focused { 0.07 } else { 0.016 }));
+        out.border(
+            rect,
+            12.,
+            if focused { 2. } else { 1. },
+            c(
+                if focused { 0xf0f0f0 } else { 0xffffff },
+                if focused { 0.95 } else { 0.05 },
+            ),
+        );
+        out.text(
+            label,
+            Rect::new(rect.x + 22., rect.y + 22., rect.w - 44., 25.),
+            text(17.6, 500, -0.015),
+            WHITE,
+            false,
+        );
+        out.control(target(index), rect, false);
+    }
+    let _ = assets;
 }

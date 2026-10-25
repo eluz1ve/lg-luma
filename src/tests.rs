@@ -100,6 +100,14 @@ fn remote_routes_from_header_and_back_through_settings() {
     let mut state = ready();
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::App("netflix".into()));
+    // Up climbs through the grid's blocks above the favourites, then reaches the header.
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::WeatherConfigure);
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(
+        state.focus,
+        Target::Block(crate::home_grid::BlockKind::Greeting)
+    );
     state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::Nav(0));
     state.open(2);
@@ -149,6 +157,8 @@ fn reorder_persists_order_and_keeps_selected_identity() {
     let mut state = ready();
     state.focus = Target::App("netflix".into());
     state.hold();
+    // The favourites' block menu offers reordering first.
+    assert_eq!(state.activate(), vec![]);
     assert_eq!(
         state.direction(Direction::Right, &controls(&state)),
         vec![Effect::Save]
@@ -394,6 +404,7 @@ fn reordering_skips_hidden_and_unavailable_favorite_slots() {
     state.preferences.hidden.push("youtube.leanback.v4".into());
     state.focus = Target::App("netflix".into());
     state.hold();
+    state.activate();
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(
         state.preferences.favorites.unwrap(),
@@ -1665,5 +1676,130 @@ fn add_widget_sits_below_the_last_block_while_kinds_are_missing() {
         !controls(&state)
             .iter()
             .any(|c| c.target == Target::AddBlock)
+    );
+}
+
+fn kind_rect(state: &State, kind: crate::home_grid::BlockKind) -> crate::home_grid::Block {
+    *state
+        .preferences
+        .home_layout
+        .iter()
+        .find(|b| b.kind == kind)
+        .unwrap_or_else(|| panic!("no {kind:?}"))
+}
+
+#[test]
+fn moving_a_block_pushes_others_and_back_restores_the_layout() {
+    use crate::home_grid::BlockKind;
+    let mut state = ready();
+    let start = state.preferences.home_layout.clone();
+    state.focus = Target::Block(BlockKind::Greeting);
+    state.hold();
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Block {
+            kind: BlockKind::Greeting,
+            ..
+        })
+    ));
+    assert_eq!(state.focus, Target::BlockAction(0), "Move comes first");
+    assert_eq!(state.activate(), vec![]);
+    assert!(state.home_edit.as_ref().is_some_and(|edit| !edit.resize));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(kind_rect(&state, BlockKind::Greeting).y, 1);
+    assert!(kind_rect(&state, BlockKind::Weather).y >= 3, "pushed below");
+    assert_eq!(state.back(), vec![]);
+    assert!(state.home_edit.is_none());
+    assert_eq!(state.preferences.home_layout, start);
+}
+
+#[test]
+fn resizing_stays_within_limits_and_ok_saves() {
+    use crate::home_grid::BlockKind;
+    let mut state = ready();
+    state.focus = Target::Block(BlockKind::Greeting);
+    state.hold();
+    state.focus = Target::BlockAction(1);
+    state.activate();
+    assert!(state.home_edit.as_ref().is_some_and(|edit| edit.resize));
+    for _ in 0..10 {
+        state.direction(Direction::Right, &controls(&state));
+        state.direction(Direction::Up, &controls(&state));
+    }
+    let greeting = kind_rect(&state, BlockKind::Greeting);
+    assert_eq!((greeting.w, greeting.h), (12, 1));
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.home_edit.is_none());
+    assert_eq!(kind_rect(&state, BlockKind::Greeting).w, 12);
+}
+
+#[test]
+fn widgets_can_be_removed_and_added_back() {
+    use crate::home_grid::BlockKind;
+    let mut state = ready();
+    state.focus = Target::WeatherConfigure;
+    state.hold();
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Block {
+            kind: BlockKind::Weather,
+            ..
+        })
+    ));
+    state.focus = Target::BlockAction(2);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(
+        !state
+            .preferences
+            .home_layout
+            .iter()
+            .any(|b| b.kind == BlockKind::Weather)
+    );
+    state.focus = Target::AddBlock;
+    state.activate();
+    assert!(matches!(state.overlay, Some(Overlay::AddBlock { .. })));
+    let missing = state.missing_blocks();
+    assert_eq!(
+        missing,
+        vec![BlockKind::Weather, BlockKind::Crypto, BlockKind::Premieres]
+    );
+    state.focus = Target::AddKind(1);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    let crypto = kind_rect(&state, BlockKind::Crypto);
+    assert_eq!(
+        (crypto.x, crypto.y, crypto.w, crypto.h),
+        (8, 0, 4, 1),
+        "first free place"
+    );
+    assert_eq!(state.focus, Target::Block(BlockKind::Crypto));
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn holding_a_favorite_offers_reordering_its_apps_first() {
+    use crate::home_grid::BlockKind;
+    let mut state = ready();
+    let first = state.apps()[0].id.clone();
+    state.focus = Target::App(first.clone());
+    state.hold();
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Block {
+            kind: BlockKind::Favorites,
+            ..
+        })
+    ));
+    state.activate();
+    assert_eq!(state.moving, Some(first));
+    // Favourites and the greeting cannot be removed.
+    assert!(
+        !state
+            .block_actions(BlockKind::Favorites, true)
+            .contains(&crate::state::BlockAction::Remove)
+    );
+    assert!(
+        !state
+            .block_actions(BlockKind::Greeting, false)
+            .contains(&crate::state::BlockAction::Remove)
     );
 }
