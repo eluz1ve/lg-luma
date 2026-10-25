@@ -145,6 +145,9 @@ pub struct FeedData {
     pub pending_rosters: Vec<(String, Vec<u64>)>,
 }
 
+/// A team's id and its players' nicknames.
+pub type Roster = (u64, Vec<String>);
+
 pub enum FeedRequest {
     Crypto,
     Premieres,
@@ -175,7 +178,7 @@ pub enum FeedResponse {
     Rosters(Vec<(u64, Vec<String>)>),
     Shared {
         game: String,
-        result: Result<(Vec<CsMatch>, Vec<(u64, Vec<String>)>), MatchesError>,
+        result: Result<(Vec<CsMatch>, Vec<Roster>), MatchesError>,
     },
 }
 
