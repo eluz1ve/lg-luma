@@ -655,12 +655,29 @@ impl State {
         self.feeds.images_due = true;
     }
 
+    /// Lineups a personal key asked PandaScore for, with the shared feed's substitutes.
+    pub fn rosters_received(&mut self, rosters: Vec<crate::feeds::Roster>) {
+        for (id, mut players) in rosters {
+            if let Some(shared) = self.feeds.lineups.get(&id) {
+                crate::feeds::merge_substitutes(&mut players, shared);
+            }
+            self.feeds.rosters.insert(id, players);
+        }
+        self.feeds.images_due = true;
+    }
+
     /// A discipline of the shared feed: the matches themselves without a key, their map names
-    /// with one.
+    /// and substitutes with one.
     pub fn shared_received(&mut self, game: String, feed: crate::feeds::SharedFeed) {
         if !self.preferences.esports_key.trim().is_empty() {
             if let Some(live) = self.feeds.matches.get_mut(&game) {
                 crate::feeds::merge_maps(live, &feed.matches);
+            }
+            for (id, players) in feed.rosters {
+                if let Some(roster) = self.feeds.rosters.get_mut(&id) {
+                    crate::feeds::merge_substitutes(roster, &players);
+                }
+                self.feeds.lineups.insert(id, players);
             }
             self.feeds.maps.insert(game, feed.matches);
             return;

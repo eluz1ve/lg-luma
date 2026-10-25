@@ -1961,6 +1961,42 @@
     "it": "Mappe: Liquipedia (CC-BY-SA)",
     "ru": "Карты: Liquipedia (CC-BY-SA)"
   },
+  "esportsBench": {
+    "en": "Bench",
+    "de": "Ersatzbank",
+    "es": "Suplentes",
+    "zh": "替补",
+    "pt": "Reservas",
+    "it": "Riserve",
+    "ru": "Запасные"
+  },
+  "esportsCoach": {
+    "en": "Coach",
+    "de": "Trainer",
+    "es": "Entrenador",
+    "zh": "教练",
+    "pt": "Técnico",
+    "it": "Allenatore",
+    "ru": "Тренер"
+  },
+  "esportsLineupsCredit": {
+    "en": "Lineups: Liquipedia (CC-BY-SA)",
+    "de": "Aufstellungen: Liquipedia (CC-BY-SA)",
+    "es": "Alineaciones: Liquipedia (CC-BY-SA)",
+    "zh": "阵容：Liquipedia（CC-BY-SA）",
+    "pt": "Escalações: Liquipedia (CC-BY-SA)",
+    "it": "Formazioni: Liquipedia (CC-BY-SA)",
+    "ru": "Составы: Liquipedia (CC-BY-SA)"
+  },
+  "esportsMapsLineupsCredit": {
+    "en": "Maps and lineups: Liquipedia (CC-BY-SA)",
+    "de": "Maps und Aufstellungen: Liquipedia (CC-BY-SA)",
+    "es": "Mapas y alineaciones: Liquipedia (CC-BY-SA)",
+    "zh": "地图与阵容：Liquipedia（CC-BY-SA）",
+    "pt": "Mapas e escalações: Liquipedia (CC-BY-SA)",
+    "it": "Mappe e formazioni: Liquipedia (CC-BY-SA)",
+    "ru": "Карты и составы: Liquipedia (CC-BY-SA)"
+  },
   "esportsLineup": {
     "en": "{team} lineup",
     "de": "Aufstellung {team}",

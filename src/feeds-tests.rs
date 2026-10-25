@@ -410,3 +410,75 @@ fn a_personal_key_polls_live_matches_as_often_as_the_free_limit_allows() {
         "8 disciplines × 2 lists stay under 1000 requests an hour"
     );
 }
+
+#[test]
+fn the_shared_feed_marks_substitutes_and_keeps_them_for_a_team_it_lists_twice() {
+    let team = json!({"id": 1, "name": "paiN Gaming", "short": "paiN"});
+    let player = |name: &str| json!({"name": name, "role": ""});
+    let body = json!({"matches": [
+        {"id": 5, "running": true, "teams": [team, null],
+         "lineups": [[player("biguzera"),
+                      {"name": "vsm", "role": "", "substitute": true},
+                      {"name": "tge", "role": "coach", "substitute": true},
+                      player("saffee")], []]},
+        // Only live matches are looked up on Liquipedia: the team's next one has no marks.
+        {"id": 6, "teams": [team, null],
+         "lineups": [[player("biguzera"), player("vsm"), player("tge"), player("saffee")], []]}
+    ]});
+    let rosters = parse_feed(&body, "csgo").rosters;
+    assert_eq!(rosters.len(), 1, "one lineup per team");
+    let players = &rosters[0].1;
+    assert_eq!(
+        players
+            .iter()
+            .map(|p| (p.name.as_str(), p.substitute))
+            .collect::<Vec<_>>(),
+        [
+            ("biguzera", false),
+            ("vsm", true),
+            ("tge", true),
+            ("saffee", false)
+        ]
+    );
+    assert_eq!(players[2].role, "coach");
+}
+
+#[test]
+fn a_personal_keys_lineups_take_their_substitutes_from_the_shared_feed() {
+    let pandascore = parse_rosters(&json!([{"id": 1, "players": [
+        {"name": "biguzera"}, {"name": "VSM"}, {"name": "tge"}, {"name": "newcomer"}
+    ]}]));
+    let mut players = pandascore[0].1.clone();
+    let shared = parse_feed(
+        &json!({"matches": [{"id": 5, "teams": [{"id": 1, "name": "paiN Gaming"}, null],
+            "lineups": [[{"name": "biguzera"}, {"name": "vsm", "substitute": true},
+                         {"name": "tge", "role": "coach", "substitute": true}], []]}]}),
+        "csgo",
+    )
+    .rosters;
+    merge_substitutes(&mut players, &shared[0].1);
+    assert_eq!(
+        players
+            .iter()
+            .map(|p| (p.name.as_str(), p.substitute, p.role.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("biguzera", false, ""),
+            ("VSM", true, ""),
+            ("tge", true, "coach"),
+            ("newcomer", false, "")
+        ],
+        "by nickname; a player the feed lacks stays as PandaScore lists them"
+    );
+    let unmarked = parse_feed(
+        &json!({"matches": [{"id": 5, "teams": [{"id": 1, "name": "paiN Gaming"}, null],
+            "lineups": [[{"name": "biguzera"}, {"name": "tge"}], []]}]}),
+        "csgo",
+    )
+    .rosters;
+    merge_substitutes(&mut players, &unmarked[0].1);
+    assert!(
+        players[1].substitute,
+        "a lineup Liquipedia did not mark tells nothing"
+    );
+}

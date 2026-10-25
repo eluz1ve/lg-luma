@@ -4521,7 +4521,8 @@ fn match_dialog(
         }
     }
 
-    // Lineups side by side: photo, nickname, real name, then country and role.
+    // Lineups side by side: photo, nickname, real name, then country and role; the bench and
+    // coach Liquipedia marks share a dimmer line below.
     let footer_y = panel.y + panel.h - 86.;
     let lineup_y = maps_y + 30. + 136. + 24.;
     let column_w = (width - 24.) / 2.;
@@ -4557,9 +4558,12 @@ fn match_dialog(
         let rows_y = card.y + 58.;
         match players {
             Some(players) if !players.is_empty() => {
-                let row_h = ((card.y + card.h - 10. - rows_y) / players.len() as f32).min(40.);
+                let (bench, starters): (Vec<_>, Vec<_>) =
+                    players.iter().partition(|player| player.substitute);
+                let bench_y = card.y + card.h - 10. - if bench.is_empty() { 0. } else { 40. };
+                let row_h = ((bench_y - rows_y) / starters.len().max(1) as f32).min(40.);
                 let avatar = (row_h - 6.).min(32.);
-                for (row, player) in players.iter().enumerate() {
+                for (row, player) in starters.into_iter().enumerate() {
                     let y = rows_y + row as f32 * row_h;
                     emblem(
                         out,
@@ -4612,6 +4616,43 @@ fn match_dialog(
                         );
                     }
                 }
+                if !bench.is_empty() {
+                    let line_y = bench_y + 4.;
+                    out.shape(Rect::new(x, line_y, inner_w, 1.), 0., c(0xffffff, 0.08));
+                    let (coaches, subs): (Vec<_>, Vec<_>) = bench
+                        .into_iter()
+                        .partition(|player| player.role.eq_ignore_ascii_case("coach"));
+                    let mut part_x = x;
+                    for (key, people) in [("esportsBench", subs), ("esportsCoach", coaches)] {
+                        let end = x + inner_w;
+                        if people.is_empty() || part_x > end - 80. {
+                            continue;
+                        }
+                        let label = language.t(key).to_uppercase();
+                        let label_style = text(13.6, 650, 0.1);
+                        let label_w = assets.width(&label, label_style);
+                        out.text(
+                            &label,
+                            Rect::new(part_x, line_y + 14.5, label_w + 4., 17.),
+                            label_style,
+                            dim(0.42),
+                            false,
+                        );
+                        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+                        let style = text(16., 550, 0.);
+                        let names_x = part_x + label_w + 10.;
+                        let names = fit(assets, &names.join(" · "), style, end - names_x);
+                        let names_w = assets.width(&names, style);
+                        out.text(
+                            &names,
+                            Rect::new(names_x, line_y + 12., names_w + 4., 20.),
+                            style,
+                            dim(0.6),
+                            false,
+                        );
+                        part_x = names_x + names_w + 28.;
+                    }
+                }
             }
             _ => out.text(
                 // Without a key the shared feed is the only source of lineups.
@@ -4657,9 +4698,23 @@ fn match_dialog(
             }
         })
         .collect();
+    // Whatever came from Liquipedia is credited: map names, a marked bench or both.
+    let benched = found.teams.iter().flatten().any(|team| {
+        state
+            .feeds
+            .rosters
+            .get(&team.id)
+            .is_some_and(|players| players.iter().any(|player| player.substitute))
+    });
+    let credit = match (!found.maps_source.is_empty(), benched) {
+        (true, true) => Some("esportsMapsLineupsCredit"),
+        (true, false) => Some("esportsMapsCredit"),
+        (false, true) => Some("esportsLineupsCredit"),
+        (false, false) => None,
+    };
     let mut streams_w = width;
-    if !found.maps_source.is_empty() {
-        let credit = language.t("esportsMapsCredit");
+    if let Some(credit) = credit {
+        let credit = language.t(credit);
         let style = text(14.4, 500, 0.);
         let w = assets.width(credit, style) + 4.;
         out.text(

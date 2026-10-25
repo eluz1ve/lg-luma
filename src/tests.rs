@@ -2151,6 +2151,7 @@ fn a_match_opens_its_details_and_asks_for_missing_lineups() {
             role: String::new(),
             age: Some(26),
             image: None,
+            substitute: false,
         }],
     );
     assert!(
@@ -2387,6 +2388,7 @@ fn esports_widgets_load_team_logos_and_an_open_match_its_photos() {
             role: String::new(),
             age: None,
             image: Some(photo.clone()),
+            substitute: false,
         }],
     );
     assert_eq!(state.wanted_images(), vec![logo.clone()]);
@@ -2434,4 +2436,126 @@ fn the_shared_feed_tells_how_old_its_data_is_and_which_lineups_it_lacks() {
     assert_eq!(view::prize("2,500 United States Dollar"), "$2 500");
     assert_eq!(view::prize("50000 Euro"), "€50 000");
     assert_eq!(view::prize("TBA"), "TBA");
+}
+
+fn lineup_player(name: &str, role: &str, substitute: bool) -> crate::feeds::Player {
+    crate::feeds::Player {
+        name: name.into(),
+        real_name: String::new(),
+        nationality: "BR".into(),
+        role: role.into(),
+        age: None,
+        image: None,
+        substitute,
+    }
+}
+
+#[test]
+fn a_match_dialog_lists_the_starters_and_puts_the_bench_on_a_line_of_its_own() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    state
+        .feeds
+        .matches
+        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
+    // PandaScore's whole roster, as the shared feed marks it from Liquipedia.
+    state.feeds.rosters.insert(
+        1,
+        vec![
+            lineup_player("tge", "coach", true),
+            lineup_player("biguzera", "", false),
+            lineup_player("vsm", "", true),
+            lineup_player("saffee", "", false),
+            lineup_player("Snowzin", "", false),
+            lineup_player("piriajr", "", true),
+            lineup_player("Tatu", "", false),
+        ],
+    );
+    state.focus = Target::Match(0, 0);
+    state.activate();
+    let texts = scene_text(&state);
+    let at = |name: &str| texts.iter().position(|t| t == name);
+    assert!(
+        at("biguzera") < at("saffee") && at("saffee") < at("Snowzin") && at("Snowzin") < at("Tatu"),
+        "starters in the feed's order"
+    );
+    assert!(texts.iter().any(|t| t == "BENCH"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "vsm · piriajr"));
+    assert!(texts.iter().any(|t| t == "COACH"));
+    assert!(at("Tatu") < at("vsm · piriajr") && at("Tatu") < at("tge"));
+    assert!(
+        !texts.iter().any(|t| t == "BR · COACH"),
+        "the bench has no rows of its own"
+    );
+    assert!(texts.iter().any(|t| t == "Lineups: Liquipedia (CC-BY-SA)"));
+    state
+        .feeds
+        .matches
+        .get_mut("csgo")
+        .unwrap()
+        .first_mut()
+        .unwrap()
+        .maps_source = "Liquipedia".into();
+    let texts = scene_text(&state);
+    assert!(
+        texts
+            .iter()
+            .any(|t| t == "Maps and lineups: Liquipedia (CC-BY-SA)")
+    );
+    // A lineup Liquipedia did not mark: everyone on a row of their own, no credit.
+    for player in state.feeds.rosters.get_mut(&1).unwrap() {
+        player.substitute = false;
+    }
+    state.feeds.matches.get_mut("csgo").unwrap()[0]
+        .maps_source
+        .clear();
+    let texts = scene_text(&state);
+    assert!(!texts.iter().any(|t| t == "BENCH"));
+    assert!(texts.iter().any(|t| t == "vsm") && texts.iter().any(|t| t == "BR · COACH"));
+    assert!(!texts.iter().any(|t| t.contains("Liquipedia")));
+}
+
+#[test]
+fn a_personal_keys_lineups_take_their_substitutes_from_the_shared_feed() {
+    let mut state = ready();
+    state.preferences.esports_key = "key".into();
+    let pandascore = || {
+        vec![(
+            1,
+            vec![
+                lineup_player("biguzera", "", false),
+                lineup_player("vsm", "", false),
+            ],
+        )]
+    };
+    let shared = || crate::feeds::SharedFeed {
+        matches: vec![],
+        rosters: vec![(
+            1,
+            vec![
+                lineup_player("biguzera", "", false),
+                lineup_player("vsm", "", true),
+            ],
+        )],
+        updated: Some(0),
+    };
+    let marked = |state: &State| {
+        state.feeds.rosters[&1]
+            .iter()
+            .map(|p| p.substitute)
+            .collect::<Vec<_>>()
+    };
+    // The lineup arrives before the shared feed, and after it.
+    state.rosters_received(pandascore());
+    state.shared_received("csgo".into(), shared());
+    assert_eq!(marked(&state), [false, true]);
+    state.rosters_received(pandascore());
+    assert_eq!(marked(&state), [false, true]);
 }

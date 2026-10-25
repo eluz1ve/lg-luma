@@ -929,6 +929,7 @@ fn run() -> Result<(), String> {
                 maps_fetched.clear();
                 state.feeds.matches.clear();
                 state.feeds.maps.clear();
+                state.feeds.lineups.clear();
                 state.feeds.rosters.clear();
                 state.feeds.updated.clear();
                 state.feeds.matches_error = None;
@@ -1059,10 +1060,7 @@ fn run() -> Result<(), String> {
                 feeds::FeedResponse::Matches {
                     result: Err(error), ..
                 } => state.feeds.matches_error = Some(error),
-                feeds::FeedResponse::Rosters(rosters) => {
-                    state.feeds.rosters.extend(rosters);
-                    state.feeds.images_due = true;
-                }
+                feeds::FeedResponse::Rosters(rosters) => state.rosters_received(rosters),
                 feeds::FeedResponse::Shared {
                     game,
                     result: Ok(feed),

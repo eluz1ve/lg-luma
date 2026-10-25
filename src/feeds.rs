@@ -144,6 +144,9 @@ pub struct Player {
     pub role: String,
     pub age: Option<u64>,
     pub image: Option<String>,
+    /// Not in the tournament's starting lineup on Liquipedia: a substitute, a coach or someone
+    /// the tournament doesn't list. Only the shared feed tells.
+    pub substitute: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,6 +204,8 @@ pub struct FeedData {
     pub updated: std::collections::HashMap<String, i64>,
     /// With a personal key, the shared feed's matches by discipline, for their map names.
     pub maps: std::collections::HashMap<String, Vec<CsMatch>>,
+    /// With a personal key, the shared feed's lineups by team id, for their substitutes.
+    pub lineups: std::collections::HashMap<u64, Vec<Player>>,
     /// Lineups a match dialog asked for, sent to the worker by the main loop.
     pub pending_rosters: Vec<(String, Vec<u64>)>,
     /// Image URLs already asked for, loaded or not: a failed logo is not retried.
@@ -686,6 +691,10 @@ fn player(item: &Value) -> Option<Player> {
         role: text(item.get("role"), 16),
         age: item.get("age").and_then(Value::as_u64),
         image: image_field(item, &["image", "image_url"]),
+        substitute: item
+            .get("substitute")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -799,7 +808,7 @@ pub fn select_matches(
 
 /// The shared feed's matches (already filtered to running and upcoming) and their lineups.
 pub fn parse_feed(body: &Value, game_name: &str) -> SharedFeed {
-    let mut rosters = Vec::new();
+    let mut rosters: Vec<Roster> = Vec::new();
     let matches = body
         .get("matches")
         .and_then(Value::as_array)
@@ -821,8 +830,12 @@ pub fn parse_feed(body: &Value, game_name: &str) -> SharedFeed {
                     lineups.and_then(|l| l.get(side)).and_then(Value::as_array),
                 ) {
                     let players: Vec<Player> = players.iter().filter_map(player).take(7).collect();
-                    if !players.is_empty() {
-                        rosters.push((team.id, players));
+                    // A team in several matches keeps the lineup Liquipedia marked.
+                    match rosters.iter_mut().find(|(id, _)| *id == team.id) {
+                        _ if players.is_empty() => {}
+                        Some((_, kept)) if kept.iter().any(|p| p.substitute) => {}
+                        Some((_, kept)) => *kept = players,
+                        None => rosters.push((team.id, players)),
                     }
                 }
             }
@@ -892,6 +905,23 @@ pub fn merge_maps(live: &mut [CsMatch], shared: &[CsMatch]) {
         }
         if merged {
             found.maps_source.clone_from(&named.maps_source);
+        }
+    }
+}
+
+/// A personal key's lineup from PandaScore, marked as the shared feed marks the team's: by
+/// nickname, ignoring case. A lineup the feed did not mark changes nothing.
+pub fn merge_substitutes(players: &mut [Player], shared: &[Player]) {
+    if !shared.iter().any(|p| p.substitute) {
+        return;
+    }
+    for player in players {
+        let name = player.name.to_lowercase();
+        if let Some(found) = shared.iter().find(|p| p.name.to_lowercase() == name) {
+            player.substitute = found.substitute;
+            if player.role.is_empty() {
+                player.role.clone_from(&found.role);
+            }
         }
     }
 }
