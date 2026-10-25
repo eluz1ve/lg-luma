@@ -161,6 +161,33 @@ pub struct Preferences {
     pub home_theme: String,
     /// The app last chosen to watch a premiere in; offered first next time.
     pub poster_app: String,
+    /// The user's free PandaScore key, shared by every esports widget.
+    pub esports_key: String,
+    /// Each esports widget's settings, by its instance number.
+    #[serde(deserialize_with = "deserialize_esports")]
+    pub esports: BTreeMap<u8, EsportsWidget>,
+}
+
+/// One esports widget: the disciplines it shows (PandaScore paths) and its event filter.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct EsportsWidget {
+    pub games: Vec<String>,
+    /// Only S- and A-tier events.
+    pub major_only: bool,
+}
+impl Default for EsportsWidget {
+    fn default() -> Self {
+        Self {
+            games: vec!["csgo".into()],
+            major_only: true,
+        }
+    }
+}
+fn deserialize_esports<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<u8, EsportsWidget>, D::Error> {
+    Ok(serde_json::from_value(serde_json::Value::deserialize(deserializer)?).unwrap_or_default())
 }
 
 impl Default for Preferences {
@@ -185,6 +212,8 @@ impl Default for Preferences {
             home_layout: crate::home_grid::classic_layout(),
             home_theme: "classic".into(),
             poster_app: String::new(),
+            esports_key: String::new(),
+            esports: BTreeMap::new(),
         }
     }
 }

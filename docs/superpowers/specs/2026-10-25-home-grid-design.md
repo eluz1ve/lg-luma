@@ -54,3 +54,15 @@ and declarative third-party widgets, free (non-grid) placement.
    index with checksums; Luma reads one fixed index URL. Widgets are declarative (data source with
    declared origins, field mapping, filters, a built-in view kind), never code.
 3. App "search recipes" in the catalog so "Open in …" can pass the title to apps that support it.
+
+## Esports widget (added 2026-10-25)
+
+- Data: PandaScore with the user's free key (entered once, shared by every esports widget).
+  The free plan lists running and upcoming matches per discipline and teams with players;
+  single matches, games and map names need a paid plan, so the widget shows the series score,
+  each map's state and winner, and the lineups — not map names, vetoes or round scores.
+- Several esports widgets can be on Home (`Esports(n)`, up to four); each picks its disciplines
+  (CS2, Dota 2, LoL, Valorant, Rainbow Six, Overwatch 2, Rocket League, Call of Duty) and whether
+  only S/A-tier events show. Matches are fetched per discipline every 5 min, every minute while
+  one is live, and filtered per widget.
+- OK on a match opens its details; hold OK › Widget settings opens the widget's settings page.

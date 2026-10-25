@@ -80,3 +80,122 @@ fn schedule_days_run_from_three_days_ago_to_ten_ahead() {
     assert_eq!(days.first().map(String::as_str), Some("2026-10-22"));
     assert_eq!(days.last().map(String::as_str), Some("2026-11-04"));
 }
+
+fn cs_match(id: u64, tier: &str, begin: &str, teams: [(u64, &str, &str); 2]) -> Value {
+    json!({
+        "id": id, "status": "not_started", "begin_at": begin, "number_of_games": 3,
+        "opponents": teams.map(|(id, name, acronym)| json!({
+            "type": "Team", "opponent": {"id": id, "name": name, "acronym": acronym}
+        })),
+        "results": [{"team_id": teams[0].0, "score": 0}, {"team_id": teams[1].0, "score": 0}],
+        "games": [],
+        "league": {"name": "BLAST"}, "serie": {"full_name": "Premier Fall 2026"},
+        "tournament": {"name": "Playoffs", "tier": tier}
+    })
+}
+
+#[test]
+fn matches_carry_teams_series_score_and_maps() {
+    let mut live = cs_match(
+        7,
+        "s",
+        "2026-10-25T18:00:00Z",
+        [(1, "Natus Vincere", "NAVI"), (2, "FaZe Clan", "FaZe")],
+    );
+    live["status"] = json!("running");
+    live["results"] = json!([{"team_id": 2, "score": 0}, {"team_id": 1, "score": 1}]);
+    live["games"] = json!([
+        {"position": 2, "status": "running", "winner": {"id": null, "type": "Team"}},
+        {"position": 1, "status": "finished", "winner": {"id": 1, "type": "Team"}},
+        {"position": 3, "status": "not_started", "winner": {"id": null}}
+    ]);
+    let matches = parse_matches(&json!([live]));
+    let found = &matches[0];
+    assert!(found.running);
+    assert_eq!(found.teams[0].as_ref().unwrap().short, "NAVI");
+    assert_eq!(found.score, [1, 0], "scores follow the opponents' order");
+    assert_eq!(found.best_of, 3);
+    assert_eq!(found.event, "BLAST Premier Fall 2026");
+    assert_eq!(
+        found
+            .games
+            .iter()
+            .map(|g| (g.position, g.state, g.winner))
+            .collect::<Vec<_>>(),
+        [
+            (1, GameState::Finished, Some(1)),
+            (2, GameState::Running, None),
+            (3, GameState::Waiting, None)
+        ]
+    );
+    // A team still to be decided is left empty rather than dropping the match.
+    let mut open = cs_match(
+        8,
+        "a",
+        "2026-10-26T12:00:00Z",
+        [(3, "Vitality", "VIT"), (4, "G2", "G2")],
+    );
+    open["opponents"] = json!([open["opponents"][0].clone()]);
+    let open = &parse_matches(&json!([open]))[0];
+    assert!(open.teams[1].is_none());
+}
+
+#[test]
+fn major_only_keeps_s_and_a_tier_events_with_live_matches_first() {
+    let upcoming = parse_matches(&json!([
+        cs_match(
+            1,
+            "c",
+            "2026-10-25T19:00:00Z",
+            [(1, "A", "A"), (2, "B", "B")]
+        ),
+        cs_match(
+            2,
+            "a",
+            "2026-10-26T10:00:00Z",
+            [(3, "C", "C"), (4, "D", "D")]
+        ),
+        cs_match(
+            3,
+            "s",
+            "2026-10-25T21:00:00Z",
+            [(5, "E", "E"), (6, "F", "F")]
+        ),
+    ]));
+    let mut live = cs_match(
+        4,
+        "b",
+        "2026-10-25T17:00:00Z",
+        [(7, "G", "G"), (8, "H", "H")],
+    );
+    live["status"] = json!("running");
+    let running = parse_matches(&json!([live]));
+    let ids = |matches: Vec<CsMatch>| matches.iter().map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(select_matches(running.clone(), upcoming.clone(), true)),
+        [3, 2]
+    );
+    assert_eq!(ids(select_matches(running, upcoming, false)), [4, 1, 3, 2]);
+}
+
+#[test]
+fn unknown_disciplines_fall_back_to_counter_strike() {
+    assert_eq!(game_path("dota2"), "dota2");
+    assert_eq!(game_path("../admin"), "csgo");
+    assert_eq!(GAMES[0].0, "csgo");
+}
+
+#[test]
+fn rosters_list_each_teams_players_by_nickname() {
+    let teams = json!([
+        {"id": 1, "players": [{"name": "s1mple"}, {"name": "b1t"}, {"first_name": "x"}]},
+        {"id": 2, "players": []}
+    ]);
+    assert_eq!(
+        parse_rosters(&teams),
+        vec![
+            (1, vec!["s1mple".to_owned(), "b1t".to_owned()]),
+            (2, vec![])
+        ]
+    );
+}

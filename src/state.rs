@@ -67,6 +67,12 @@ pub enum Target {
     Poster(usize),
     /// An app in a poster's dialog, in `State::poster_apps` order; past the end is Close.
     PosterApp(usize),
+    /// A match in an esports widget: the widget's instance and the match's index in its list.
+    Match(u8, usize),
+    /// An esports widget's settings: the shared PandaScore key, its disciplines, major events.
+    EsportsKey,
+    EsportsGames,
+    EsportsMajor,
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -141,11 +147,14 @@ pub enum BlockAction {
     Move,
     Resize,
     Remove,
+    /// The widget's own settings page.
+    Settings,
 }
 
 impl BlockAction {
     pub fn key(self) -> &'static str {
         match self {
+            Self::Settings => "blockSettings",
             Self::Reorder => "blockReorder",
             Self::Move => "blockMove",
             Self::Resize => "blockResize",
@@ -174,6 +183,12 @@ pub enum Overlay {
         index: usize,
         restore: Target,
     },
+    /// A match's details: series score, maps and lineups.
+    Match {
+        instance: u8,
+        index: usize,
+        restore: Target,
+    },
     Recents {
         restore: Target,
     },
@@ -196,6 +211,9 @@ pub enum Subpage {
     Appearance,
     /// General › Home theme: a layout with its wallpaper and look.
     Theme,
+    /// An esports widget's settings, and its list of disciplines.
+    Esports(u8),
+    EsportsGames(u8),
     /// System › Luma as Home: on (replace LG Home) or off.
     HomeTakeover,
 }
@@ -206,6 +224,7 @@ pub enum TextField {
     Location,
     Name,
     InputName,
+    ApiKey,
 }
 
 #[derive(Clone, Copy)]
@@ -234,6 +253,8 @@ pub enum Effect {
     HomeTakeover(bool),
     /// A notice after the effects before it, e.g. a title to look for once an app opens.
     Notify(String),
+    /// Fetch the lineups of these teams of a discipline.
+    Rosters(String, Vec<u64>),
 }
 
 pub const KEYS: [&str; 40] = [
@@ -271,6 +292,7 @@ pub struct State {
     pub weather: weather::Weather,
     pub keyboard_field: TextField,
     pub greeting_name_draft: String,
+    pub api_key_draft: String,
     pub input_name: String,
     pub recents: crate::recents::Recents,
     /// Whether this instance runs as the TV's Home (the takeover is enabled).
@@ -308,6 +330,7 @@ impl State {
             weather: weather::Weather::default(),
             keyboard_field: TextField::Apps,
             greeting_name_draft: String::new(),
+            api_key_draft: String::new(),
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
             home_takeover: false,
@@ -513,6 +536,9 @@ impl State {
         if from_app && kind == crate::home_grid::BlockKind::Favorites {
             actions.push(BlockAction::Reorder);
         }
+        if matches!(kind, crate::home_grid::BlockKind::Esports(_)) {
+            actions.push(BlockAction::Settings);
+        }
         actions.extend([BlockAction::Move, BlockAction::Resize]);
         if kind.removable() {
             actions.push(BlockAction::Remove);
@@ -520,13 +546,58 @@ impl State {
         actions
     }
 
-    /// Kinds that can still be added to Home, in their usual order.
+    /// Kinds that can still be added to Home, in their usual order, then a new esports widget.
     pub fn missing_blocks(&self) -> Vec<crate::home_grid::BlockKind> {
+        use crate::home_grid::BlockKind;
         let blocks = self.home_blocks();
-        crate::home_grid::BlockKind::ALL
+        let mut kinds: Vec<_> = BlockKind::ALL
             .into_iter()
             .filter(|kind| !blocks.iter().any(|b| b.kind == *kind))
-            .collect()
+            .collect();
+        let next = (0..BlockKind::ESPORTS)
+            .find(|n| !blocks.iter().any(|b| b.kind == BlockKind::Esports(*n)));
+        kinds.extend(next.map(BlockKind::Esports));
+        kinds
+    }
+
+    /// An esports widget's settings; one without saved settings shows Counter-Strike.
+    pub fn esports_widget(&self, instance: u8) -> crate::model::EsportsWidget {
+        self.preferences
+            .esports
+            .get(&instance)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The matches an esports widget shows: its disciplines and filter, live first, then by start.
+    pub fn esports_matches(&self, instance: u8) -> Vec<&crate::feeds::CsMatch> {
+        let widget = self.esports_widget(instance);
+        let mut matches: Vec<_> = widget
+            .games
+            .iter()
+            .filter_map(|game| self.feeds.matches.get(game))
+            .flatten()
+            .filter(|m| !widget.major_only || matches!(m.tier.as_str(), "s" | "a"))
+            .collect();
+        matches.sort_by(|a, b| b.running.cmp(&a.running).then(a.begin_at.cmp(&b.begin_at)));
+        matches.truncate(12);
+        matches
+    }
+
+    /// Every discipline some esports widget on Home shows.
+    pub fn esports_games(&self) -> Vec<String> {
+        let mut games: Vec<String> = self
+            .home_blocks()
+            .iter()
+            .filter_map(|b| match b.kind {
+                crate::home_grid::BlockKind::Esports(n) => Some(self.esports_widget(n).games),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        games.sort();
+        games.dedup();
+        games
     }
 
     /// The Home block a focus target belongs to.
@@ -538,6 +609,7 @@ impl State {
             Target::WeatherConfigure => Some(BlockKind::Weather),
             Target::Block(kind) => Some(*kind),
             Target::Poster(_) => Some(BlockKind::Premieres),
+            Target::Match(instance, _) => Some(BlockKind::Esports(*instance)),
             _ => None,
         }
     }
@@ -883,6 +955,11 @@ impl State {
             Some(Subpage::Language) => Target::Setting(4),
             Some(Subpage::Appearance) => Target::Setting(7),
             Some(Subpage::Theme) => Target::Setting(9),
+            Some(Subpage::Esports(_)) => Target::Sidebar(0),
+            Some(Subpage::EsportsGames(instance)) => {
+                self.subpage = Some(Subpage::Esports(instance));
+                Target::EsportsGames
+            }
             Some(Subpage::HomeTakeover) => Target::Setting(8),
             None => Target::Sidebar(self.section),
         };
@@ -993,6 +1070,7 @@ impl State {
                     Some(Subpage::Language) => Language::ALL.len(),
                     Some(Subpage::Appearance) => UiSize::ALL.len(),
                     Some(Subpage::Theme) => crate::themes::THEMES.len(),
+                    Some(Subpage::EsportsGames(_)) => crate::feeds::GAMES.len(),
                     _ => 3,
                 };
                 match direction {
@@ -1061,6 +1139,9 @@ impl State {
             if matches!(
                 self.focus,
                 Target::Setting(0 | 1 | 4 | 6 | 7 | 8 | 9)
+                    | Target::EsportsKey
+                    | Target::EsportsGames
+                    | Target::EsportsMajor
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -1366,6 +1447,16 @@ impl State {
                 self.dirty = true;
                 return;
             }
+            if self.keyboard_field == TextField::ApiKey {
+                let key = &mut self.api_key_draft;
+                key.extend(
+                    text.chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                        .take(128usize.saturating_sub(key.len())),
+                );
+                self.dirty = true;
+                return;
+            }
             if self.keyboard_field == TextField::InputName {
                 let length = self.input_name.chars().count();
                 self.input_name.extend(
@@ -1396,6 +1487,8 @@ impl State {
                 self.greeting_name_draft.pop();
             } else if self.keyboard_field == TextField::InputName {
                 self.input_name.pop();
+            } else if self.keyboard_field == TextField::ApiKey {
+                self.api_key_draft.pop();
             } else {
                 self.query.pop();
             }
@@ -1429,6 +1522,16 @@ impl State {
             // Empty dismissal preserves the saved value; Clear name is explicit.
             if !name.is_empty() && self.preferences.greeting_name != name {
                 self.preferences.greeting_name = name.into();
+                return vec![Effect::Save];
+            }
+            return vec![];
+        }
+        if self.keyboard_field == TextField::ApiKey {
+            let key = std::mem::take(&mut self.api_key_draft);
+            let key = key.trim();
+            // An empty dismissal keeps the saved key.
+            if !key.is_empty() && self.preferences.esports_key != key {
+                self.preferences.esports_key = key.into();
                 return vec![Effect::Save];
             }
             return vec![];
@@ -1476,6 +1579,8 @@ impl State {
             self.greeting_name_draft = query;
         } else if self.keyboard_field == TextField::InputName {
             self.input_name = query;
+        } else if self.keyboard_field == TextField::ApiKey {
+            self.api_key_draft = query;
         } else {
             self.query = query;
             self.scroll = 0.;
@@ -1488,8 +1593,21 @@ impl State {
             TextField::Location => &self.weather.query,
             TextField::Name => &self.greeting_name_draft,
             TextField::InputName => &self.input_name,
+            TextField::ApiKey => &self.api_key_draft,
             TextField::Apps => &self.query,
         }
+    }
+
+    /// An esports widget's settings page, focused on the key.
+    fn open_esports_settings(&mut self, instance: u8) {
+        self.section = 0;
+        self.subpage = Some(Subpage::Esports(instance));
+        self.focus = Target::EsportsKey;
+        self.scroll = 0.;
+        if !self.preferences.reduced_motion {
+            self.panel_started = Some(Instant::now());
+        }
+        self.dirty = true;
     }
     pub fn open_keyboard(&mut self, field: TextField) {
         self.keyboard_field = field;
@@ -1501,6 +1619,9 @@ impl State {
             // The TV keyboard starts empty, so a new name replaces the old one.
             self.input_name.clear();
         }
+        if field == TextField::ApiKey {
+            self.api_key_draft.clear();
+        }
         if cfg!(all(
             feature = "webos",
             target_os = "linux",
@@ -1511,6 +1632,7 @@ impl State {
                 TextField::Location => Target::WeatherQuery,
                 TextField::Name => Target::GreetingName,
                 TextField::InputName => Target::InputRename,
+                TextField::ApiKey => Target::EsportsKey,
                 TextField::Apps => Target::Search,
             };
             self.panel_started = None;
@@ -1539,6 +1661,7 @@ impl State {
             TextField::Location => Target::WeatherSearch,
             TextField::Name => Target::GreetingName,
             TextField::InputName => Target::InputRename,
+            TextField::ApiKey => Target::EsportsKey,
             TextField::Apps => Target::Search,
         }
     }
@@ -1696,12 +1819,67 @@ impl State {
                             snapshot,
                         });
                     }
+                    Some(BlockAction::Settings) => {
+                        if let crate::home_grid::BlockKind::Esports(instance) = kind {
+                            self.open(2);
+                            self.open_esports_settings(instance);
+                        }
+                        return vec![];
+                    }
                     Some(BlockAction::Remove) => {
                         self.preferences.home_layout.retain(|b| b.kind != kind);
+                        if let crate::home_grid::BlockKind::Esports(n) = kind {
+                            self.preferences.esports.remove(&n);
+                        }
                         self.focus = self.first_content();
                         return vec![Effect::Save];
                     }
                     None => {}
+                }
+                return vec![];
+            }
+            Target::Match(instance, index) => {
+                let list = self.esports_matches(instance);
+                let Some(found) = list.get(index) else {
+                    return vec![];
+                };
+                let game = found.game.clone();
+                let missing: Vec<u64> = found
+                    .teams
+                    .iter()
+                    .flatten()
+                    .map(|team| team.id)
+                    .filter(|id| !self.feeds.rosters.contains_key(id))
+                    .collect();
+                self.overlay = Some(Overlay::Match {
+                    instance,
+                    index,
+                    restore: Target::Match(instance, index),
+                });
+                self.focus = Target::CloseDialog;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+                return if missing.is_empty() {
+                    vec![]
+                } else {
+                    vec![Effect::Rosters(game, missing)]
+                };
+            }
+            Target::EsportsKey => self.open_keyboard(TextField::ApiKey),
+            Target::EsportsGames => {
+                if let Some(Subpage::Esports(instance)) = self.subpage {
+                    self.subpage = Some(Subpage::EsportsGames(instance));
+                    self.focus = Target::Choice(0);
+                    self.scroll = 0.;
+                }
+                return vec![];
+            }
+            Target::EsportsMajor => {
+                if let Some(Subpage::Esports(instance)) = self.subpage {
+                    let widget = self.preferences.esports.entry(instance).or_default();
+                    widget.major_only = !widget.major_only;
+                    return vec![Effect::Save];
                 }
                 return vec![];
             }
@@ -1772,6 +1950,9 @@ impl State {
                 let (x, y) = crate::home_grid::first_free(&blocks, w, h);
                 blocks.push(crate::home_grid::Block { kind, x, y, w, h });
                 self.preferences.home_layout = blocks;
+                if let crate::home_grid::BlockKind::Esports(n) = kind {
+                    self.preferences.esports.entry(n).or_default();
+                }
                 self.focus = Target::Block(kind);
                 return vec![Effect::Save];
             }
@@ -1900,6 +2081,22 @@ impl State {
                             Unit::Celsius
                         }
                     }
+                    // Disciplines toggle and the list stays open; one always remains.
+                    Some(Subpage::EsportsGames(instance)) => {
+                        let Some((game, _)) = crate::feeds::GAMES.get(index) else {
+                            return vec![];
+                        };
+                        let widget = self.preferences.esports.entry(instance).or_default();
+                        if let Some(at) = widget.games.iter().position(|g| g == game) {
+                            if widget.games.len() == 1 {
+                                return vec![];
+                            }
+                            widget.games.remove(at);
+                        } else {
+                            widget.games.push((*game).into());
+                        }
+                        return vec![Effect::Save];
+                    }
                     // A theme stays open too: its wallpaper shows behind the list at once.
                     Some(Subpage::Theme) => {
                         let theme =
@@ -1937,7 +2134,8 @@ impl State {
                         Subpage::WeatherLocation
                         | Subpage::Greeting
                         | Subpage::AppNames
-                        | Subpage::Clock,
+                        | Subpage::Clock
+                        | Subpage::Esports(_),
                     ) => {
                         return vec![];
                     }
@@ -2022,6 +2220,7 @@ impl State {
                     TextField::Location => self.weather.edit(String::new()),
                     TextField::Name => self.greeting_name_draft.clear(),
                     TextField::InputName => self.input_name.clear(),
+                    TextField::ApiKey => self.api_key_draft.clear(),
                     TextField::Apps => self.query.clear(),
                 },
                 "Done" => {
@@ -2062,7 +2261,8 @@ impl State {
             | Overlay::Recents { restore }
             | Overlay::Block { restore, .. }
             | Overlay::AddBlock { restore }
-            | Overlay::Poster { restore, .. } = overlay
+            | Overlay::Poster { restore, .. }
+            | Overlay::Match { restore, .. } = overlay
             {
                 self.focus = restore;
                 self.recents.pending = None;

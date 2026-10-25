@@ -1761,7 +1761,12 @@ fn widgets_can_be_removed_and_added_back() {
     let missing = state.missing_blocks();
     assert_eq!(
         missing,
-        vec![BlockKind::Weather, BlockKind::Crypto, BlockKind::Premieres]
+        vec![
+            BlockKind::Weather,
+            BlockKind::Crypto,
+            BlockKind::Premieres,
+            BlockKind::Esports(0)
+        ]
     );
     state.focus = Target::AddKind(1);
     assert_eq!(state.activate(), vec![Effect::Save]);
@@ -1924,4 +1929,167 @@ fn a_home_theme_is_chosen_in_general_and_replaces_the_layout() {
     assert_eq!(state.subpage, Some(Subpage::Theme), "stays open");
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::Setting(9));
+}
+
+fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
+    let team = |id, short: &str| {
+        Some(crate::feeds::Team {
+            id,
+            name: short.into(),
+            short: short.into(),
+        })
+    };
+    crate::feeds::CsMatch {
+        id,
+        game: game.into(),
+        running: id == 7,
+        begin_at: format!("2026-10-25T18:{id:02}:00Z"),
+        teams: [team(1, "NAVI"), team(2, "FaZe")],
+        score: [1, 0],
+        best_of: 3,
+        games: vec![],
+        event: "BLAST Premier".into(),
+        tier: tier.into(),
+    }
+}
+
+#[test]
+fn a_match_opens_its_details_and_asks_for_missing_lineups() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    state.preferences.esports_key = "key".into();
+    state
+        .feeds
+        .matches
+        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
+    state.feeds.rosters.insert(2, vec!["ropz".into()]);
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Match(0, 0))
+    );
+    state.focus = Target::Match(0, 0);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::Rosters("csgo".into(), vec![1])]
+    );
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Match {
+            instance: 0,
+            index: 0,
+            ..
+        })
+    ));
+    assert!(scene_text(&state).iter().any(|t| t == "ropz"));
+    state.back();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::Match(0, 0));
+}
+
+#[test]
+fn each_esports_widget_shows_its_own_disciplines_and_filter() {
+    use crate::home_grid::{Block, BlockKind};
+    use crate::model::EsportsWidget;
+    let mut state = ready();
+    state.feeds.matches.insert(
+        "csgo".into(),
+        vec![esports_match("csgo", 7, "s"), esports_match("csgo", 8, "c")],
+    );
+    state
+        .feeds
+        .matches
+        .insert("dota2".into(), vec![esports_match("dota2", 9, "a")]);
+    state
+        .preferences
+        .esports
+        .insert(0, EsportsWidget::default());
+    state.preferences.esports.insert(
+        1,
+        EsportsWidget {
+            games: vec!["csgo".into(), "dota2".into()],
+            major_only: false,
+        },
+    );
+    let ids = |state: &State, n| {
+        state
+            .esports_matches(n)
+            .iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&state, 0), [7], "Counter-Strike, major events only");
+    assert_eq!(ids(&state, 1), [7, 8, 9], "live first, then by start");
+    // A second widget is added as a new instance with the default settings.
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    assert_eq!(state.missing_blocks().last(), Some(&BlockKind::Esports(1)));
+}
+
+#[test]
+fn the_esports_widget_settings_take_a_key_disciplines_and_the_major_filter() {
+    use crate::home_grid::{Block, BlockKind};
+    use crate::state::{BlockAction, Subpage};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    let actions = state.block_actions(BlockKind::Esports(0), false);
+    assert!(actions.contains(&BlockAction::Settings));
+    state.focus = Target::Block(BlockKind::Esports(0));
+    state.hold();
+    state.focus = Target::BlockAction(
+        actions
+            .iter()
+            .position(|a| *a == BlockAction::Settings)
+            .unwrap(),
+    );
+    state.activate();
+    assert_eq!(state.page, crate::state::Page::Settings);
+    assert_eq!(state.subpage, Some(Subpage::Esports(0)));
+    assert_eq!(state.focus, Target::EsportsKey);
+    state.activate();
+    assert!(state.text_input_active());
+    state.text("ps_Key-123");
+    assert_eq!(state.finish_text_input(), vec![Effect::Save]);
+    assert_eq!(state.preferences.esports_key, "ps_Key-123");
+    assert!(
+        state.esports_widget(0).major_only,
+        "major events by default"
+    );
+    state.focus = Target::EsportsMajor;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(!state.esports_widget(0).major_only);
+    state.focus = Target::EsportsGames;
+    state.activate();
+    assert_eq!(state.subpage, Some(Subpage::EsportsGames(0)));
+    // Each discipline toggles; the list stays open, and the last one cannot be turned off.
+    state.focus = Target::Choice(1);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    state.focus = Target::Choice(0);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.esports_widget(0).games, ["dota2"]);
+    state.focus = Target::Choice(1);
+    assert_eq!(state.activate(), vec![]);
+    assert_eq!(state.esports_widget(0).games, ["dota2"]);
+    assert_eq!(state.subpage, Some(Subpage::EsportsGames(0)));
+    state.back();
+    assert_eq!(state.subpage, Some(Subpage::Esports(0)));
+    assert_eq!(state.focus, Target::EsportsGames);
 }

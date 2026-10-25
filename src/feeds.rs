@@ -1,5 +1,6 @@
 //! Data for Home widgets, fetched on a worker thread: Binance 24 h mini tickers for crypto prices,
-//! TVmaze season premieres and their posters. As for weather: fixed HTTPS origins, no proxy or
+//! TVmaze season premieres and their posters, and Counter-Strike matches from PandaScore with the
+//! user's free key (lists of running and upcoming matches, and team rosters). As for weather: fixed HTTPS origins, no proxy or
 //! redirects, bounded replies and timeouts; nothing runs on the SDL thread.
 use crate::app_artwork::Artwork;
 use serde_json::Value;
@@ -18,6 +19,27 @@ const SCHEDULES: [&str; 2] = [
     "https://api.tvmaze.com/schedule",
 ];
 const POSTER_ORIGIN: &str = "https://static.tvmaze.com/";
+const PANDASCORE: &str = "https://api.pandascore.co";
+/// PandaScore's path for each discipline and its name; the free key covers all of them.
+pub const GAMES: [(&str, &str); 8] = [
+    ("csgo", "Counter-Strike 2"),
+    ("dota2", "Dota 2"),
+    ("lol", "League of Legends"),
+    ("valorant", "Valorant"),
+    ("r6siege", "Rainbow Six Siege"),
+    ("ow", "Overwatch 2"),
+    ("rl", "Rocket League"),
+    ("codmw", "Call of Duty"),
+];
+/// The discipline's path, Counter-Strike for anything unknown.
+pub fn game_path(game: &str) -> &'static str {
+    GAMES
+        .iter()
+        .find(|(path, _)| *path == game)
+        .map_or("csgo", |(path, _)| path)
+}
+/// Kept per discipline at most.
+const MATCHES: usize = 20;
 const JSON_LIMIT: usize = 1024 * 1024;
 const IMAGE_LIMIT: usize = 2 * 1024 * 1024;
 /// Popular shows only: TVmaze's weight is its 0–100 popularity.
@@ -44,6 +66,55 @@ pub struct Premiere {
     pub poster: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Team {
+    pub id: u64,
+    pub name: String,
+    /// The acronym when PandaScore has one, else the name.
+    pub short: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameState {
+    Waiting,
+    Running,
+    Finished,
+}
+
+/// One map of a series; PandaScore's free lists carry its state and winner, not the map's name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchGame {
+    pub position: u64,
+    pub state: GameState,
+    pub winner: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CsMatch {
+    pub id: u64,
+    /// PandaScore's path of the discipline, e.g. `csgo`.
+    pub game: String,
+    pub running: bool,
+    /// RFC 3339, UTC.
+    pub begin_at: String,
+    /// A team still to be decided is `None`.
+    pub teams: [Option<Team>; 2],
+    /// Maps won, in the teams' order.
+    pub score: [u64; 2],
+    pub best_of: u64,
+    pub games: Vec<MatchGame>,
+    /// League and series, e.g. "BLAST Premier Fall 2026".
+    pub event: String,
+    pub tier: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchesError {
+    /// PandaScore refused the key.
+    Key,
+    Unavailable,
+}
+
 /// What Home's widgets show; filled from `FeedResponse`s on the SDL thread.
 #[derive(Default)]
 pub struct FeedData {
@@ -52,18 +123,39 @@ pub struct FeedData {
     pub posters: std::collections::HashMap<String, Arc<Artwork>>,
     pub crypto_failed: bool,
     pub premieres_failed: bool,
+    /// Running and upcoming matches by discipline; a discipline is missing until it arrives.
+    pub matches: std::collections::HashMap<String, Vec<CsMatch>>,
+    pub matches_error: Option<MatchesError>,
+    /// Player nicknames by team id.
+    pub rosters: std::collections::HashMap<u64, Vec<String>>,
+    /// Lineups a match dialog asked for, sent to the worker by the main loop.
+    pub pending_rosters: Vec<(String, Vec<u64>)>,
 }
 
 pub enum FeedRequest {
     Crypto,
     Premieres,
     Poster(String),
+    Matches {
+        key: String,
+        game: String,
+    },
+    Rosters {
+        key: String,
+        game: String,
+        teams: Vec<u64>,
+    },
 }
 
 pub enum FeedResponse {
     Crypto(Result<Vec<Quote>, String>),
     Premieres(Result<Vec<Premiere>, String>),
     Poster(String, Option<Arc<Artwork>>),
+    Matches {
+        game: String,
+        result: Result<Vec<CsMatch>, MatchesError>,
+    },
+    Rosters(Vec<(u64, Vec<String>)>),
 }
 
 pub struct Feeds {
@@ -89,6 +181,13 @@ impl Feeds {
                     FeedRequest::Poster(url) => {
                         let image = poster(&agent, &url);
                         FeedResponse::Poster(url, image)
+                    }
+                    FeedRequest::Matches { key, game } => FeedResponse::Matches {
+                        result: matches(&agent, &key, &game),
+                        game,
+                    },
+                    FeedRequest::Rosters { key, game, teams } => {
+                        FeedResponse::Rosters(rosters(&agent, &key, &game, &teams))
                     }
                 };
                 if responses.send(response).is_err() {
@@ -275,6 +374,213 @@ pub fn parse_premieres(days: &[Value]) -> Vec<Premiere> {
 
 pub fn poster_allowed(url: &str) -> bool {
     url.starts_with(POSTER_ORIGIN) && !url.contains("..") && url.len() < 512
+}
+
+/// A PandaScore list with the user's key; a refused key is told apart from other failures.
+fn pandascore(
+    agent: &ureq::Agent,
+    key: &str,
+    game: &str,
+    path: &str,
+) -> Result<Value, MatchesError> {
+    let url = format!("{PANDASCORE}/{}{path}", game_path(game));
+    let mut response = agent
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", key.trim()))
+        .header("Accept", "application/json")
+        .header("User-Agent", "LumaNative")
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .map_err(|error| {
+            eprintln!("Luma matches: {error}");
+            MatchesError::Unavailable
+        })?;
+    let status = response.status().as_u16();
+    if status == 401 || status == 403 {
+        return Err(MatchesError::Key);
+    }
+    if !(200..300).contains(&status) {
+        eprintln!("Luma matches: {url}: HTTP {status}");
+        return Err(MatchesError::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(JSON_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| MatchesError::Unavailable)?;
+    if bytes.len() > JSON_LIMIT {
+        return Err(MatchesError::Unavailable);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| MatchesError::Unavailable)
+}
+
+/// Every running and upcoming match of a discipline; widgets apply their own event filter.
+fn matches(agent: &ureq::Agent, key: &str, game: &str) -> Result<Vec<CsMatch>, MatchesError> {
+    let running = pandascore(
+        agent,
+        key,
+        game,
+        "/matches/running?per_page=25&sort=begin_at",
+    )?;
+    let upcoming = pandascore(
+        agent,
+        key,
+        game,
+        "/matches/upcoming?per_page=50&sort=begin_at",
+    )?;
+    let game = game_path(game);
+    let mut matches = select_matches(parse_matches(&running), parse_matches(&upcoming), false);
+    for found in &mut matches {
+        found.game = game.into();
+    }
+    Ok(matches)
+}
+
+fn rosters(agent: &ureq::Agent, key: &str, game: &str, teams: &[u64]) -> Vec<(u64, Vec<String>)> {
+    if teams.is_empty() {
+        return vec![];
+    }
+    let ids = teams
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    pandascore(
+        agent,
+        key,
+        game,
+        &format!("/teams?filter[id]={ids}&per_page=10"),
+    )
+    .map(|body| parse_rosters(&body))
+    .unwrap_or_default()
+}
+
+/// PandaScore match objects; malformed entries are skipped.
+pub fn parse_matches(body: &Value) -> Vec<CsMatch> {
+    let text = |value: Option<&Value>| value.and_then(Value::as_str).unwrap_or("").to_owned();
+    body.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item.get("id")?.as_u64()?;
+            let teams: Vec<Option<Team>> = item
+                .get("opponents")
+                .and_then(Value::as_array)
+                .map(|opponents| {
+                    opponents
+                        .iter()
+                        .take(2)
+                        .map(|entry| {
+                            let team = entry.get("opponent")?;
+                            let name: String = text(team.get("name")).chars().take(40).collect();
+                            let acronym = text(team.get("acronym"));
+                            Some(Team {
+                                id: team.get("id")?.as_u64()?,
+                                short: if acronym.is_empty() {
+                                    name.clone()
+                                } else {
+                                    acronym.chars().take(12).collect()
+                                },
+                                name,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let teams = [
+                teams.first().cloned().flatten(),
+                teams.get(1).cloned().flatten(),
+            ];
+            let results = item.get("results").and_then(Value::as_array);
+            let score = teams.clone().map(|team| {
+                let id = team.map(|team| team.id);
+                results
+                    .into_iter()
+                    .flatten()
+                    .find(|result| result.get("team_id").and_then(Value::as_u64) == id)
+                    .and_then(|result| result.get("score")?.as_u64())
+                    .unwrap_or(0)
+            });
+            let mut games: Vec<MatchGame> = item
+                .get("games")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|game| {
+                    Some(MatchGame {
+                        position: game.get("position")?.as_u64()?,
+                        state: match game.get("status").and_then(Value::as_str) {
+                            Some("running") => GameState::Running,
+                            Some("finished") => GameState::Finished,
+                            _ => GameState::Waiting,
+                        },
+                        winner: game.pointer("/winner/id").and_then(Value::as_u64),
+                    })
+                })
+                .collect();
+            games.sort_by_key(|game| game.position);
+            let league = text(item.pointer("/league/name"));
+            let serie = text(item.pointer("/serie/full_name"));
+            Some(CsMatch {
+                id,
+                game: String::new(),
+                running: item.get("status").and_then(Value::as_str) == Some("running"),
+                begin_at: text(item.get("begin_at").or_else(|| item.get("scheduled_at"))),
+                teams,
+                score,
+                best_of: item
+                    .get("number_of_games")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1),
+                games,
+                event: format!("{league} {serie}")
+                    .trim()
+                    .chars()
+                    .take(60)
+                    .collect(),
+                tier: text(item.pointer("/tournament/tier")).to_lowercase(),
+            })
+        })
+        .collect()
+}
+
+/// Running matches first, then upcoming ones by start; with `major_only`, S- and A-tier events.
+pub fn select_matches(
+    running: Vec<CsMatch>,
+    mut upcoming: Vec<CsMatch>,
+    major_only: bool,
+) -> Vec<CsMatch> {
+    upcoming.sort_by(|a, b| a.begin_at.cmp(&b.begin_at));
+    running
+        .into_iter()
+        .chain(upcoming)
+        .filter(|m| !major_only || matches!(m.tier.as_str(), "s" | "a"))
+        .take(MATCHES)
+        .collect()
+}
+
+/// Player nicknames by team, from PandaScore team objects.
+pub fn parse_rosters(body: &Value) -> Vec<(u64, Vec<String>)> {
+    body.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|team| {
+            let players = team
+                .get("players")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|player| player.get("name")?.as_str())
+                .map(|name| name.chars().take(24).collect())
+                .take(7)
+                .collect();
+            Some((team.get("id")?.as_u64()?, players))
+        })
+        .collect()
 }
 
 fn poster(agent: &ureq::Agent, url: &str) -> Option<Arc<Artwork>> {

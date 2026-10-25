@@ -23,9 +23,12 @@ pub enum BlockKind {
     Inputs,
     Crypto,
     Premieres,
+    /// An esports widget; several can be on Home, told apart by their instance number.
+    Esports(u8),
 }
 
 impl BlockKind {
+    /// The kinds Home can hold once each; esports widgets are added as new instances.
     pub const ALL: [Self; 6] = [
         Self::Greeting,
         Self::Weather,
@@ -34,6 +37,8 @@ impl BlockKind {
         Self::Crypto,
         Self::Premieres,
     ];
+    /// At most this many esports widgets.
+    pub const ESPORTS: u8 = 4;
 
     /// Minimum and maximum (width, height) in cells.
     pub fn limits(self) -> ((u8, u8), (u8, u8)) {
@@ -44,6 +49,7 @@ impl BlockKind {
             Self::Inputs => ((4, 1), (12, 3)),
             Self::Crypto => ((3, 1), (6, 2)),
             Self::Premieres => ((6, 2), (12, 3)),
+            Self::Esports(_) => ((6, 2), (12, 3)),
         }
     }
 
@@ -55,6 +61,7 @@ impl BlockKind {
             Self::Inputs => (12, 1),
             Self::Crypto => (4, 1),
             Self::Premieres => (12, 2),
+            Self::Esports(_) => (6, 2),
         }
     }
 
@@ -72,6 +79,7 @@ impl BlockKind {
             Self::Inputs => "inputsHeading",
             Self::Crypto => "cryptoWidget",
             Self::Premieres => "premieresWidget",
+            Self::Esports(_) => "esportsWidget",
         }
     }
 }

@@ -1852,5 +1852,176 @@
     "pt": "Escolher um tema substitui o layout e o fundo do Início.",
     "it": "Scegliere un tema sostituisce layout e sfondo della Home.",
     "ru": "Выбор темы заменит раскладку и фон главного экрана."
+  },
+  "esportsWidget": {
+    "en": "Esports",
+    "de": "E-Sport",
+    "es": "Esports",
+    "zh": "电竞",
+    "pt": "Esports",
+    "it": "Esport",
+    "ru": "Киберспорт"
+  },
+  "blockSettings": {
+    "en": "Widget settings",
+    "de": "Widget-Einstellungen",
+    "es": "Ajustes del widget",
+    "zh": "小组件设置",
+    "pt": "Configurações do widget",
+    "it": "Impostazioni widget",
+    "ru": "Настройки виджета"
+  },
+  "live": {
+    "en": "LIVE",
+    "de": "LIVE",
+    "es": "EN VIVO",
+    "zh": "直播",
+    "pt": "AO VIVO",
+    "it": "LIVE",
+    "ru": "LIVE"
+  },
+  "esportsNoKey": {
+    "en": "Add a free PandaScore key: hold OK here › Widget settings.",
+    "de": "Füge einen kostenlosen PandaScore-Schlüssel hinzu: OK hier halten › Widget-Einstellungen.",
+    "es": "Añade una clave gratuita de PandaScore: mantén OK aquí › Ajustes del widget.",
+    "zh": "添加免费的 PandaScore 密钥：在此长按 OK › 小组件设置。",
+    "pt": "Adicione uma chave gratuita do PandaScore: segure OK aqui › Configurações do widget.",
+    "it": "Aggiungi una chiave gratuita PandaScore: tieni premuto OK qui › Impostazioni widget.",
+    "ru": "Добавьте бесплатный ключ PandaScore: удерживайте OK здесь › Настройки виджета."
+  },
+  "esportsBadKey": {
+    "en": "PandaScore did not accept the key. Check it in the widget settings.",
+    "de": "PandaScore hat den Schlüssel abgelehnt. Prüfe ihn in den Widget-Einstellungen.",
+    "es": "PandaScore no aceptó la clave. Revísala en los ajustes del widget.",
+    "zh": "PandaScore 未接受该密钥。请在小组件设置中检查。",
+    "pt": "O PandaScore não aceitou a chave. Verifique nas configurações do widget.",
+    "it": "PandaScore non ha accettato la chiave. Controllala nelle impostazioni del widget.",
+    "ru": "PandaScore не принял ключ. Проверьте его в настройках виджета."
+  },
+  "esportsUnavailable": {
+    "en": "Matches unavailable right now",
+    "de": "Spiele gerade nicht verfügbar",
+    "es": "Partidas no disponibles ahora",
+    "zh": "目前无法获取比赛",
+    "pt": "Partidas indisponíveis no momento",
+    "it": "Partite non disponibili ora",
+    "ru": "Матчи сейчас недоступны"
+  },
+  "esportsLoading": {
+    "en": "Loading matches…",
+    "de": "Spiele werden geladen …",
+    "es": "Cargando partidas…",
+    "zh": "正在加载比赛…",
+    "pt": "Carregando partidas…",
+    "it": "Caricamento partite…",
+    "ru": "Загружаем матчи…"
+  },
+  "esportsNone": {
+    "en": "No live or upcoming matches",
+    "de": "Keine laufenden oder anstehenden Spiele",
+    "es": "No hay partidas en curso ni próximas",
+    "zh": "没有进行中或即将开始的比赛",
+    "pt": "Nenhuma partida ao vivo ou próxima",
+    "it": "Nessuna partita in corso o in arrivo",
+    "ru": "Сейчас нет текущих и ближайших матчей"
+  },
+  "esportsMaps": {
+    "en": "Maps",
+    "de": "Maps",
+    "es": "Mapas",
+    "zh": "地图",
+    "pt": "Mapas",
+    "it": "Mappe",
+    "ru": "Карты"
+  },
+  "esportsMap": {
+    "en": "Map {number}",
+    "de": "Map {number}",
+    "es": "Mapa {number}",
+    "zh": "第 {number} 图",
+    "pt": "Mapa {number}",
+    "it": "Mappa {number}",
+    "ru": "Карта {number}"
+  },
+  "esportsLineup": {
+    "en": "{team} lineup",
+    "de": "Aufstellung {team}",
+    "es": "Alineación de {team}",
+    "zh": "{team} 阵容",
+    "pt": "Escalação de {team}",
+    "it": "Formazione {team}",
+    "ru": "Состав {team}"
+  },
+  "esportsLineupLoading": {
+    "en": "Loading lineup…",
+    "de": "Aufstellung wird geladen …",
+    "es": "Cargando alineación…",
+    "zh": "正在加载阵容…",
+    "pt": "Carregando escalação…",
+    "it": "Caricamento formazione…",
+    "ru": "Загружаем состав…"
+  },
+  "esportsNoLineup": {
+    "en": "Lineup not announced",
+    "de": "Aufstellung nicht bekannt",
+    "es": "Alineación sin anunciar",
+    "zh": "阵容未公布",
+    "pt": "Escalação não anunciada",
+    "it": "Formazione non annunciata",
+    "ru": "Состав не объявлен"
+  },
+  "esportsFreeNote": {
+    "en": "Map names and round scores need a paid PandaScore plan.",
+    "de": "Kartennamen und Rundenstände erfordern einen kostenpflichtigen PandaScore-Tarif.",
+    "es": "Los nombres de mapas y el marcador por rondas requieren un plan de pago de PandaScore.",
+    "zh": "地图名称和回合比分需要 PandaScore 付费套餐。",
+    "pt": "Nomes dos mapas e placar por rodadas exigem um plano pago do PandaScore.",
+    "it": "Nomi delle mappe e punteggi dei round richiedono un piano PandaScore a pagamento.",
+    "ru": "Названия карт и счёт раундов — только на платном тарифе PandaScore."
+  },
+  "esportsKey": {
+    "en": "PandaScore API key",
+    "de": "PandaScore-API-Schlüssel",
+    "es": "Clave API de PandaScore",
+    "zh": "PandaScore API 密钥",
+    "pt": "Chave da API do PandaScore",
+    "it": "Chiave API PandaScore",
+    "ru": "Ключ API PandaScore"
+  },
+  "esportsKeyMissing": {
+    "en": "Not set",
+    "de": "Nicht gesetzt",
+    "es": "Sin definir",
+    "zh": "未设置",
+    "pt": "Não definida",
+    "it": "Non impostata",
+    "ru": "Не задан"
+  },
+  "esportsGames": {
+    "en": "Disciplines",
+    "de": "Disziplinen",
+    "es": "Disciplinas",
+    "zh": "项目",
+    "pt": "Modalidades",
+    "it": "Discipline",
+    "ru": "Дисциплины"
+  },
+  "esportsMajorOnly": {
+    "en": "Major events only",
+    "de": "Nur große Turniere",
+    "es": "Solo grandes torneos",
+    "zh": "仅大型赛事",
+    "pt": "Só grandes torneios",
+    "it": "Solo grandi tornei",
+    "ru": "Только крупные турниры"
+  },
+  "esportsKeyHint": {
+    "en": "A free key: sign up at pandascore.co and copy the token from your dashboard. One key serves every esports widget.",
+    "de": "Kostenloser Schlüssel: auf pandascore.co registrieren und das Token aus dem Dashboard kopieren. Ein Schlüssel gilt für alle E-Sport-Widgets.",
+    "es": "Clave gratuita: regístrate en pandascore.co y copia el token de tu panel. Una clave sirve para todos los widgets de esports.",
+    "zh": "免费密钥：在 pandascore.co 注册并从控制台复制令牌。一个密钥适用于所有电竞小组件。",
+    "pt": "Chave gratuita: cadastre-se em pandascore.co e copie o token do painel. Uma chave serve para todos os widgets de esports.",
+    "it": "Chiave gratuita: registrati su pandascore.co e copia il token dalla dashboard. Una chiave vale per tutti i widget esport.",
+    "ru": "Бесплатный ключ: зарегистрируйтесь на pandascore.co и скопируйте токен из личного кабинета. Один ключ — для всех виджетов киберспорта."
   }
 }

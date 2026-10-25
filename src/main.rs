@@ -331,6 +331,7 @@ fn effects(
             }
             Effect::Weather(command) => weather.send(command),
             Effect::Notify(text) => state.notify(text),
+            Effect::Rosters(game, teams) => state.feeds.pending_rosters.push((game, teams)),
             Effect::HomeTakeover(enable) => {
                 state.notify(state.preferences.language.t(if enable {
                     "homeTakeoverStarting"
@@ -866,6 +867,9 @@ fn run() -> Result<(), String> {
     let feeds = feeds::Feeds::new();
     let mut crypto_fetched: Option<Instant> = None;
     let mut premieres_fetched: Option<Instant> = None;
+    // Esports matches per discipline, refetched sooner while one is live; a new key starts over.
+    let mut esports_fetched: std::collections::HashMap<String, Instant> = Default::default();
+    let mut esports_key = String::new();
     let mut last_minute = None;
     let mut frame = 0u64;
     let mut visible = true;
@@ -913,6 +917,40 @@ fn run() -> Result<(), String> {
                 premieres_fetched = Some(Instant::now());
                 feeds.send(feeds::FeedRequest::Premieres);
             }
+            let key = state.preferences.esports_key.trim().to_owned();
+            if key != esports_key {
+                esports_key = key.clone();
+                esports_fetched.clear();
+                state.feeds.matches.clear();
+                state.feeds.rosters.clear();
+                state.feeds.matches_error = None;
+            }
+            if !key.is_empty() {
+                for game in state.esports_games() {
+                    let live = state
+                        .feeds
+                        .matches
+                        .get(&game)
+                        .is_some_and(|matches| matches.iter().any(|m| m.running));
+                    if due(
+                        esports_fetched.get(&game).copied(),
+                        if live { 60 } else { 300 },
+                    ) {
+                        esports_fetched.insert(game.clone(), Instant::now());
+                        feeds.send(feeds::FeedRequest::Matches {
+                            key: key.clone(),
+                            game,
+                        });
+                    }
+                }
+                for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
+                    feeds.send(feeds::FeedRequest::Rosters {
+                        key: key.clone(),
+                        game,
+                        teams,
+                    });
+                }
+            }
         }
         while let Ok(response) = feeds.receiver.try_recv() {
             state.dirty = true;
@@ -942,6 +980,17 @@ fn run() -> Result<(), String> {
                     state.feeds.posters.insert(url, image);
                 }
                 feeds::FeedResponse::Poster(_, None) => {}
+                feeds::FeedResponse::Matches {
+                    game,
+                    result: Ok(matches),
+                } => {
+                    state.feeds.matches.insert(game, matches);
+                    state.feeds.matches_error = None;
+                }
+                feeds::FeedResponse::Matches {
+                    result: Err(error), ..
+                } => state.feeds.matches_error = Some(error),
+                feeds::FeedResponse::Rosters(rosters) => state.feeds.rosters.extend(rosters),
             }
         }
         while let Ok(response) = platform.receiver.try_recv() {

@@ -390,7 +390,8 @@ pub fn scene_with_pill(
         | Overlay::Keyboard
         | Overlay::Block { .. }
         | Overlay::AddBlock { .. }
-        | Overlay::Poster { .. }),
+        | Overlay::Poster { .. }
+        | Overlay::Match { .. }),
     ) = &state.overlay
     {
         out.controls.clear();
@@ -441,6 +442,9 @@ pub fn scene_with_pill(
                     Target::AddKind,
                 );
             }
+            Overlay::Match {
+                instance, index, ..
+            } => match_dialog(&mut out, state, assets, *instance, *index, now),
             Overlay::Poster { index, .. } => {
                 if let Some(premiere) = state.feeds.premieres.get(*index) {
                     let mut rows: Vec<String> = state
@@ -947,6 +951,9 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             BlockKind::Inputs => inputs_block(out, state, assets, rect),
             BlockKind::Crypto | BlockKind::Premieres => {
                 widget_block(out, state, assets, theme, block.kind, rect, now)
+            }
+            BlockKind::Esports(instance) => {
+                esports_block(out, state, assets, theme, instance, rect, now)
             }
         }
         // Blocks without controls of their own are still focusable, to edit them.
@@ -2347,6 +2354,8 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::Appearance) => language.t("uiScale"),
                 Some(Subpage::Theme) => language.t("homeTheme"),
+                Some(Subpage::Esports(_)) => language.t("esportsWidget"),
+                Some(Subpage::EsportsGames(_)) => language.t("esportsGames"),
                 Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
                 None => "",
             };
@@ -2407,13 +2416,18 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         let start = out.draw.len();
         if matches!(
             subpage,
-            Subpage::WeatherLocation | Subpage::Greeting | Subpage::AppNames | Subpage::Clock
+            Subpage::WeatherLocation
+                | Subpage::Greeting
+                | Subpage::AppNames
+                | Subpage::Clock
+                | Subpage::Esports(_)
         ) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Greeting => greeting_settings(out, state, assets),
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
+                Subpage::Esports(instance) => esports_settings(out, state, assets, *instance),
                 _ => unreachable!(),
             }
             if let Some(opened) = state.panel_started {
@@ -2467,6 +2481,13 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     state.preferences.temperature_unit == Unit::Fahrenheit,
                 ),
             ],
+            Subpage::EsportsGames(instance) => {
+                let games = state.esports_widget(*instance).games;
+                crate::feeds::GAMES
+                    .iter()
+                    .map(|(path, name)| (*name, None, games.iter().any(|g| g == path)))
+                    .collect()
+            }
             Subpage::Theme => crate::themes::THEMES
                 .iter()
                 .map(|theme| {
@@ -2488,9 +2509,11 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     )
                 })
                 .collect(),
-            Subpage::WeatherLocation | Subpage::Greeting | Subpage::AppNames | Subpage::Clock => {
-                unreachable!()
-            }
+            Subpage::WeatherLocation
+            | Subpage::Greeting
+            | Subpage::AppNames
+            | Subpage::Clock
+            | Subpage::Esports(_) => unreachable!(),
             Subpage::Language => Language::ALL
                 .into_iter()
                 .map(|option| (option.name(), None, option == language))
@@ -3320,6 +3343,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             TextField::Location => language.t("cityPostcode"),
             TextField::Name => language.t("greetingName"),
             TextField::InputName => language.t("inputName"),
+            TextField::ApiKey => language.t("esportsKey"),
             TextField::Apps => language.t("findApp"),
         },
         Rect::new(389., 324., 1000., 44.),
@@ -3519,4 +3543,390 @@ fn menu(
         out.control(target(index), rect, false);
     }
     let _ = assets;
+}
+
+/// The local time of an RFC 3339 instant, with the day when it is not today.
+fn match_time(begin_at: &str, now: OffsetDateTime, language: Language) -> String {
+    let Ok(start) = OffsetDateTime::parse(begin_at, &time::format_description::well_known::Rfc3339)
+    else {
+        return String::new();
+    };
+    let local = start.to_offset(now.offset());
+    let clock = format!("{}:{:02}", local.hour(), local.minute());
+    match (local.date() - now.date()).whole_days() {
+        0 => clock,
+        1 => format!("{} {clock}", language.t("tomorrow")),
+        _ => match language {
+            Language::En => format!("{}/{} {clock}", local.month() as u8, local.day()),
+            Language::Zh => format!("{}月{}日 {clock}", local.month() as u8, local.day()),
+            _ => format!("{:02}.{:02} {clock}", local.day(), local.month() as u8),
+        },
+    }
+}
+
+fn team_name(team: &Option<crate::feeds::Team>) -> &str {
+    team.as_ref().map_or("TBD", |team| team.short.as_str())
+}
+
+fn game_name(game: &str) -> &'static str {
+    crate::feeds::GAMES
+        .iter()
+        .find(|(path, _)| *path == game)
+        .map_or("", |(_, name)| name)
+}
+
+/// An esports widget: its disciplines' live and upcoming matches, one row each.
+fn esports_block(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    theme: &crate::themes::Theme,
+    instance: u8,
+    rect: Rect,
+    now: OffsetDateTime,
+) {
+    let language = state.preferences.language;
+    widget_card(out, theme, rect);
+    let widget = state.esports_widget(instance);
+    let names: Vec<&str> = widget.games.iter().map(|game| game_name(game)).collect();
+    out.text(
+        format!("{} · {}", language.t("esportsWidget"), names.join(", ")),
+        Rect::new(rect.x + 24., rect.y + 18., rect.w - 48., 28.),
+        text(21., 550, -0.02),
+        WHITE,
+        false,
+    );
+    let message = |out: &mut Scene, key: &str| {
+        out.text(
+            language.t(key),
+            Rect::new(rect.x + 24., rect.y + 64., rect.w - 48., 60.),
+            text(18.4, 450, -0.01).leading(1.4),
+            c(0xf5f5f5, 0.62),
+            false,
+        );
+    };
+    if state.preferences.esports_key.trim().is_empty() {
+        return message(out, "esportsNoKey");
+    }
+    if state.feeds.matches_error == Some(crate::feeds::MatchesError::Key) {
+        return message(out, "esportsBadKey");
+    }
+    let matches = state.esports_matches(instance);
+    if matches.is_empty() {
+        let loaded = widget
+            .games
+            .iter()
+            .all(|game| state.feeds.matches.contains_key(game));
+        return message(
+            out,
+            if !loaded && state.feeds.matches_error.is_some() {
+                "esportsUnavailable"
+            } else if !loaded {
+                "esportsLoading"
+            } else {
+                "esportsNone"
+            },
+        );
+    }
+    let several = widget.games.len() > 1;
+    let rows = ((rect.h - 62.) / 50.).floor().max(1.) as usize;
+    for (index, found) in matches.iter().take(rows).enumerate() {
+        let row = Rect::new(
+            rect.x + 12.,
+            rect.y + 56. + index as f32 * 50.,
+            rect.w - 24.,
+            44.,
+        );
+        let target = Target::Match(instance, index);
+        let focused = state.focus == target && !state.pointer;
+        if focused {
+            out.shape(row, 12., c(0xffffff, 0.10));
+            out.ring(row, 12.);
+        }
+        let mut x = row.x + 12.;
+        if found.running {
+            let live = Rect::new(x, row.y + 11., 52., 22.);
+            out.shape(live, 6., c(0xe5484d, 1.));
+            out.text(
+                language.t("live"),
+                Rect::new(live.x, live.y + 4., live.w, 16.),
+                text(13., 700, 0.06),
+                WHITE,
+                true,
+            );
+        } else {
+            out.text(
+                match_time(&found.begin_at, now, language),
+                Rect::new(x, row.y + 12., 110., 22.),
+                text(16., 500, 0.),
+                c(0xf5f5f5, 0.7),
+                false,
+            );
+        }
+        x += if found.running { 66. } else { 120. };
+        let teams = format!(
+            "{}  {} : {}  {}",
+            team_name(&found.teams[0]),
+            found.score[0],
+            found.score[1],
+            team_name(&found.teams[1])
+        );
+        let style = text(18.4, 600, -0.01);
+        out.text(
+            &teams,
+            Rect::new(x, row.y + 11., row.w - (x - row.x), 24.),
+            style,
+            WHITE,
+            false,
+        );
+        let after = x + assets.width(&teams, style) + 18.;
+        let detail = if several {
+            format!("{} · {}", game_name(&found.game), found.event)
+        } else {
+            found.event.clone()
+        };
+        if after < row.x + row.w - 80. {
+            out.text(
+                detail,
+                Rect::new(after, row.y + 13., row.x + row.w - after - 12., 20.),
+                text(15.2, 450, 0.),
+                c(0xf5f5f5, 0.5),
+                false,
+            );
+        }
+        out.control(target, row, true);
+    }
+}
+
+/// A match's details: the teams and series score, each map's state, and the lineups.
+fn match_dialog(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    instance: u8,
+    index: usize,
+    now: OffsetDateTime,
+) {
+    let language = state.preferences.language;
+    let matches = state.esports_matches(instance);
+    let Some(found) = matches.get(index) else {
+        return;
+    };
+    let panel = Rect::new(460., 200., 1000., 680.);
+    out.modal = Some(panel);
+    out.shadow(panel, 27.2, 120., 25., 0.47);
+    out.draw.push(Draw::RoundedGradient(
+        panel,
+        27.2,
+        c(0x34383b, 0.97),
+        c(0x24282d, 0.99),
+    ));
+    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    let close = Rect::new(panel.x + panel.w - 72., panel.y + 36., 33.6, 33.6);
+    out.shape(close, 16.8, c(0xffffff, 0.035));
+    out.border(close, 16.8, 1., c(0xffffff, 0.07));
+    out.icon(assets, "close", close.inset(7.6), WHITE);
+    if state.focus == Target::CloseDialog {
+        out.border(close.inset(1.), 15.8, 2., WHITE);
+    }
+    out.control(Target::CloseDialog, close, false);
+    let status = if found.running {
+        language.t("live").to_owned()
+    } else {
+        match_time(&found.begin_at, now, language)
+    };
+    out.text(
+        format!(
+            "{} · {} · BO{} · {}",
+            game_name(&found.game),
+            found.event,
+            found.best_of,
+            status
+        ),
+        Rect::new(panel.x + 40., panel.y + 40., panel.w - 140., 24.),
+        text(16.8, 500, 0.),
+        c(0xf5f5f5, 0.62),
+        false,
+    );
+    // Teams on either side of the series score.
+    let name = |team: &Option<crate::feeds::Team>| {
+        team.as_ref()
+            .map_or("TBD", |team| team.name.as_str())
+            .to_owned()
+    };
+    let big = text(34., 600, -0.03);
+    out.text(
+        name(&found.teams[0]),
+        Rect::new(panel.x + 40., panel.y + 88., 380., 42.),
+        big,
+        WHITE,
+        false,
+    );
+    out.text(
+        format!("{} : {}", found.score[0], found.score[1]),
+        Rect::new(panel.x + 420., panel.y + 84., 160., 46.),
+        text(40., 650, -0.02),
+        WHITE,
+        true,
+    );
+    let right = name(&found.teams[1]);
+    out.text(
+        &right,
+        Rect::new(panel.x + panel.w - 40. - 380., panel.y + 88., 380., 42.),
+        big.right(),
+        WHITE,
+        false,
+    );
+    // Maps: number, then the winner, "live" or not yet played.
+    let maps_y = panel.y + 160.;
+    out.text(
+        language.t("esportsMaps"),
+        Rect::new(panel.x + 40., maps_y, 400., 24.),
+        text(17.6, 600, 0.),
+        c(0xf5f5f5, 0.8),
+        false,
+    );
+    for position in 1..=found.best_of.min(7) {
+        let game = found.games.iter().find(|g| g.position == position);
+        let state_text = match game.map(|g| (g.state, g.winner)) {
+            Some((crate::feeds::GameState::Running, _)) => language.t("live").to_owned(),
+            Some((_, Some(winner))) => found
+                .teams
+                .iter()
+                .flatten()
+                .find(|team| team.id == winner)
+                .map_or("—".to_owned(), |team| team.short.clone()),
+            _ => "—".to_owned(),
+        };
+        let x = panel.x + 40. + (position - 1) as f32 * 132.;
+        let cell = Rect::new(x, maps_y + 34., 120., 64.);
+        out.shape(cell, 12., c(0xffffff, 0.05));
+        out.text(
+            language.format("esportsMap", &[("number", &position.to_string())]),
+            Rect::new(cell.x, cell.y + 10., cell.w, 18.),
+            text(13.6, 500, 0.),
+            c(0xf5f5f5, 0.55),
+            true,
+        );
+        out.text(
+            state_text,
+            Rect::new(cell.x, cell.y + 32., cell.w, 22.),
+            text(17.6, 600, 0.),
+            WHITE,
+            true,
+        );
+    }
+    // Lineups side by side.
+    let lineups_y = maps_y + 130.;
+    for (side, team) in found.teams.iter().enumerate() {
+        let x = panel.x + 40. + side as f32 * 470.;
+        out.text(
+            language.format("esportsLineup", &[("team", &name(team))]),
+            Rect::new(x, lineups_y, 450., 24.),
+            text(17.6, 600, 0.),
+            c(0xf5f5f5, 0.8),
+            false,
+        );
+        let players = team
+            .as_ref()
+            .and_then(|team| state.feeds.rosters.get(&team.id));
+        match players {
+            Some(players) if !players.is_empty() => {
+                for (row, player) in players.iter().enumerate() {
+                    out.text(
+                        player,
+                        Rect::new(x, lineups_y + 36. + row as f32 * 32., 450., 26.),
+                        text(20., 500, -0.01),
+                        WHITE,
+                        false,
+                    );
+                }
+            }
+            _ => out.text(
+                language.t(if players.is_some() || team.is_none() {
+                    "esportsNoLineup"
+                } else {
+                    "esportsLineupLoading"
+                }),
+                Rect::new(x, lineups_y + 36., 450., 26.),
+                text(17.6, 450, 0.),
+                c(0xf5f5f5, 0.55),
+                false,
+            ),
+        }
+    }
+    out.text(
+        language.t("esportsFreeNote"),
+        Rect::new(panel.x + 40., panel.y + panel.h - 50., panel.w - 80., 22.),
+        text(14.4, 400, 0.),
+        c(0xf5f5f5, 0.45),
+        false,
+    );
+}
+
+/// An esports widget's settings: the shared key, its disciplines and the major-events filter.
+fn esports_settings(out: &mut Scene, state: &State, assets: &Assets, instance: u8) {
+    let language = state.preferences.language;
+    let s = state.scroll;
+    let widget = state.esports_widget(instance);
+    let key = state.preferences.esports_key.trim();
+    let masked = if key.is_empty() {
+        language.t("esportsKeyMissing").to_owned()
+    } else {
+        let tail: String = key
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("•••• {tail}")
+    };
+    let names: Vec<&str> = widget.games.iter().map(|game| game_name(game)).collect();
+    let rows = [
+        (Target::EsportsKey, language.t("esportsKey"), "type", masked),
+        (
+            Target::EsportsGames,
+            language.t("esportsGames"),
+            "grid",
+            names.join(", "),
+        ),
+        (
+            Target::EsportsMajor,
+            language.t("esportsMajorOnly"),
+            "sparkles",
+            language
+                .t(if widget.major_only {
+                    "stateOn"
+                } else {
+                    "stateOff"
+                })
+                .to_owned(),
+        ),
+    ];
+    for (position, (target, title, icon, value)) in rows.into_iter().enumerate() {
+        row(
+            out,
+            state,
+            assets,
+            Row {
+                target,
+                rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
+                title,
+                icon: Some(icon),
+                value: Some(&value),
+                description: None,
+                selected: false,
+                chevron: position < 2,
+            },
+        );
+    }
+    out.text(
+        language.t("esportsKeyHint"),
+        Rect::new(660., 164.8 + 3. * 84. + 8. - s, 1080., 60.),
+        text(16., 400, 0.).leading(1.5),
+        c(0xf5f5f5, 0.55),
+        false,
+    );
 }
