@@ -55,6 +55,10 @@ pub enum Target {
     ClockFormat,
     ClockTimeFormat,
     Background(usize),
+    /// A Home block without controls of its own (greeting, a widget), focusable to edit it.
+    Block(crate::home_grid::BlockKind),
+    /// "+ Add widget" below Home's last block.
+    AddBlock,
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -94,6 +98,24 @@ impl Rect {
     pub fn inset(self, n: f32) -> Self {
         Self::new(self.x + n, self.y + n, self.w - 2. * n, self.h - 2. * n)
     }
+}
+
+/// Where Home's favourites strip lies: tiles start at `left`, whole tiles end at `right`, and
+/// drawing is clipped to `clip_left`..`clip_right` (the screen edges when the block reaches them).
+#[derive(Clone, Copy, Debug)]
+pub struct Strip {
+    pub left: f32,
+    pub right: f32,
+    pub clip_left: f32,
+    pub clip_right: f32,
+}
+
+/// A Home block being moved or resized; `snapshot` is the layout when the edit began.
+#[derive(Clone, Debug)]
+pub struct HomeEdit {
+    pub kind: crate::home_grid::BlockKind,
+    pub resize: bool,
+    pub snapshot: Vec<crate::home_grid::Block>,
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +223,7 @@ pub struct State {
     pub recents: crate::recents::Recents,
     /// Whether this instance runs as the TV's Home (the takeover is enabled).
     pub home_takeover: bool,
+    pub home_edit: Option<HomeEdit>,
 }
 
 impl State {
@@ -235,6 +258,7 @@ impl State {
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
             home_takeover: false,
+            home_edit: None,
         }
     }
 
@@ -371,14 +395,59 @@ impl State {
         Rect::new(64., 108.8, 1792., bottom - 108.8)
     }
 
+    /// Home's blocks as drawn: the saved layout repaired for the current content.
+    pub fn home_blocks(&self) -> Vec<crate::home_grid::Block> {
+        let mut blocks = self.preferences.home_layout.clone();
+        let inputs = self
+            .inventory
+            .inputs
+            .iter()
+            .filter(|input| self.preferences.input_visible(input))
+            .count();
+        crate::home_grid::normalize(&mut blocks, self.preferences.show_home_names, inputs);
+        blocks
+    }
+
+    pub fn favorites_strip(&self) -> Strip {
+        let blocks = self.home_blocks();
+        let Some(block) = blocks
+            .iter()
+            .find(|b| b.kind == crate::home_grid::BlockKind::Favorites)
+        else {
+            return Strip {
+                left: HOME_STRIP_LEFT,
+                right: HOME_STRIP_RIGHT,
+                clip_left: HOME_FADE_LEFT,
+                clip_right: HOME_FADE_RIGHT,
+            };
+        };
+        let rect = crate::home_grid::rect(block);
+        let whole = ((rect.w + HOME_TILE_PITCH - HOME_TILE_WIDTH) / HOME_TILE_PITCH)
+            .floor()
+            .max(1.);
+        Strip {
+            left: rect.x,
+            right: rect.x + (whole - 1.) * HOME_TILE_PITCH + HOME_TILE_WIDTH,
+            clip_left: if block.x == 0 { HOME_FADE_LEFT } else { rect.x },
+            clip_right: if block.x + block.w == crate::home_grid::COLUMNS {
+                HOME_FADE_RIGHT
+            } else {
+                rect.x + rect.w
+            },
+        }
+    }
+
     pub fn favorites_viewport(&self) -> Rect {
         let content = self.content_viewport();
+        let strip = self.favorites_strip();
         let left = if self.home_scroll > 0. {
-            HOME_FADE_LEFT
-        } else {
+            strip.clip_left
+        } else if strip.clip_left == HOME_FADE_LEFT {
             0.
+        } else {
+            strip.clip_left
         };
-        Rect::new(left, content.y, HOME_FADE_RIGHT - left, content.h)
+        Rect::new(left, content.y, strip.clip_right - left, content.h)
     }
 
     pub fn hit_test(&self, controls: &[Control], x: f32, y: f32) -> Option<Target> {
@@ -444,7 +513,8 @@ impl State {
         } else {
             (count - 1) as f32 * HOME_TILE_PITCH + HOME_TILE_WIDTH
         };
-        let max = (content - (HOME_STRIP_RIGHT - HOME_STRIP_LEFT)).max(0.);
+        let strip = self.favorites_strip();
+        let max = (content - (strip.right - strip.left)).max(0.);
         let next = (self.home_scroll + delta).clamp(0., max);
         if next != self.home_scroll {
             self.home_scroll = next;
@@ -543,10 +613,11 @@ impl State {
         let previous_home = self.home_scroll;
         if let Some(control) = controls.iter().find(|c| c.target == self.focus) {
             if self.page == Page::Home && matches!(self.focus, Target::App(_)) {
-                if control.rect.x < HOME_STRIP_LEFT {
-                    self.home_scroll += control.rect.x - HOME_STRIP_LEFT;
-                } else if control.rect.x + control.rect.w > HOME_STRIP_RIGHT {
-                    self.home_scroll += control.rect.x + control.rect.w - HOME_STRIP_RIGHT;
+                let strip = self.favorites_strip();
+                if control.rect.x < strip.left {
+                    self.home_scroll += control.rect.x - strip.left;
+                } else if control.rect.x + control.rect.w > strip.right {
+                    self.home_scroll += control.rect.x + control.rect.w - strip.right;
                 }
             }
             if matches!(
@@ -1046,14 +1117,15 @@ impl State {
             return vec![];
         };
         let (x, y) = current.rect.center();
+        let strip = self.favorites_strip();
         let next = controls
             .iter()
             .filter(|candidate| candidate.target != self.focus)
             .filter(|candidate| {
                 self.page != Page::Home
                     || !matches!(candidate.target, Target::App(_))
-                    || (candidate.rect.x >= HOME_STRIP_LEFT - 0.1
-                        && candidate.rect.x + candidate.rect.w <= HOME_STRIP_RIGHT + 0.1)
+                    || (candidate.rect.x >= strip.left - 0.1
+                        && candidate.rect.x + candidate.rect.w <= strip.right + 0.1)
             })
             .filter_map(|candidate| {
                 // Header controls never steal an Up route from the active tab.

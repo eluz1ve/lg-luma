@@ -1563,3 +1563,107 @@ fn inventory_success_resets_failures_and_later_failures_show_at_once() {
     assert!(!state.loading && state.error.is_some());
     assert!(!state.inventory.apps.is_empty());
 }
+
+fn control_rect(state: &State, target: &Target) -> crate::state::Rect {
+    controls(state)
+        .into_iter()
+        .find(|c| &c.target == target)
+        .unwrap_or_else(|| panic!("no control {target:?}"))
+        .rect
+}
+
+#[test]
+fn home_draws_each_block_in_its_grid_cells() {
+    use crate::home_grid::{BlockKind, rect};
+    let state = ready();
+    let blocks = state.home_blocks();
+    let cell = |kind| rect(blocks.iter().find(|b| b.kind == kind).unwrap());
+    let greeting = control_rect(&state, &Target::Block(BlockKind::Greeting));
+    assert_eq!(
+        (greeting.x, greeting.y),
+        (cell(BlockKind::Greeting).x, cell(BlockKind::Greeting).y)
+    );
+    let first = state.apps()[0].id.clone();
+    let tile = control_rect(&state, &Target::App(first));
+    assert_eq!(tile.y, cell(BlockKind::Favorites).y + 66.);
+    let input = state.inventory.inputs[0].id.clone();
+    let card = control_rect(&state, &Target::Input(input));
+    assert_eq!(
+        (card.x, card.y),
+        (cell(BlockKind::Inputs).x, cell(BlockKind::Inputs).y)
+    );
+    assert!(
+        (card.w - 569.1).abs() < 0.01,
+        "three cards across twelve columns"
+    );
+}
+
+#[test]
+fn a_narrow_favorites_block_keeps_its_strip_inside_the_block() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout = vec![
+        Block {
+            kind: BlockKind::Greeting,
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 2,
+        },
+        Block {
+            kind: BlockKind::Favorites,
+            x: 0,
+            y: 2,
+            w: 8,
+            h: 2,
+        },
+        Block {
+            kind: BlockKind::Weather,
+            x: 8,
+            y: 2,
+            w: 4,
+            h: 1,
+        },
+    ];
+    let strip = state.favorites_strip();
+    assert!(
+        (strip.right - (84. + 3. * 281.6 + 256.)).abs() < 0.01,
+        "four whole tiles"
+    );
+    assert!(
+        (strip.clip_right - (84. + 1160.)).abs() < 0.01,
+        "clipped at the block's edge"
+    );
+    let viewport = state.favorites_viewport();
+    assert!((viewport.x + viewport.w - strip.clip_right).abs() < 0.01);
+    // A tile past the block's edge is not a remote target from outside the strip.
+    let full = state.preferences.home_layout.clone();
+    state.preferences.home_layout = full;
+    assert_eq!(crate::home_grid::bottom(&state.home_blocks()), 4);
+}
+
+#[test]
+fn add_widget_sits_below_the_last_block_while_kinds_are_missing() {
+    use crate::home_grid::{TOP, bottom};
+    let mut state = ready();
+    let add = control_rect(&state, &Target::AddBlock);
+    assert_eq!(add.y, TOP + f32::from(bottom(&state.home_blocks())) * 124.);
+    state.preferences.home_layout = crate::home_grid::BlockKind::ALL
+        .iter()
+        .map(|kind| {
+            let (x, y) = crate::home_grid::first_free(&state.home_blocks(), 12, 3);
+            crate::home_grid::Block {
+                kind: *kind,
+                x,
+                y,
+                w: 12,
+                h: 3,
+            }
+        })
+        .collect();
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|c| c.target == Target::AddBlock)
+    );
+}

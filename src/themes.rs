@@ -15,6 +15,8 @@ pub struct Theme {
     pub surface: u32,
     pub surface_alpha: f32,
     pub radius: f32,
+    /// Whether line widgets (weather) sit on a card; Classic keeps today's bare weather line.
+    pub cards: bool,
     pub layout: fn() -> Vec<Block>,
 }
 
@@ -32,6 +34,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0x171c20,
         surface_alpha: 0.72,
         radius: 20.,
+        cards: false,
         layout: classic_layout,
     },
     Theme {
@@ -43,6 +46,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0x0a0a0e,
         surface_alpha: 0.8,
         radius: 12.,
+        cards: true,
         layout: || {
             vec![
                 block(BlockKind::Greeting, 0, 0, 6, 1),
@@ -62,6 +66,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0xffffff,
         surface_alpha: 0.07,
         radius: 30.,
+        cards: true,
         layout: || {
             vec![
                 block(BlockKind::Greeting, 0, 0, 12, 3),
@@ -79,6 +84,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0x081420,
         surface_alpha: 0.72,
         radius: 16.,
+        cards: true,
         layout: || {
             vec![
                 block(BlockKind::Greeting, 0, 0, 6, 1),
@@ -99,6 +105,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0x160a22,
         surface_alpha: 0.74,
         radius: 8.,
+        cards: true,
         layout: || {
             vec![
                 block(BlockKind::Greeting, 0, 0, 8, 1),
@@ -118,6 +125,7 @@ pub static THEMES: [Theme; 6] = [
         surface: 0xf0f8f0,
         surface_alpha: 0.16,
         radius: 24.,
+        cards: true,
         layout: || {
             vec![
                 block(BlockKind::Greeting, 0, 0, 7, 2),
