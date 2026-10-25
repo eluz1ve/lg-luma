@@ -116,6 +116,37 @@ impl Rect {
     }
 }
 
+/// How an esports widget lays out its match cards: the whole columns in view (each `rows`
+/// cards tall), the cards' size and the pitch between columns. With more columns than fit, the
+/// cards narrow so that a quarter of the next column shows at the widget's edge.
+#[derive(Clone, Copy, Debug)]
+pub struct MatchCards {
+    pub columns: usize,
+    pub rows: usize,
+    pub width: f32,
+    pub height: f32,
+    pub pitch: f32,
+}
+
+pub fn match_cards(rect: Rect, count: usize) -> MatchCards {
+    const GAP: f32 = 14.;
+    let (inner_w, inner_h) = (rect.w - 32., rect.h - 70.);
+    let rows = ((inner_h + GAP) / (200. + GAP)).floor().max(1.) as usize;
+    let columns = ((inner_w + GAP) / (316. + GAP)).floor().max(1.) as usize;
+    let width = if count.div_ceil(rows) > columns {
+        (inner_w - GAP * columns as f32) / (columns as f32 + 0.25)
+    } else {
+        (inner_w - GAP * (columns - 1) as f32) / columns as f32
+    };
+    MatchCards {
+        columns,
+        rows,
+        width,
+        height: (inner_h - GAP * (rows - 1) as f32) / rows as f32,
+        pitch: width + GAP,
+    }
+}
+
 /// Where Home's favourites strip lies: tiles start at `left`, whole tiles end at `right`, and
 /// drawing is clipped to `clip_left`..`clip_right` (the screen edges when the block reaches them).
 #[derive(Clone, Copy, Debug)]
@@ -282,6 +313,8 @@ pub struct State {
     pub subpage: Option<Subpage>,
     pub scroll: f32,
     pub home_scroll: f32,
+    /// The first column of match cards each esports widget shows.
+    pub esports_scroll: std::collections::HashMap<u8, usize>,
     pub overlay: Option<Overlay>,
     pub moving: Option<String>,
     pub loading: bool,
@@ -326,6 +359,7 @@ impl State {
             subpage: None,
             scroll: 0.,
             home_scroll: 0.,
+            esports_scroll: Default::default(),
             overlay: None,
             moving: None,
             loading: false,
@@ -584,6 +618,14 @@ impl State {
     }
 
     /// The matches an esports widget shows: its disciplines and filter, live first, then by start.
+    /// Where an esports widget lies on Home, before scrolling.
+    fn esports_rect(&self, instance: u8) -> Option<Rect> {
+        self.home_blocks()
+            .iter()
+            .find(|block| block.kind == crate::home_grid::BlockKind::Esports(instance))
+            .map(crate::home_grid::rect)
+    }
+
     pub fn esports_matches(&self, instance: u8) -> Vec<&crate::feeds::CsMatch> {
         let widget = self.esports_widget(instance);
         let mut matches: Vec<_> = widget
@@ -985,10 +1027,30 @@ impl State {
         if self.page == Page::Home {
             self.scroll_favorites(0.);
         }
-        if self.scroll != previous || self.home_scroll != previous_home {
+        let carousel = self.reveal_match();
+        if self.scroll != previous || self.home_scroll != previous_home || carousel {
             self.dirty = true;
         }
-        self.scroll != previous || self.home_scroll != previous_home
+        self.scroll != previous || self.home_scroll != previous_home || carousel
+    }
+
+    /// Scrolls a focused match card's column fully into its widget, however focus got there
+    /// (a card cut off at the edge is a control too); true when it moved.
+    fn reveal_match(&mut self) -> bool {
+        let Target::Match(instance, index) = self.focus else {
+            return false;
+        };
+        let Some(rect) = self.esports_rect(instance) else {
+            return false;
+        };
+        let cards = match_cards(rect, self.esports_matches(instance).len());
+        let column = index / cards.rows;
+        let first = self.esports_scroll.get(&instance).copied().unwrap_or(0);
+        let wanted = first
+            .min(column)
+            .max((column + 1).saturating_sub(cards.columns));
+        self.esports_scroll.insert(instance, wanted);
+        wanted != first
     }
 
     /// Hover and pointer-down must not move the control before pointer-up.
@@ -1405,6 +1467,41 @@ impl State {
                         return vec![];
                     }
                     _ => {}
+                }
+            }
+            // An esports widget's cards scroll: Left and Right step a column, past its edge too.
+            if let Target::Match(instance, index) = self.focus
+                && matches!(direction, Direction::Left | Direction::Right)
+                && let Some(rect) = self.esports_rect(instance)
+            {
+                let count = self.esports_matches(instance).len();
+                let cards = match_cards(rect, count);
+                let next = match direction {
+                    Direction::Left => index.checked_sub(cards.rows),
+                    _ if index + cards.rows < count => Some(index + cards.rows),
+                    // The last column may hold fewer cards than this one.
+                    _ if (index / cards.rows + 1) * cards.rows < count => Some(count - 1),
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    self.focus(Target::Match(instance, next), controls);
+                    return vec![];
+                }
+                // The row ends at its last card: Right goes on only to a block beside the
+                // widget, never up to the TV settings button.
+                let here = controls.iter().find(|c| c.target == self.focus);
+                let beside = here.is_some_and(|here| {
+                    let a = here.rect;
+                    controls.iter().any(|c| {
+                        !matches!(c.target, Target::Match(other, _) if other == instance)
+                            && c.rect.y >= 150.
+                            && c.rect.x >= a.x + a.w
+                            && c.rect.y < a.y + a.h
+                            && c.rect.y + c.rect.h > a.y
+                    })
+                });
+                if matches!(direction, Direction::Right) && !beside {
+                    return vec![];
                 }
             }
             if matches!(self.focus, Target::Nav(_)) && matches!(direction, Direction::Down) {

@@ -3813,27 +3813,84 @@ fn esports_block(
             },
         );
     }
-    // As many cards as fit at 316 × 200 or more, row by row; a two-row widget has one
-    // row of compact cards.
+    // Cards in columns of one or two, as many whole columns as fit; like the favourites, the
+    // row runs to the widget's edge with the next column cut off, and Left/Right scroll it.
     let several = widget.games.len() > 1;
+    let count = matches.len();
+    let cards = crate::state::match_cards(rect, count);
+    let columns = count.div_ceil(cards.rows);
+    let first = state
+        .esports_scroll
+        .get(&instance)
+        .copied()
+        .unwrap_or(0)
+        .min(columns.saturating_sub(cards.columns));
+    if columns > cards.columns {
+        let from = first * cards.rows + 1;
+        let to = ((first + cards.columns) * cards.rows).min(count);
+        let style = text(15.2, 600, 0.02);
+        let label = format!("{from}–{to} / {count}");
+        let w = assets.width(&label, style) + 4.;
+        out.text(
+            &label,
+            Rect::new(rect.x + 24. + title_w - w, rect.y + 22., w, 20.),
+            style,
+            c(0xf5f5f5, 0.7),
+            false,
+        );
+    }
     let inner = Rect::new(rect.x + 16., rect.y + 56., rect.w - 32., rect.h - 70.);
-    let gap = 14.;
-    let columns = ((inner.w + gap) / (316. + gap)).floor().max(1.) as usize;
-    let rows = ((inner.h + gap) / (200. + gap)).floor().max(1.) as usize;
-    let card_w = (inner.w - gap * (columns - 1) as f32) / columns as f32;
-    let card_h = (inner.h - gap * (rows - 1) as f32) / rows as f32;
-    for (index, found) in matches.iter().take(columns * rows).enumerate() {
+    let clip = overlap(
+        Rect::new(rect.x + 1., rect.y + 46., rect.w - 2., rect.h - 47.),
+        state.content_viewport(),
+    );
+    let fade = columns > first + cards.columns;
+    if fade {
+        out.draw.push(Draw::EdgeFadeX(Some([
+            0.,
+            0.,
+            inner.x + inner.w - 72.,
+            rect.x + rect.w,
+        ])));
+    }
+    for (index, found) in matches.iter().enumerate() {
+        let column = index / cards.rows;
+        if column < first || column > first + cards.columns {
+            continue;
+        }
         let card = Rect::new(
-            inner.x + (index % columns) as f32 * (card_w + gap),
-            inner.y + (index / columns) as f32 * (card_h + gap),
-            card_w,
-            card_h,
+            inner.x + (column - first) as f32 * cards.pitch,
+            inner.y + (index % cards.rows) as f32 * (cards.height + 14.),
+            cards.width,
+            cards.height,
         );
         let target = Target::Match(instance, index);
         let focused = state.focus == target && !state.pointer;
+        // Each card keeps to itself (its focus ring included) and to the widget.
+        out.draw
+            .push(Draw::Clip(Some(overlap(card.inset(-8.), clip))));
         match_card(out, state, assets, found, card, several, focused, now);
-        out.control(target, card, true);
+        let shown = overlap(card, clip);
+        if shown.w > 40. {
+            out.control(target, shown, true);
+        }
     }
+    if fade {
+        out.draw.push(Draw::EdgeFadeX(None));
+    }
+    out.draw.push(Draw::Clip(Some(state.content_viewport())));
+}
+
+/// The part of `a` inside `b`, empty when they do not meet.
+fn overlap(a: Rect, b: Rect) -> Rect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    Rect::new(
+        x,
+        y,
+        ((a.x + a.w).min(b.x + b.w) - x).max(0.),
+        ((a.y + a.h).min(b.y + b.h) - y).max(0.),
+    )
 }
 
 /// One match on Home: event and status, both teams with their maps won, then the live map or
@@ -3876,32 +3933,26 @@ fn match_card(
     let pad = 18.;
     let right = card.x + card.w - pad;
 
-    // Top: league logo and event, then LIVE or the start.
+    // Top: LIVE or the start, then the league's logo and event in what is left.
     let top = card.y + if compact { 13. } else { 18. };
-    let status_w = if found.running {
-        live_badge(out, language, Rect::new(right - 56., top, 56., 22.), 13.);
-        56.
+    let mut x = card.x + pad;
+    if found.running {
+        live_badge(out, language, Rect::new(x, top, 52., 22.), 13.);
+        x += 52. + 12.;
     } else {
         let style = text(16., 600, 0.);
         let start = match_time(&found.begin_at, now, language);
         let w = assets.width(&start, style) + 4.;
-        out.text(
-            &start,
-            Rect::new(right - w, top + 1., w, 22.),
-            style,
-            dim(0.88),
-            false,
-        );
-        w
-    };
-    let mut x = card.x + pad;
+        out.text(&start, Rect::new(x, top + 1., w, 22.), style, WHITE, false);
+        x += w + 12.;
+    }
     if let Some(image) = feed_image(state, &found.league_image) {
         out.draw.push(Draw::AppImage(
             image.clone(),
             Rect::new(x, top - 1., 24., 24.),
             [1.; 4],
         ));
-        x += 34.;
+        x += 32.;
     }
     let event = if several {
         format!("{} · {}", game_name(&found.game), found.event)
@@ -3909,14 +3960,16 @@ fn match_card(
         found.event.clone()
     };
     let event_style = text(15.2, 500, 0.);
-    let event_w = right - status_w - 12. - x;
-    out.text(
-        fit(assets, &event, event_style, event_w),
-        Rect::new(x, top + 2., event_w, 20.),
-        event_style,
-        dim(0.6),
-        false,
-    );
+    let event_w = right - x;
+    if event_w > 24. {
+        out.text(
+            fit(assets, &event, event_style, event_w),
+            Rect::new(x, top + 2., event_w, 20.),
+            event_style,
+            dim(0.6),
+            false,
+        );
+    }
 
     // Teams, the side ahead in white.
     let (row_h, logo, name_size, score_size) = if compact {

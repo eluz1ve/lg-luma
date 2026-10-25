@@ -1967,6 +1967,60 @@ fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
 }
 
 #[test]
+fn the_esports_widget_scrolls_through_every_match() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 12,
+        h: 2,
+    });
+    let matches = (1..=8)
+        .map(|id| {
+            let mut found = esports_match("csgo", id, "s");
+            found.event = format!("Event {id}");
+            found.running = false;
+            found
+        })
+        .collect();
+    state.feeds.matches.insert("csgo".into(), matches);
+    let shown = |state: &State| {
+        scene_text(state)
+            .into_iter()
+            .filter_map(|t| t.strip_prefix("Event ").map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    // A full-width widget holds five cards and the edge of a sixth; the rest are a press away.
+    assert_eq!(shown(&state), "1,2,3,4,5,6");
+    assert!(scene_text(&state).iter().any(|t| t == "1–5 / 8"));
+    state.focus = Target::Match(0, 4);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Match(0, 5), "past the edge");
+    assert_eq!(shown(&state), "2,3,4,5,6,7");
+    assert!(scene_text(&state).iter().any(|t| t == "2–6 / 8"));
+    for _ in 0..4 {
+        state.direction(Direction::Right, &controls(&state));
+    }
+    assert_eq!(state.focus, Target::Match(0, 7), "stops at the last");
+    assert_eq!(shown(&state), "4,5,6,7,8");
+    for _ in 0..4 {
+        state.direction(Direction::Left, &controls(&state));
+    }
+    assert_eq!(state.focus, Target::Match(0, 3));
+    assert_eq!(shown(&state), "4,5,6,7,8", "a card in view does not scroll");
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Match(0, 2));
+    assert_eq!(shown(&state), "3,4,5,6,7,8");
+    // Arriving on the card cut off at the edge, from anywhere, scrolls it into view.
+    state.esports_scroll.clear();
+    state.focus(Target::Match(0, 5), &controls(&state));
+    assert_eq!(shown(&state), "2,3,4,5,6,7");
+}
+
+#[test]
 fn a_match_names_its_maps_with_scores_picks_and_their_source() {
     use crate::feeds::{GameState, MatchGame};
     use crate::home_grid::{Block, BlockKind};
