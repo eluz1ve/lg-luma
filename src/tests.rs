@@ -1603,9 +1603,10 @@ fn home_draws_each_block_in_its_grid_cells() {
         (card.x, card.y),
         (cell(BlockKind::Inputs).x, cell(BlockKind::Inputs).y)
     );
-    assert!(
-        (card.w - 569.1).abs() < 0.01,
-        "three cards across twelve columns"
+    assert_eq!(
+        card.w,
+        crate::design::WIDE_W,
+        "a wide card, as in every row"
     );
 }
 
@@ -1993,31 +1994,216 @@ fn the_esports_widget_scrolls_through_every_match() {
             .collect::<Vec<_>>()
             .join(",")
     };
-    // A full-width widget holds five cards and the edge of a sixth; the rest are a press away.
-    assert_eq!(shown(&state), "1,2,3,4,5,6");
-    assert!(scene_text(&state).iter().any(|t| t == "1–5 / 8"));
-    state.focus = Target::Match(0, 4);
+    // A full-width row holds three wide cards and the edge of a fourth; the rest are a press
+    // away, and once it scrolls the card before shows cut off at the left.
+    assert_eq!(shown(&state), "1,2,3,4");
+    assert!(scene_text(&state).iter().any(|t| t == "1–3 / 8"));
+    state.focus = Target::Match(0, 2);
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Match(0, 5), "past the edge");
-    assert_eq!(shown(&state), "2,3,4,5,6,7");
-    assert!(scene_text(&state).iter().any(|t| t == "2–6 / 8"));
-    for _ in 0..4 {
+    assert_eq!(state.focus, Target::Match(0, 3), "past the edge");
+    assert_eq!(shown(&state), "1,2,3,4,5");
+    assert!(scene_text(&state).iter().any(|t| t == "2–4 / 8"));
+    for _ in 0..6 {
         state.direction(Direction::Right, &controls(&state));
     }
     assert_eq!(state.focus, Target::Match(0, 7), "stops at the last");
-    assert_eq!(shown(&state), "4,5,6,7,8");
-    for _ in 0..4 {
-        state.direction(Direction::Left, &controls(&state));
-    }
-    assert_eq!(state.focus, Target::Match(0, 3));
-    assert_eq!(shown(&state), "4,5,6,7,8", "a card in view does not scroll");
+    assert_eq!(shown(&state), "5,6,7,8");
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::Match(0, 2));
-    assert_eq!(shown(&state), "3,4,5,6,7,8");
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Match(0, 5));
+    assert_eq!(shown(&state), "5,6,7,8", "a card in view does not scroll");
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Match(0, 4));
+    assert_eq!(shown(&state), "4,5,6,7,8");
     // Arriving on the card cut off at the edge, from anywhere, scrolls it into view.
-    state.esports_scroll.clear();
-    state.focus(Target::Match(0, 5), &controls(&state));
-    assert_eq!(shown(&state), "2,3,4,5,6,7");
+    state.row_scroll.clear();
+    state.focus(Target::Match(0, 3), &controls(&state));
+    assert_eq!(shown(&state), "1,2,3,4,5");
+}
+
+#[test]
+fn every_row_has_the_same_header_and_cards() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    // Rows on screen at once, so none is cut off by the bottom of the screen.
+    let row = |kind, y| Block {
+        kind,
+        x: 0,
+        y,
+        w: 12,
+        h: 2,
+    };
+    state.preferences.home_layout = vec![
+        Block {
+            kind: BlockKind::Greeting,
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 1,
+        },
+        row(BlockKind::Esports(0), 1),
+        row(BlockKind::Premieres, 3),
+        row(BlockKind::Inputs, 5),
+        row(BlockKind::Favorites, 7),
+    ];
+    state
+        .feeds
+        .matches
+        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
+    state.feeds.premieres = vec![crate::feeds::Premiere {
+        title: "Lupin".into(),
+        season: 4,
+        date: "2026-10-23".into(),
+        poster: None,
+    }];
+    let scene = scene(&state);
+    let card = |wanted: &dyn Fn(&Target) -> bool| {
+        scene
+            .controls
+            .iter()
+            .find(|c| wanted(&c.target))
+            .map(|c| (c.rect.w, c.rect.h))
+    };
+    let wide = Some((crate::design::WIDE_W, 158.));
+    assert_eq!(card(&|t| matches!(t, Target::Match(0, 0))), wide);
+    assert_eq!(card(&|t| matches!(t, Target::Poster(0))), wide);
+    assert_eq!(card(&|t| matches!(t, Target::Input(_))), wide);
+    let texts = scene_text(&state);
+    for title in [
+        "Esports · Counter-Strike 2",
+        "Season premieres",
+        "Inputs",
+        "Favorites",
+    ] {
+        assert!(texts.iter().any(|t| t == title), "{title}");
+    }
+}
+
+#[test]
+fn premieres_and_inputs_scroll_like_every_row() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Premieres,
+        x: 0,
+        y: 6,
+        w: 12,
+        h: 2,
+    });
+    state.feeds.premieres = (1..=6)
+        .map(|n| crate::feeds::Premiere {
+            title: format!("Show {n}"),
+            season: 1,
+            date: "2026-10-23".into(),
+            poster: None,
+        })
+        .collect();
+    let shown = |state: &State| {
+        scene_text(state)
+            .into_iter()
+            .filter_map(|t| t.strip_prefix("Show ").map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    assert_eq!(
+        shown(&state),
+        "1,2,3,4",
+        "three posters and the edge of a fourth"
+    );
+    state.focus = Target::Poster(2);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Poster(3));
+    assert_eq!(shown(&state), "1,2,3,4,5");
+    // Inputs in a one-cell block: a compact row of wide cards, no header.
+    let mut state = ready();
+    let inputs: Vec<_> = state
+        .inventory
+        .inputs
+        .iter()
+        .filter(|input| state.preferences.input_visible(input))
+        .map(|input| input.id.clone())
+        .collect();
+    assert!(inputs.len() >= 2);
+    state.preferences.home_layout = vec![
+        Block::new(BlockKind::Greeting, 0, 0),
+        Block::new(BlockKind::Favorites, 0, 2),
+        Block {
+            kind: BlockKind::Inputs,
+            x: 0,
+            y: 4,
+            w: 6,
+            h: 1,
+        },
+    ];
+    let row = controls(&state)
+        .into_iter()
+        .find(|c| c.target == Target::Input(inputs[0].clone()))
+        .unwrap();
+    assert_eq!((row.rect.w, row.rect.h), (crate::design::WIDE_W, 100.));
+    assert!(!scene_text(&state).iter().any(|t| t == "Inputs"));
+    state.focus = Target::Input(inputs[0].clone());
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(
+        state.focus,
+        Target::Input(inputs[1].clone()),
+        "the next input"
+    );
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Input(inputs[1].clone()) && c.rect.w > 500.),
+        "scrolled into view"
+    );
+}
+
+#[test]
+fn glance_widgets_all_sit_on_cards_or_none_do() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.feeds.quotes = crate::feeds::COINS.map(quote).to_vec();
+    let layout = vec![
+        Block {
+            kind: BlockKind::Greeting,
+            x: 0,
+            y: 0,
+            w: 6,
+            h: 1,
+        },
+        Block {
+            kind: BlockKind::Weather,
+            x: 6,
+            y: 0,
+            w: 6,
+            h: 1,
+        },
+        Block {
+            kind: BlockKind::Crypto,
+            x: 0,
+            y: 1,
+            w: 6,
+            h: 1,
+        },
+        Block::new(BlockKind::Favorites, 0, 2),
+    ];
+    for (theme, cards) in [("classic", false), ("cinema", true)] {
+        state.preferences.home_theme = theme.into();
+        state.preferences.home_layout = layout.clone();
+        let theme = crate::themes::theme(theme);
+        let surface = crate::design::color(theme.surface, theme.surface_alpha);
+        let carded = |kind: BlockKind| {
+            let rect = crate::home_grid::rect(layout.iter().find(|b| b.kind == kind).unwrap());
+            scene(&state).draw.iter().any(|draw| {
+                matches!(draw, crate::renderer::Draw::Shape(r, _, 0., color)
+                    if *color == surface && r.x == rect.x && r.y == rect.y && r.w == rect.w)
+            })
+        };
+        assert_eq!(carded(BlockKind::Weather), cards, "{} weather", theme.id);
+        assert_eq!(carded(BlockKind::Crypto), cards, "{} crypto", theme.id);
+        assert!(
+            !carded(BlockKind::Greeting),
+            "the greeting is the page's title"
+        );
+    }
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use crate::i18n::Language;
 use crate::model::{
-    App, BACKGROUNDS, CATEGORIES, INPUT_NAME_LIMIT, InputMode, Inventory, Preferences, UiSize,
-    clean_input_name,
+    App, BACKGROUNDS, CATEGORIES, INPUT_NAME_LIMIT, Input, InputMode, Inventory, Preferences,
+    UiSize, clean_input_name,
 };
 use crate::weather::{self, Unit};
 use serde::Serialize;
@@ -113,37 +113,6 @@ impl Rect {
     }
     pub fn inset(self, n: f32) -> Self {
         Self::new(self.x + n, self.y + n, self.w - 2. * n, self.h - 2. * n)
-    }
-}
-
-/// How an esports widget lays out its match cards: the whole columns in view (each `rows`
-/// cards tall), the cards' size and the pitch between columns. With more columns than fit, the
-/// cards narrow so that a quarter of the next column shows at the widget's edge.
-#[derive(Clone, Copy, Debug)]
-pub struct MatchCards {
-    pub columns: usize,
-    pub rows: usize,
-    pub width: f32,
-    pub height: f32,
-    pub pitch: f32,
-}
-
-pub fn match_cards(rect: Rect, count: usize) -> MatchCards {
-    const GAP: f32 = 14.;
-    let (inner_w, inner_h) = (rect.w - 32., rect.h - 70.);
-    let rows = ((inner_h + GAP) / (200. + GAP)).floor().max(1.) as usize;
-    let columns = ((inner_w + GAP) / (316. + GAP)).floor().max(1.) as usize;
-    let width = if count.div_ceil(rows) > columns {
-        (inner_w - GAP * columns as f32) / (columns as f32 + 0.25)
-    } else {
-        (inner_w - GAP * (columns - 1) as f32) / columns as f32
-    };
-    MatchCards {
-        columns,
-        rows,
-        width,
-        height: (inner_h - GAP * (rows - 1) as f32) / rows as f32,
-        pitch: width + GAP,
     }
 }
 
@@ -313,8 +282,8 @@ pub struct State {
     pub subpage: Option<Subpage>,
     pub scroll: f32,
     pub home_scroll: f32,
-    /// The first column of match cards each esports widget shows.
-    pub esports_scroll: std::collections::HashMap<u8, usize>,
+    /// The first card each row of cards shows (esports, premieres, inputs); see design::Track.
+    pub row_scroll: std::collections::HashMap<crate::home_grid::BlockKind, usize>,
     pub overlay: Option<Overlay>,
     pub moving: Option<String>,
     pub loading: bool,
@@ -359,7 +328,7 @@ impl State {
             subpage: None,
             scroll: 0.,
             home_scroll: 0.,
-            esports_scroll: Default::default(),
+            row_scroll: Default::default(),
             overlay: None,
             moving: None,
             loading: false,
@@ -618,12 +587,50 @@ impl State {
     }
 
     /// The matches an esports widget shows: its disciplines and filter, live first, then by start.
-    /// Where an esports widget lies on Home, before scrolling.
-    fn esports_rect(&self, instance: u8) -> Option<Rect> {
-        self.home_blocks()
+    /// The visible inputs, in Home's order.
+    pub fn home_inputs(&self) -> Vec<&Input> {
+        self.inventory
+            .inputs
             .iter()
-            .find(|block| block.kind == crate::home_grid::BlockKind::Esports(instance))
-            .map(crate::home_grid::rect)
+            .filter(|input| self.preferences.input_visible(input))
+            .collect()
+    }
+
+    /// A card in a row of cards: its block, its place in the row and how many cards the row
+    /// has. The favourites scroll on their own.
+    pub fn row_of(&self, target: &Target) -> Option<(crate::home_grid::Block, usize, usize)> {
+        use crate::home_grid::BlockKind;
+        let (kind, index, count) = match target {
+            Target::Match(instance, index) => (
+                BlockKind::Esports(*instance),
+                *index,
+                self.esports_matches(*instance).len(),
+            ),
+            Target::Poster(index) => (BlockKind::Premieres, *index, self.feeds.premieres.len()),
+            Target::Input(id) => {
+                let inputs = self.home_inputs();
+                let index = inputs.iter().position(|input| &input.id == id)?;
+                (BlockKind::Inputs, index, inputs.len())
+            }
+            _ => return None,
+        };
+        let block = *self.home_blocks().iter().find(|block| block.kind == kind)?;
+        Some((block, index, count))
+    }
+
+    /// The card at `index` of the row `target` is in.
+    fn row_target(&self, target: &Target, index: usize) -> Option<Target> {
+        Some(match target {
+            Target::Match(instance, _) => Target::Match(*instance, index),
+            Target::Poster(_) => Target::Poster(index),
+            Target::Input(_) => Target::Input(self.home_inputs().get(index)?.id.clone()),
+            _ => return None,
+        })
+    }
+
+    /// A row's track, for the cards of `block`.
+    pub fn row_track(block: &crate::home_grid::Block) -> crate::design::Track {
+        crate::design::track(block, crate::home_grid::rect(block), crate::design::WIDE_W)
     }
 
     pub fn esports_matches(&self, instance: u8) -> Vec<&crate::feeds::CsMatch> {
@@ -1027,29 +1034,23 @@ impl State {
         if self.page == Page::Home {
             self.scroll_favorites(0.);
         }
-        let carousel = self.reveal_match();
+        let carousel = self.reveal_row();
         if self.scroll != previous || self.home_scroll != previous_home || carousel {
             self.dirty = true;
         }
         self.scroll != previous || self.home_scroll != previous_home || carousel
     }
 
-    /// Scrolls a focused match card's column fully into its widget, however focus got there
-    /// (a card cut off at the edge is a control too); true when it moved.
-    fn reveal_match(&mut self) -> bool {
-        let Target::Match(instance, index) = self.focus else {
+    /// Scrolls a focused card of a row fully into view, however focus got there (the card cut
+    /// off at the edge is a control too); true when the row moved.
+    fn reveal_row(&mut self) -> bool {
+        let Some((block, index, _)) = self.row_of(&self.focus) else {
             return false;
         };
-        let Some(rect) = self.esports_rect(instance) else {
-            return false;
-        };
-        let cards = match_cards(rect, self.esports_matches(instance).len());
-        let column = index / cards.rows;
-        let first = self.esports_scroll.get(&instance).copied().unwrap_or(0);
-        let wanted = first
-            .min(column)
-            .max((column + 1).saturating_sub(cards.columns));
-        self.esports_scroll.insert(instance, wanted);
+        let track = Self::row_track(&block);
+        let first = self.row_scroll.get(&block.kind).copied().unwrap_or(0);
+        let wanted = track.reveal(first, index);
+        self.row_scroll.insert(block.kind, wanted);
         wanted != first
     }
 
@@ -1469,31 +1470,26 @@ impl State {
                     _ => {}
                 }
             }
-            // An esports widget's cards scroll: Left and Right step a column, past its edge too.
-            if let Target::Match(instance, index) = self.focus
-                && matches!(direction, Direction::Left | Direction::Right)
-                && let Some(rect) = self.esports_rect(instance)
+            // Rows of cards scroll: Left and Right step a card, past the row's edge too.
+            if matches!(direction, Direction::Left | Direction::Right)
+                && let Some((block, index, count)) = self.row_of(&self.focus)
             {
-                let count = self.esports_matches(instance).len();
-                let cards = match_cards(rect, count);
                 let next = match direction {
-                    Direction::Left => index.checked_sub(cards.rows),
-                    _ if index + cards.rows < count => Some(index + cards.rows),
-                    // The last column may hold fewer cards than this one.
-                    _ if (index / cards.rows + 1) * cards.rows < count => Some(count - 1),
-                    _ => None,
+                    Direction::Left => index.checked_sub(1),
+                    _ => Some(index + 1).filter(|next| *next < count),
                 };
-                if let Some(next) = next {
-                    self.focus(Target::Match(instance, next), controls);
+                if let Some(next) = next.and_then(|next| self.row_target(&self.focus, next)) {
+                    self.focus(next, controls);
                     return vec![];
                 }
-                // The row ends at its last card: Right goes on only to a block beside the
-                // widget, never up to the TV settings button.
+                // The row ends at its last card: Right goes on only to a block beside it,
+                // never up to the TV settings button.
                 let here = controls.iter().find(|c| c.target == self.focus);
                 let beside = here.is_some_and(|here| {
                     let a = here.rect;
                     controls.iter().any(|c| {
-                        !matches!(c.target, Target::Match(other, _) if other == instance)
+                        self.row_of(&c.target)
+                            .is_none_or(|(other, ..)| other.kind != block.kind)
                             && c.rect.y >= 150.
                             && c.rect.x >= a.x + a.w
                             && c.rect.y < a.y + a.h
