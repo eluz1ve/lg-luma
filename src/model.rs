@@ -156,6 +156,9 @@ pub struct Preferences {
     #[serde(deserialize_with = "crate::i18n::deserialize_language")]
     pub language: Language,
     pub ui_scale: UiSize,
+    #[serde(deserialize_with = "crate::home_grid::deserialize_layout")]
+    pub home_layout: Vec<crate::home_grid::Block>,
+    pub home_theme: String,
 }
 
 impl Default for Preferences {
@@ -177,6 +180,8 @@ impl Default for Preferences {
             temperature_unit: Unit::Celsius,
             language: Language::En,
             ui_scale: UiSize::Normal,
+            home_layout: crate::home_grid::classic_layout(),
+            home_theme: "classic".into(),
         }
     }
 }

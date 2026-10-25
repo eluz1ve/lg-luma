@@ -9,6 +9,7 @@ mod damage;
 mod diagnostics;
 mod egl_damage;
 mod font;
+mod home_grid;
 mod i18n;
 #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
 mod luna;
