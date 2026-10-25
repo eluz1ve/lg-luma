@@ -330,6 +330,7 @@ fn effects(
                 });
             }
             Effect::Weather(command) => weather.send(command),
+            Effect::Notify(text) => state.notify(text),
             Effect::HomeTakeover(enable) => {
                 state.notify(state.preferences.language.t(if enable {
                     "homeTakeoverStarting"

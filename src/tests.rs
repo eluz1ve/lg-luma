@@ -1881,16 +1881,11 @@ fn a_premiere_poster_opens_apps_to_watch_it_in() {
     assert!(!apps.is_empty());
     let first = apps[0].clone();
     let effects = state.activate();
-    assert!(effects.contains(&Effect::Launch(first.clone())));
-    assert!(effects.contains(&Effect::Save));
+    assert_eq!(effects[..2], [Effect::Save, Effect::Launch(first.clone())]);
+    // The title follows the launch, so it replaces the generic "Opening…" notice.
+    assert!(matches!(&effects[2], Effect::Notify(text) if text.contains("Lupin")));
     assert_eq!(state.preferences.poster_app, first);
     assert!(state.overlay.is_none());
-    assert!(
-        state
-            .notice
-            .as_ref()
-            .is_some_and(|(text, _)| text.contains("Lupin"))
-    );
     // The app chosen last comes first next time; holding a poster edits its block.
     assert_eq!(state.poster_apps()[0], first);
     state.focus = Target::Poster(0);
@@ -1902,4 +1897,31 @@ fn a_premiere_poster_opens_apps_to_watch_it_in() {
             ..
         })
     ));
+}
+
+#[test]
+fn a_home_theme_is_chosen_in_general_and_replaces_the_layout() {
+    use crate::state::Subpage;
+    let mut state = ready();
+    state.open(2);
+    state.focus = Target::Setting(9);
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Setting(9))
+    );
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.subpage, Some(Subpage::Theme));
+    assert_eq!(state.focus, Target::Choice(0));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.home_theme, "cinema");
+    assert_eq!(state.preferences.background, "midnight");
+    assert_eq!(
+        state.preferences.home_layout,
+        (crate::themes::theme("cinema").layout)()
+    );
+    assert_eq!(state.subpage, Some(Subpage::Theme), "stays open");
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Setting(9));
 }

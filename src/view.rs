@@ -2346,6 +2346,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Temperature) => language.t("temperature"),
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::Appearance) => language.t("uiScale"),
+                Some(Subpage::Theme) => language.t("homeTheme"),
                 Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
                 None => "",
             };
@@ -2466,6 +2467,16 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     state.preferences.temperature_unit == Unit::Fahrenheit,
                 ),
             ],
+            Subpage::Theme => crate::themes::THEMES
+                .iter()
+                .map(|theme| {
+                    (
+                        language.t(theme.name_key),
+                        Some(language.t(theme.hint_key)),
+                        theme.id == state.preferences.home_theme,
+                    )
+                })
+                .collect(),
             Subpage::Appearance => UiSize::ALL
                 .into_iter()
                 .map(|size| {
@@ -2518,6 +2529,20 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         if let Subpage::Input(id) = subpage {
             input_name_rows(out, state, assets, id, 164.8 + 3. * 102.7 + 16. - s);
         }
+        if *subpage == Subpage::Theme {
+            out.text(
+                language.t("homeThemeReplaces"),
+                Rect::new(
+                    660.,
+                    164.8 + crate::themes::THEMES.len() as f32 * 102.7 + 10. - s,
+                    1080.,
+                    24.,
+                ),
+                text(16., 400, 0.),
+                c(0xf5f5f5, 0.55),
+                false,
+            );
+        }
         if *subpage == Subpage::Appearance {
             appearance_preview(out, state, assets, 164.8 + 3. * 102.7 + 8. - s);
         }
@@ -2559,6 +2584,13 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     "uiScale",
                     "grid",
                     Some(language.t(state.preferences.ui_scale.keys().0)),
+                    true,
+                ),
+                (
+                    9,
+                    "homeTheme",
+                    "sparkles",
+                    Some(language.t(crate::themes::theme(&state.preferences.home_theme).name_key)),
                     true,
                 ),
             ]

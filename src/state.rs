@@ -194,6 +194,8 @@ pub enum Subpage {
     Language,
     /// General › Interface scale: Normal, Large or Extra large, with a live preview.
     Appearance,
+    /// General › Home theme: a layout with its wallpaper and look.
+    Theme,
     /// System › Luma as Home: on (replace LG Home) or off.
     HomeTakeover,
 }
@@ -230,6 +232,8 @@ pub enum Effect {
     Weather(weather::Command),
     /// Replace LG Home with Luma (true) or restore it (false), through Homebrew's root service.
     HomeTakeover(bool),
+    /// A notice after the effects before it, e.g. a title to look for once an app opens.
+    Notify(String),
 }
 
 pub const KEYS: [&str; 40] = [
@@ -878,6 +882,7 @@ impl State {
             Some(Subpage::Temperature) => Target::WeatherTemperature,
             Some(Subpage::Language) => Target::Setting(4),
             Some(Subpage::Appearance) => Target::Setting(7),
+            Some(Subpage::Theme) => Target::Setting(9),
             Some(Subpage::HomeTakeover) => Target::Setting(8),
             None => Target::Sidebar(self.section),
         };
@@ -987,6 +992,7 @@ impl State {
                     ) => 2,
                     Some(Subpage::Language) => Language::ALL.len(),
                     Some(Subpage::Appearance) => UiSize::ALL.len(),
+                    Some(Subpage::Theme) => crate::themes::THEMES.len(),
                     _ => 3,
                 };
                 match direction {
@@ -1054,7 +1060,7 @@ impl State {
             }
             if matches!(
                 self.focus,
-                Target::Setting(0 | 1 | 4 | 6 | 7 | 8)
+                Target::Setting(0 | 1 | 4 | 6 | 7 | 8 | 9)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -1736,9 +1742,11 @@ impl State {
                     &[("app", &title), ("title", &premiere.title)],
                 );
                 self.preferences.poster_app = id.clone();
-                let id = id.clone();
-                self.notify(notice);
-                return vec![Effect::Save, Effect::Launch(id)];
+                return vec![
+                    Effect::Save,
+                    Effect::Launch(id.clone()),
+                    Effect::Notify(notice),
+                ];
             }
             Target::AddBlock => {
                 self.overlay = Some(Overlay::AddBlock {
@@ -1812,6 +1820,20 @@ impl State {
                         }
                         return vec![];
                     }
+                    9 => {
+                        self.subpage = Some(Subpage::Theme);
+                        self.focus = Target::Choice(
+                            crate::themes::THEMES
+                                .iter()
+                                .position(|theme| theme.id == self.preferences.home_theme)
+                                .unwrap_or(0),
+                        );
+                        self.scroll = 0.;
+                        if !self.preferences.reduced_motion {
+                            self.panel_started = Some(Instant::now());
+                        }
+                        return vec![];
+                    }
                     8 => {
                         self.subpage = Some(Subpage::HomeTakeover);
                         self.focus = Target::Choice(if self.home_takeover { 0 } else { 1 });
@@ -1877,6 +1899,20 @@ impl State {
                         } else {
                             Unit::Celsius
                         }
+                    }
+                    // A theme stays open too: its wallpaper shows behind the list at once.
+                    Some(Subpage::Theme) => {
+                        let theme =
+                            &crate::themes::THEMES[index.min(crate::themes::THEMES.len() - 1)];
+                        if !self.preferences.reduced_motion
+                            && self.preferences.background != theme.wallpaper
+                        {
+                            self.previous_background =
+                                Some((self.preferences.background.clone(), Instant::now()));
+                        }
+                        crate::themes::apply(&mut self.preferences, theme.id);
+                        self.home_scroll = 0.;
+                        return vec![Effect::Save];
                     }
                     // The scale stays open, so its preview and the screen show the choice.
                     Some(Subpage::Appearance) => {
