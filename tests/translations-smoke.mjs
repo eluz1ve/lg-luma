@@ -100,7 +100,7 @@ function contains(state, key, language) {
   assert.ok(state.ui_text.includes(messages[key][language]), `Missing rendered ${key}/${language}`);
 }
 const picker = 'settings,down,enter,down,down,down,enter';
-const location = 'settings,down,down,down,enter,down,enter';
+const location = 'settings,down,down,down,down,enter,down,enter';
 try {
   await run('cargo', ['build', '--locked', '--package', 'luma']);
   await fs.writeFile(
@@ -181,15 +181,18 @@ try {
   const chineseDialog = await scenario('zh-dialog', 'apps,down,menu');
   contains(chineseDialog, 'removeFavorite', 'zh');
   contains(chineseDialog, 'categoryStreaming', 'zh');
-  const input = await scenario('zh-input-options', 'settings,down,down,down,down,enter,enter');
+  const input = await scenario('zh-input-options', 'settings,down,down,down,down,down,enter,enter');
   for (const key of ['stateOn', 'stateOff', 'stateAuto', 'inputWhenConnected'])
     contains(input, key, 'zh');
-  const background = await scenario('zh-background', 'settings,down,down,enter');
+  const background = await scenario('zh-background', 'settings,down,down,down,enter');
   for (const key of ['slate', 'midnight', 'monumentValley', 'northernLights'])
     contains(background, key, 'zh');
   const keyboard = await scenario('zh-keyboard', 'apps,type:Netflix');
   for (const key of ['findApp', 'space', 'delete', 'clear', 'done']) contains(keyboard, key, 'zh');
-  const weatherSettings = await scenario('zh-weather-settings', 'settings,down,down,down,enter');
+  const weatherSettings = await scenario(
+    'zh-weather-settings',
+    'settings,down,down,down,down,enter',
+  );
   for (const key of ['showWidget', 'location', 'temperature']) contains(weatherSettings, key, 'zh');
   assert.ok(
     !weatherSettings.ui_text.some((label) => label.includes('Open-Meteo')),
@@ -236,7 +239,7 @@ try {
     contains(portugueseKeyboard, key, 'pt');
   const portugueseInputs = await scenario(
     'pt-input-options',
-    'settings,down,down,down,down,enter,enter',
+    'settings,down,down,down,down,down,enter,enter',
   );
   for (const key of ['stateOn', 'stateOff', 'stateAuto', 'inputWhenConnected'])
     contains(portugueseInputs, key, 'pt');

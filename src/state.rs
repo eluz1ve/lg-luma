@@ -7,10 +7,12 @@ use crate::weather::{self, Unit};
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
-pub const WEATHER_SECTION: usize = 2;
-pub const INPUTS_SECTION: usize = 3;
-pub const SYSTEM_SECTION: usize = 4;
-pub const SECTION_COUNT: usize = 5;
+pub const APPEARANCE_SECTION: usize = 1;
+pub const BACKGROUND_SECTION: usize = 2;
+pub const WEATHER_SECTION: usize = 3;
+pub const INPUTS_SECTION: usize = 4;
+pub const SYSTEM_SECTION: usize = 5;
+pub const SECTION_COUNT: usize = 6;
 pub const APPS_COLUMNS: usize = 6;
 pub const HOME_STRIP_LEFT: f32 = 84.;
 // Six favourites in full and the seventh cut off and fading out at the right (Apple TV rows):
@@ -51,6 +53,8 @@ pub enum Target {
     ClockFormat,
     ClockTimeFormat,
     Background(usize),
+    /// A size row in Settings › Appearance, in `UiSizes` order.
+    UiSize(usize),
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -584,7 +588,8 @@ impl State {
 
     fn section_entry(&self) -> Target {
         match self.section {
-            1 => Target::Background(
+            APPEARANCE_SECTION => Target::UiSize(0),
+            BACKGROUND_SECTION => Target::Background(
                 BACKGROUNDS
                     .iter()
                     .position(|(id, _)| *id == self.preferences.background)
@@ -817,6 +822,7 @@ impl State {
             if matches!(
                 self.focus,
                 Target::Setting(0 | 1 | 4 | 6)
+                    | Target::UiSize(_)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -840,7 +846,9 @@ impl State {
                 self.focus(Target::Sidebar(INPUTS_SECTION), controls);
                 return vec![];
             }
-            if self.focus == Target::Setting(0) && matches!(direction, Direction::Up) {
+            if matches!(self.focus, Target::Setting(0) | Target::UiSize(0))
+                && matches!(direction, Direction::Up)
+            {
                 self.focus(Target::Nav(2), controls);
                 return vec![];
             }
@@ -1462,6 +1470,10 @@ impl State {
                     }
                     _ => return vec![Effect::Reload],
                 }
+                return vec![Effect::Save];
+            }
+            Target::UiSize(row) => {
+                self.preferences.sizes.cycle(row);
                 return vec![Effect::Save];
             }
             Target::Background(index) => {

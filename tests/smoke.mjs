@@ -152,7 +152,7 @@ try {
     assert.deepEqual(koreanApp.apps, [id]);
     assert.ok(koreanApp.ui_text.includes(title));
   }
-  const settings = await scenario('settings', 'settings,down,down,enter,down,enter');
+  const settings = await scenario('settings', 'settings,down,down,down,enter,down,enter');
   assert.equal(settings.preferences.background, 'forest');
   const saved = await scenario('saved', 'down,hold,right,back');
   assert.equal(saved.preferences.background, 'forest');
@@ -162,7 +162,7 @@ try {
   assert.equal(clock.focus, 'ClockFormat');
   assert.ok(clock.ui_text.includes('Clock format'));
   assert.ok(clock.ui_text.includes('Time format'));
-  const input = await scenario('inputs', 'settings,down,down,down,down,enter,enter,up,enter');
+  const input = await scenario('inputs', 'settings,down,down,down,down,down,enter,enter,up,enter');
   assert.equal(input.preferences.input_modes['com.webos.app.hdmi1'], 'Off');
   assert.equal(input.subpage, null);
   const closed = await scenario('dialog-closed', 'apps,down,menu,click:100:900');
@@ -261,7 +261,7 @@ try {
 
   const renamedInput = await scenario(
     'input-rename-focus',
-    'settings,down,down,down,down,enter,down,enter,down,type:Console,back',
+    'settings,down,down,down,down,down,enter,down,enter,down,type:Console,back',
   );
   assert.equal(renamedInput.focus, 'InputRename');
   assert.equal(renamedInput.preferences.input_names['com.webos.app.hdmi2'], 'Console');
@@ -283,7 +283,10 @@ try {
   const clockFocus = await scenario('clock-format-focus', `${clockEditor},enter,down`);
   assert.equal(clockFocus.subpage, 'ClockFormat');
   assert.deepEqual(clockFocus.focus, { Choice: 1 });
-  const system = await scenario('system-settings', 'settings,down,down,down,down,down,right,down');
+  const system = await scenario(
+    'system-settings',
+    'settings,down,down,down,down,down,down,right,down',
+  );
   assert.deepEqual(system.focus, { Setting: 5 });
   assert.ok(system.ui_text.includes('Refresh apps & inputs'));
   assert.ok(system.ui_text.includes('Quit app'));
