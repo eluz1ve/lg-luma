@@ -121,6 +121,8 @@ pub enum Subpage {
     Language,
     /// General › Interface scale: Normal, Large or Extra large, with a live preview.
     Appearance,
+    /// System › Luma as Home: on (replace LG Home) or off.
+    HomeTakeover,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -153,6 +155,8 @@ pub enum Effect {
     },
     Quit,
     Weather(weather::Command),
+    /// Replace LG Home with Luma (true) or restore it (false), through Homebrew's root service.
+    HomeTakeover(bool),
 }
 
 pub const KEYS: [&str; 40] = [
@@ -190,6 +194,8 @@ pub struct State {
     pub greeting_name_draft: String,
     pub input_name: String,
     pub recents: crate::recents::Recents,
+    /// Whether this instance runs as the TV's Home (the takeover is enabled).
+    pub home_takeover: bool,
 }
 
 impl State {
@@ -222,6 +228,7 @@ impl State {
             greeting_name_draft: String::new(),
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
+            home_takeover: false,
         }
     }
 
@@ -628,6 +635,7 @@ impl State {
             Some(Subpage::Temperature) => Target::WeatherTemperature,
             Some(Subpage::Language) => Target::Setting(4),
             Some(Subpage::Appearance) => Target::Setting(7),
+            Some(Subpage::HomeTakeover) => Target::Setting(8),
             None => Target::Sidebar(self.section),
         };
         self.scroll = 0.;
@@ -751,7 +759,12 @@ impl State {
             }
             if let Target::Choice(index) = self.focus {
                 let count = match self.subpage {
-                    Some(Subpage::ClockFormat | Subpage::TimeFormat | Subpage::Temperature) => 2,
+                    Some(
+                        Subpage::ClockFormat
+                        | Subpage::TimeFormat
+                        | Subpage::Temperature
+                        | Subpage::HomeTakeover,
+                    ) => 2,
                     Some(Subpage::Language) => Language::ALL.len(),
                     Some(Subpage::Appearance) => UiSize::ALL.len(),
                     _ => 3,
@@ -821,7 +834,7 @@ impl State {
             }
             if matches!(
                 self.focus,
-                Target::Setting(0 | 1 | 4 | 6 | 7)
+                Target::Setting(0 | 1 | 4 | 6 | 7 | 8)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -1465,6 +1478,15 @@ impl State {
                         }
                         return vec![];
                     }
+                    8 => {
+                        self.subpage = Some(Subpage::HomeTakeover);
+                        self.focus = Target::Choice(if self.home_takeover { 0 } else { 1 });
+                        self.scroll = 0.;
+                        if !self.preferences.reduced_motion {
+                            self.panel_started = Some(Instant::now());
+                        }
+                        return vec![];
+                    }
                     6 => {
                         self.subpage = Some(Subpage::Greeting);
                         self.focus = Target::GreetingName;
@@ -1526,6 +1548,15 @@ impl State {
                     Some(Subpage::Appearance) => {
                         self.preferences.ui_scale = UiSize::ALL[index.min(UiSize::ALL.len() - 1)];
                         return vec![Effect::Save];
+                    }
+                    Some(Subpage::HomeTakeover) => {
+                        let enable = index == 0;
+                        self.close_subpage();
+                        return if enable == self.home_takeover {
+                            vec![]
+                        } else {
+                            vec![Effect::HomeTakeover(enable)]
+                        };
                     }
                     Some(Subpage::Language) => {
                         self.preferences.language =

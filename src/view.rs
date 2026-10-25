@@ -1816,6 +1816,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Temperature) => language.t("temperature"),
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::Appearance) => language.t("uiScale"),
+                Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
                 None => "",
             };
             let parent_width = assets.width(label, text(20.8, 550, -0.02)) + 2.;
@@ -1953,6 +1954,18 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 .into_iter()
                 .map(|option| (option.name(), None, option == language))
                 .collect(),
+            Subpage::HomeTakeover => vec![
+                (
+                    language.t("stateOn"),
+                    Some(language.t("homeTakeoverOnHint")),
+                    state.home_takeover,
+                ),
+                (
+                    language.t("stateOff"),
+                    Some(language.t("homeTakeoverOffHint")),
+                    !state.home_takeover,
+                ),
+            ],
         };
         for (index, (title, description, selected)) in options.into_iter().enumerate() {
             let h = if description.is_some() { 90.7 } else { 72. };
@@ -2092,10 +2105,13 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     "refresh",
                 ),
                 (5, language.t("quitApp"), "power"),
+                (8, language.t("homeTakeover"), "tv"),
             ]
             .into_iter()
             .enumerate()
             {
+                // Luma as Home shows its state and opens its choice, like an input's visibility.
+                let takeover = index == 8;
                 row(
                     out,
                     state,
@@ -2105,10 +2121,16 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                         rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
                         title,
                         icon: Some(icon),
-                        value: None,
+                        value: takeover.then(|| {
+                            language.t(if state.home_takeover {
+                                "stateOn"
+                            } else {
+                                "stateOff"
+                            })
+                        }),
                         description: None,
                         selected: false,
-                        chevron: false,
+                        chevron: takeover,
                     },
                 );
             }
