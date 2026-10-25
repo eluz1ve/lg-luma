@@ -71,6 +71,8 @@ pub enum Target {
     Match(u8, usize),
     /// An esports widget's settings: the shared PandaScore key, its disciplines, major events.
     EsportsKey,
+    /// Enter the key from a phone: a QR code to a one-time page on the home network.
+    EsportsPhone,
     EsportsGames,
     EsportsMajor,
     InputMode(String),
@@ -189,6 +191,10 @@ pub enum Overlay {
         index: usize,
         restore: Target,
     },
+    /// The QR code and steps for sending the key from a phone.
+    PhoneKey {
+        restore: Target,
+    },
     Recents {
         restore: Target,
     },
@@ -255,6 +261,8 @@ pub enum Effect {
     Notify(String),
     /// Fetch the lineups of these teams of a discipline.
     Rosters(String, Vec<u64>),
+    /// Start the one-time phone page for the key.
+    PhoneKeyStart,
 }
 
 pub const KEYS: [&str; 40] = [
@@ -299,6 +307,10 @@ pub struct State {
     pub home_takeover: bool,
     pub home_edit: Option<HomeEdit>,
     pub feeds: crate::feeds::FeedData,
+    /// The phone page's address and QR code while its dialog is open.
+    pub phone_key: Option<(String, std::sync::Arc<crate::app_artwork::Artwork>)>,
+    /// Set by `Effect::PhoneKeyStart`; the main loop starts the page.
+    pub phone_key_start: bool,
 }
 
 impl State {
@@ -336,6 +348,8 @@ impl State {
             home_takeover: false,
             home_edit: None,
             feeds: crate::feeds::FeedData::default(),
+            phone_key: None,
+            phone_key_start: false,
         }
     }
 
@@ -1140,6 +1154,7 @@ impl State {
                 self.focus,
                 Target::Setting(0 | 1 | 4 | 6 | 7 | 8 | 9)
                     | Target::EsportsKey
+                    | Target::EsportsPhone
                     | Target::EsportsGames
                     | Target::EsportsMajor
                     | Target::InputMode(_)
@@ -1350,31 +1365,22 @@ impl State {
                     return None;
                 }
                 let (cx, cy) = candidate.rect.center();
-                let (primary, cross, overlap) = match direction {
-                    Direction::Up => (
-                        y - cy,
-                        (x - cx).abs(),
-                        (current.rect.w + candidate.rect.w) / 2.,
-                    ),
-                    Direction::Down => (
-                        cy - y,
-                        (x - cx).abs(),
-                        (current.rect.w + candidate.rect.w) / 2.,
-                    ),
-                    Direction::Left => (
-                        x - cx,
-                        (y - cy).abs(),
-                        (current.rect.h + candidate.rect.h) / 2.,
-                    ),
-                    Direction::Right => (
-                        cx - x,
-                        (y - cy).abs(),
-                        (current.rect.h + candidate.rect.h) / 2.,
-                    ),
+                // Across the move: the gap between the two controls' extents (zero when they
+                // overlap), so a wide block directly above or beside wins over a nearer centre;
+                // the centres' distance only breaks ties.
+                let (a, b) = (current.rect, candidate.rect);
+                let gap = |start: f32, size: f32, other: f32, other_size: f32| {
+                    (start.max(other) - (start + size).min(other + other_size)).max(0.)
+                };
+                let (primary, gap, centres) = match direction {
+                    Direction::Up => (y - cy, gap(a.x, a.w, b.x, b.w), (x - cx).abs()),
+                    Direction::Down => (cy - y, gap(a.x, a.w, b.x, b.w), (x - cx).abs()),
+                    Direction::Left => (x - cx, gap(a.y, a.h, b.y, b.h), (y - cy).abs()),
+                    Direction::Right => (cx - x, gap(a.y, a.h, b.y, b.h), (y - cy).abs()),
                 };
                 (primary > 1.).then_some((
                     candidate.target.clone(),
-                    primary + cross * 2. + if cross >= overlap { 10000. } else { 0. },
+                    primary + gap * 2. + centres * 0.25 + if gap > 0. { 10000. } else { 0. },
                 ))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -1596,6 +1602,18 @@ impl State {
             TextField::ApiKey => &self.api_key_draft,
             TextField::Apps => &self.query,
         }
+    }
+
+    /// A key sent from the phone page: saved, and the dialog closes.
+    pub fn phone_key_received(&mut self, key: String) -> Vec<Effect> {
+        self.phone_key = None;
+        if let Some(Overlay::PhoneKey { restore }) = self.overlay.take() {
+            self.focus = restore;
+            self.panel_started = None;
+        }
+        self.preferences.esports_key = key;
+        self.notify(self.preferences.language.t("phoneKeySaved"));
+        vec![Effect::Save]
     }
 
     /// An esports widget's settings page, focused on the key.
@@ -1867,6 +1885,17 @@ impl State {
                 };
             }
             Target::EsportsKey => self.open_keyboard(TextField::ApiKey),
+            Target::EsportsPhone => {
+                self.overlay = Some(Overlay::PhoneKey {
+                    restore: Target::EsportsPhone,
+                });
+                self.focus = Target::CloseDialog;
+                self.phone_key = None;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+                return vec![Effect::PhoneKeyStart];
+            }
             Target::EsportsGames => {
                 if let Some(Subpage::Esports(instance)) = self.subpage {
                     self.subpage = Some(Subpage::EsportsGames(instance));
@@ -2262,7 +2291,8 @@ impl State {
             | Overlay::Block { restore, .. }
             | Overlay::AddBlock { restore }
             | Overlay::Poster { restore, .. }
-            | Overlay::Match { restore, .. } = overlay
+            | Overlay::Match { restore, .. }
+            | Overlay::PhoneKey { restore } = overlay
             {
                 self.focus = restore;
                 self.recents.pending = None;

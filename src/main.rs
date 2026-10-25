@@ -15,6 +15,7 @@ mod i18n;
 #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
 mod luna;
 mod model;
+mod phone_key;
 mod platform;
 mod raster;
 mod recents;
@@ -332,6 +333,7 @@ fn effects(
             Effect::Weather(command) => weather.send(command),
             Effect::Notify(text) => state.notify(text),
             Effect::Rosters(game, teams) => state.feeds.pending_rosters.push((game, teams)),
+            Effect::PhoneKeyStart => state.phone_key_start = true,
             Effect::HomeTakeover(enable) => {
                 state.notify(state.preferences.language.t(if enable {
                     "homeTakeoverStarting"
@@ -865,6 +867,8 @@ fn run() -> Result<(), String> {
     let mut last_frame = Instant::now();
     // Home widgets' data: fetched only while their blocks are on a visible Home.
     let feeds = feeds::Feeds::new();
+    // The one-time phone page for a long key, while its dialog is open.
+    let mut phone_server: Option<phone_key::PhoneKey> = None;
     let mut crypto_fetched: Option<Instant> = None;
     let mut premieres_fetched: Option<Instant> = None;
     // Esports matches per discipline, refetched sooner while one is live; a new key starts over.
@@ -951,6 +955,48 @@ fn run() -> Result<(), String> {
                     });
                 }
             }
+        }
+        if std::mem::take(&mut state.phone_key_start) {
+            phone_server = None;
+            let language = state.preferences.language;
+            let texts = phone_key::PageTexts {
+                title: language.t("phonePageTitle").into(),
+                steps: ["phonePageStep1", "phonePageStep2", "phonePageStep3"]
+                    .map(|key| language.t(key).to_owned())
+                    .to_vec(),
+                field: language.t("esportsKey").into(),
+                send: language.t("phonePageSend").into(),
+                saved: language.t("phonePageSaved").into(),
+                invalid: language.t("phonePageInvalid").into(),
+            };
+            match phone_key::PhoneKey::start(texts) {
+                Ok(server) => {
+                    eprintln!("Luma phone key page: {}", server.url);
+                    state.phone_key = Some((server.url.clone(), server.qr.clone()));
+                    phone_server = Some(server);
+                }
+                Err(error) => {
+                    eprintln!("Luma phone key page: {error}");
+                    state.back();
+                    state.notify(language.t("phoneKeyFailed"));
+                }
+            }
+            state.dirty = true;
+        }
+        if phone_server.is_some() && !matches!(state.overlay, Some(Overlay::PhoneKey { .. })) {
+            phone_server = None;
+            state.phone_key = None;
+        }
+        if let Some(key) = phone_server.as_ref().and_then(phone_key::PhoneKey::poll) {
+            phone_server = None;
+            let pending = state.phone_key_received(key);
+            running &= effects(
+                pending,
+                &mut state,
+                &platform,
+                &preferences_path,
+                &weather_service,
+            );
         }
         while let Ok(response) = feeds.receiver.try_recv() {
             state.dirty = true;

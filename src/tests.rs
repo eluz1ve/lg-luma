@@ -2093,3 +2093,77 @@ fn the_esports_widget_settings_take_a_key_disciplines_and_the_major_filter() {
     assert_eq!(state.subpage, Some(Subpage::Esports(0)));
     assert_eq!(state.focus, Target::EsportsGames);
 }
+
+#[test]
+fn the_key_can_come_from_a_phone_through_a_qr_code() {
+    use crate::state::Subpage;
+    let mut state = ready();
+    state.open(2);
+    state.subpage = Some(Subpage::Esports(0));
+    state.focus = Target::EsportsPhone;
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::EsportsPhone)
+    );
+    assert_eq!(state.activate(), vec![Effect::PhoneKeyStart]);
+    assert!(matches!(state.overlay, Some(Overlay::PhoneKey { .. })));
+    assert_eq!(state.focus, Target::CloseDialog);
+    let qr = crate::phone_key::qr_image("http://192.168.0.218:8765/ab").unwrap();
+    state.phone_key = Some((
+        "http://192.168.0.218:8765/ab".into(),
+        std::sync::Arc::new(crate::app_artwork::Artwork {
+            key: "qr:ab".into(),
+            pixels: qr,
+            backdrop: [[255; 3]; 2],
+        }),
+    ));
+    let texts = scene_text(&state);
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("http://192.168.0.218:8765/ab"))
+    );
+    assert!(texts.iter().any(|t| t.starts_with("1.")), "numbered steps");
+    assert_eq!(
+        state.phone_key_received("ps_123".into()),
+        vec![Effect::Save]
+    );
+    assert_eq!(state.preferences.esports_key, "ps_123");
+    assert!(state.overlay.is_none());
+    assert!(state.phone_key.is_none());
+    assert_eq!(state.focus, Target::EsportsPhone);
+}
+
+#[test]
+fn up_reaches_a_wide_block_directly_above_rather_than_a_closer_centre() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout = vec![
+        Block {
+            kind: BlockKind::Greeting,
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 2,
+        },
+        Block {
+            kind: BlockKind::Esports(0),
+            x: 0,
+            y: 2,
+            w: 12,
+            h: 2,
+        },
+        Block {
+            kind: BlockKind::Favorites,
+            x: 0,
+            y: 4,
+            w: 12,
+            h: 2,
+        },
+    ];
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::App(_)));
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Block(BlockKind::Esports(0)));
+}

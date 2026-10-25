@@ -188,7 +188,7 @@ fn unknown_disciplines_fall_back_to_counter_strike() {
 #[test]
 fn rosters_list_each_teams_players_by_nickname() {
     let teams = json!([
-        {"id": 1, "players": [{"name": "s1mple"}, {"name": "b1t"}, {"first_name": "x"}]},
+        {"id": 1, "players": [{"name": "s1mple"}, {"name": "b1t "}, {"first_name": "x"}]},
         {"id": 2, "players": []}
     ]);
     assert_eq!(

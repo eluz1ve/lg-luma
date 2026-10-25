@@ -391,7 +391,8 @@ pub fn scene_with_pill(
         | Overlay::Block { .. }
         | Overlay::AddBlock { .. }
         | Overlay::Poster { .. }
-        | Overlay::Match { .. }),
+        | Overlay::Match { .. }
+        | Overlay::PhoneKey { .. }),
     ) = &state.overlay
     {
         out.controls.clear();
@@ -445,6 +446,7 @@ pub fn scene_with_pill(
             Overlay::Match {
                 instance, index, ..
             } => match_dialog(&mut out, state, assets, *instance, *index, now),
+            Overlay::PhoneKey { .. } => phone_key_dialog(&mut out, state, assets),
             Overlay::Poster { index, .. } => {
                 if let Some(premiere) = state.feeds.premieres.get(*index) {
                     let mut rows: Vec<String> = state
@@ -3650,7 +3652,7 @@ fn esports_block(
             out.text(
                 language.t("live"),
                 Rect::new(live.x, live.y + 4., live.w, 16.),
-                text(13., 700, 0.06),
+                text(13., 650, 0.06),
                 WHITE,
                 true,
             );
@@ -3887,6 +3889,12 @@ fn esports_settings(out: &mut Scene, state: &State, assets: &Assets, instance: u
     let rows = [
         (Target::EsportsKey, language.t("esportsKey"), "type", masked),
         (
+            Target::EsportsPhone,
+            language.t("esportsPhone"),
+            "sparkles",
+            String::new(),
+        ),
+        (
             Target::EsportsGames,
             language.t("esportsGames"),
             "grid",
@@ -3915,18 +3923,100 @@ fn esports_settings(out: &mut Scene, state: &State, assets: &Assets, instance: u
                 rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
                 title,
                 icon: Some(icon),
-                value: Some(&value),
+                value: (!value.is_empty()).then_some(value.as_str()),
                 description: None,
                 selected: false,
-                chevron: position < 2,
+                chevron: position < 3,
             },
         );
     }
     out.text(
         language.t("esportsKeyHint"),
-        Rect::new(660., 164.8 + 3. * 84. + 8. - s, 1080., 60.),
+        Rect::new(660., 164.8 + 4. * 84. + 8. - s, 1080., 60.),
         text(16., 400, 0.).leading(1.5),
         c(0xf5f5f5, 0.55),
+        false,
+    );
+}
+
+/// Sending the key from a phone: the QR code, numbered steps and the address to type instead.
+fn phone_key_dialog(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let panel = Rect::new(360., 230., 1200., 620.);
+    out.modal = Some(panel);
+    out.shadow(panel, 27.2, 120., 25., 0.47);
+    out.draw.push(Draw::RoundedGradient(
+        panel,
+        27.2,
+        c(0x34383b, 0.97),
+        c(0x24282d, 0.99),
+    ));
+    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    let close = Rect::new(panel.x + panel.w - 72., panel.y + 36., 33.6, 33.6);
+    out.shape(close, 16.8, c(0xffffff, 0.035));
+    out.border(close, 16.8, 1., c(0xffffff, 0.07));
+    out.icon(assets, "close", close.inset(7.6), WHITE);
+    if state.focus == Target::CloseDialog {
+        out.border(close.inset(1.), 15.8, 2., WHITE);
+    }
+    out.control(Target::CloseDialog, close, false);
+    out.text(
+        language.t("phoneKeyTitle"),
+        Rect::new(panel.x + 48., panel.y + 40., panel.w - 160., 44.),
+        text(32., 500, -0.04),
+        WHITE,
+        false,
+    );
+    let code = Rect::new(panel.x + 48., panel.y + 120., 400., 400.);
+    out.shape(code, 18., c(0xffffff, 1.));
+    let x = code.x + code.w + 48.;
+    let Some((url, qr)) = &state.phone_key else {
+        out.text(
+            language.t("phoneKeyStarting"),
+            Rect::new(x, code.y + 10., panel.x + panel.w - x - 48., 28.),
+            text(20., 450, 0.),
+            c(0xf5f5f5, 0.7),
+            false,
+        );
+        return;
+    };
+    out.draw
+        .push(Draw::AppImage(qr.clone(), code.inset(14.), [1.; 4]));
+    let width = panel.x + panel.w - x - 48.;
+    let step = text(20., 450, -0.01).leading(1.35);
+    let mut y = code.y;
+    for (number, key) in [
+        "phoneKeyStep1",
+        "phoneKeyStep2",
+        "phoneKeyStep3",
+        "phoneKeyStep4",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let line = format!("{}. {}", number + 1, language.t(key));
+        let height = assets.lines(&line, step, width) as f32 * step.size * step.line_height;
+        out.text(
+            &line,
+            Rect::new(x, y, width, height + 4.),
+            step,
+            WHITE,
+            false,
+        );
+        y += height + 18.;
+    }
+    out.text(
+        language.t("phoneKeyAddress"),
+        Rect::new(x, y + 12., width, 22.),
+        text(16., 450, 0.),
+        c(0xf5f5f5, 0.6),
+        false,
+    );
+    out.text(
+        url,
+        Rect::new(x, y + 40., width, 28.),
+        text(22., 600, 0.),
+        WHITE,
         false,
     );
 }

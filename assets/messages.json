@@ -2023,5 +2023,158 @@
     "pt": "Chave gratuita: cadastre-se em pandascore.co e copie o token do painel. Uma chave serve para todos os widgets de esports.",
     "it": "Chiave gratuita: registrati su pandascore.co e copia il token dalla dashboard. Una chiave vale per tutti i widget esport.",
     "ru": "Бесплатный ключ: зарегистрируйтесь на pandascore.co и скопируйте токен из личного кабинета. Один ключ — для всех виджетов киберспорта."
+  },
+  "esportsPhone": {
+    "en": "Enter the key from your phone",
+    "de": "Schlüssel vom Handy eingeben",
+    "es": "Introducir la clave desde el móvil",
+    "zh": "用手机输入密钥",
+    "pt": "Inserir a chave pelo celular",
+    "it": "Inserisci la chiave dal telefono",
+    "ru": "Ввести ключ с телефона"
+  },
+  "phoneKeyTitle": {
+    "en": "Send the key from your phone",
+    "de": "Schlüssel vom Handy senden",
+    "es": "Envía la clave desde el móvil",
+    "zh": "从手机发送密钥",
+    "pt": "Envie a chave pelo celular",
+    "it": "Invia la chiave dal telefono",
+    "ru": "Отправьте ключ с телефона"
+  },
+  "phoneKeyStep1": {
+    "en": "Connect your phone to the same Wi-Fi as the TV.",
+    "de": "Verbinde das Handy mit demselben WLAN wie den Fernseher.",
+    "es": "Conecta el móvil a la misma Wi-Fi que la TV.",
+    "zh": "将手机连接到与电视相同的 Wi-Fi。",
+    "pt": "Conecte o celular ao mesmo Wi-Fi da TV.",
+    "it": "Collega il telefono alla stessa Wi-Fi della TV.",
+    "ru": "Подключите телефон к той же сети Wi-Fi, что и телевизор."
+  },
+  "phoneKeyStep2": {
+    "en": "Point the phone's camera at the QR code and open the link.",
+    "de": "Richte die Kamera auf den QR-Code und öffne den Link.",
+    "es": "Apunta la cámara al código QR y abre el enlace.",
+    "zh": "用手机相机扫描二维码并打开链接。",
+    "pt": "Aponte a câmera para o QR code e abra o link.",
+    "it": "Inquadra il codice QR con la fotocamera e apri il link.",
+    "ru": "Наведите камеру телефона на QR-код и откройте ссылку."
+  },
+  "phoneKeyStep3": {
+    "en": "On pandascore.co, sign in, open the dashboard and copy your access token.",
+    "de": "Melde dich auf pandascore.co an, öffne das Dashboard und kopiere dein Access-Token.",
+    "es": "En pandascore.co, inicia sesión, abre el panel y copia tu token de acceso.",
+    "zh": "在 pandascore.co 登录，打开控制台并复制访问令牌。",
+    "pt": "Em pandascore.co, entre, abra o painel e copie seu token de acesso.",
+    "it": "Su pandascore.co accedi, apri la dashboard e copia il token di accesso.",
+    "ru": "На pandascore.co войдите, откройте личный кабинет (Dashboard) и скопируйте токен (Access token)."
+  },
+  "phoneKeyStep4": {
+    "en": "Paste it into the field on the page and tap Send. This window closes by itself.",
+    "de": "Füge es in das Feld auf der Seite ein und tippe auf Senden. Dieses Fenster schließt sich von selbst.",
+    "es": "Pégalo en el campo de la página y toca Enviar. Esta ventana se cierra sola.",
+    "zh": "粘贴到页面的输入框中并点按“发送”。此窗口会自动关闭。",
+    "pt": "Cole no campo da página e toque em Enviar. Esta janela fecha sozinha.",
+    "it": "Incollalo nel campo della pagina e tocca Invia. Questa finestra si chiude da sola.",
+    "ru": "Вставьте его в поле на странице и нажмите «Отправить». Это окно закроется само."
+  },
+  "phoneKeyAddress": {
+    "en": "No camera? Type this address in the phone's browser:",
+    "de": "Keine Kamera? Gib diese Adresse im Browser des Handys ein:",
+    "es": "¿Sin cámara? Escribe esta dirección en el navegador del móvil:",
+    "zh": "没有相机？在手机浏览器中输入此地址：",
+    "pt": "Sem câmera? Digite este endereço no navegador do celular:",
+    "it": "Niente fotocamera? Digita questo indirizzo nel browser del telefono:",
+    "ru": "Нет камеры? Наберите этот адрес в браузере телефона:"
+  },
+  "phoneKeyStarting": {
+    "en": "Preparing the page…",
+    "de": "Seite wird vorbereitet …",
+    "es": "Preparando la página…",
+    "zh": "正在准备页面…",
+    "pt": "Preparando a página…",
+    "it": "Preparazione della pagina…",
+    "ru": "Готовим страницу…"
+  },
+  "phoneKeyFailed": {
+    "en": "The phone page could not start. Check that the TV is connected to the network.",
+    "de": "Die Handy-Seite konnte nicht starten. Prüfe die Netzwerkverbindung des Fernsehers.",
+    "es": "No se pudo abrir la página del móvil. Comprueba la conexión de red de la TV.",
+    "zh": "无法启动手机页面。请检查电视的网络连接。",
+    "pt": "Não foi possível abrir a página do celular. Verifique a conexão de rede da TV.",
+    "it": "Impossibile avviare la pagina per il telefono. Controlla la rete della TV.",
+    "ru": "Не удалось запустить страницу для телефона. Проверьте, что телевизор подключён к сети."
+  },
+  "phoneKeySaved": {
+    "en": "Key saved from your phone.",
+    "de": "Schlüssel vom Handy gespeichert.",
+    "es": "Clave guardada desde el móvil.",
+    "zh": "已从手机保存密钥。",
+    "pt": "Chave salva pelo celular.",
+    "it": "Chiave salvata dal telefono.",
+    "ru": "Ключ с телефона сохранён."
+  },
+  "phonePageTitle": {
+    "en": "PandaScore key for Luma",
+    "de": "PandaScore-Schlüssel für Luma",
+    "es": "Clave de PandaScore para Luma",
+    "zh": "Luma 的 PandaScore 密钥",
+    "pt": "Chave do PandaScore para o Luma",
+    "it": "Chiave PandaScore per Luma",
+    "ru": "Ключ PandaScore для Luma"
+  },
+  "phonePageStep1": {
+    "en": "Sign in at pandascore.co (signing up is free).",
+    "de": "Melde dich auf pandascore.co an (Registrierung ist kostenlos).",
+    "es": "Inicia sesión en pandascore.co (el registro es gratuito).",
+    "zh": "登录 pandascore.co（注册免费）。",
+    "pt": "Entre em pandascore.co (o cadastro é gratuito).",
+    "it": "Accedi su pandascore.co (la registrazione è gratuita).",
+    "ru": "Войдите на pandascore.co (регистрация бесплатная)."
+  },
+  "phonePageStep2": {
+    "en": "Open the dashboard and copy your access token.",
+    "de": "Öffne das Dashboard und kopiere dein Access-Token.",
+    "es": "Abre el panel y copia tu token de acceso.",
+    "zh": "打开控制台并复制访问令牌。",
+    "pt": "Abra o painel e copie seu token de acesso.",
+    "it": "Apri la dashboard e copia il token di accesso.",
+    "ru": "Откройте личный кабинет (Dashboard) и скопируйте Access token."
+  },
+  "phonePageStep3": {
+    "en": "Paste it below and tap Send.",
+    "de": "Füge es unten ein und tippe auf Senden.",
+    "es": "Pégalo abajo y toca Enviar.",
+    "zh": "粘贴到下方并点按“发送”。",
+    "pt": "Cole abaixo e toque em Enviar.",
+    "it": "Incollalo qui sotto e tocca Invia.",
+    "ru": "Вставьте его ниже и нажмите «Отправить»."
+  },
+  "phonePageSend": {
+    "en": "Send",
+    "de": "Senden",
+    "es": "Enviar",
+    "zh": "发送",
+    "pt": "Enviar",
+    "it": "Invia",
+    "ru": "Отправить"
+  },
+  "phonePageSaved": {
+    "en": "Done! The key is on the TV — you can close this page.",
+    "de": "Fertig! Der Schlüssel ist auf dem Fernseher – du kannst diese Seite schließen.",
+    "es": "¡Listo! La clave está en la TV; puedes cerrar esta página.",
+    "zh": "完成！密钥已发送到电视，您可以关闭此页面。",
+    "pt": "Pronto! A chave está na TV — pode fechar esta página.",
+    "it": "Fatto! La chiave è sulla TV: puoi chiudere questa pagina.",
+    "ru": "Готово! Ключ на телевизоре — эту страницу можно закрыть."
+  },
+  "phonePageInvalid": {
+    "en": "That doesn't look like a key: use only letters, digits, - _ and .",
+    "de": "Das sieht nicht wie ein Schlüssel aus: nur Buchstaben, Ziffern, - _ und .",
+    "es": "No parece una clave: usa solo letras, números, - _ y .",
+    "zh": "这看起来不像密钥：只能包含字母、数字、- _ 和 .",
+    "pt": "Isso não parece uma chave: use só letras, números, - _ e .",
+    "it": "Non sembra una chiave: usa solo lettere, cifre, - _ e .",
+    "ru": "Это не похоже на ключ: допустимы только буквы, цифры, - _ и ."
   }
 }

@@ -453,7 +453,8 @@ fn rosters(agent: &ureq::Agent, key: &str, game: &str, teams: &[u64]) -> Vec<(u6
         agent,
         key,
         game,
-        &format!("/teams?filter[id]={ids}&per_page=10"),
+        // Brackets encoded: they are not allowed unencoded in a URI's query.
+        &format!("/teams?filter%5Bid%5D={ids}&per_page=10"),
     )
     .map(|body| parse_rosters(&body))
     .unwrap_or_default()
@@ -575,7 +576,7 @@ pub fn parse_rosters(body: &Value) -> Vec<(u64, Vec<String>)> {
                 .into_iter()
                 .flatten()
                 .filter_map(|player| player.get("name")?.as_str())
-                .map(|name| name.chars().take(24).collect())
+                .map(|name| name.trim().chars().take(24).collect())
                 .take(7)
                 .collect();
             Some((team.get("id")?.as_u64()?, players))
