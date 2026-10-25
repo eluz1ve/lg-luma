@@ -929,25 +929,35 @@ fn run() -> Result<(), String> {
                 state.feeds.rosters.clear();
                 state.feeds.matches_error = None;
             }
-            if !key.is_empty() {
-                for game in state.esports_games() {
-                    let live = state
-                        .feeds
-                        .matches
-                        .get(&game)
-                        .is_some_and(|matches| matches.iter().any(|m| m.running));
-                    if due(
-                        esports_fetched.get(&game).copied(),
-                        if live { 60 } else { 300 },
-                    ) {
-                        esports_fetched.insert(game.clone(), Instant::now());
-                        feeds.send(feeds::FeedRequest::Matches {
+            // Without a key, the shared feed (rebuilt every 15 minutes); with one, PandaScore
+            // directly, as often as the free plan allows while a match is live.
+            let games = state.esports_games();
+            for game in &games {
+                let live = state
+                    .feeds
+                    .matches
+                    .get(game)
+                    .is_some_and(|matches| matches.iter().any(|m| m.running));
+                let every = if !key.is_empty() && live {
+                    feeds::live_interval(games.len())
+                } else {
+                    300
+                };
+                if due(esports_fetched.get(game).copied(), every) {
+                    esports_fetched.insert(game.clone(), Instant::now());
+                    feeds.send(if key.is_empty() {
+                        feeds::FeedRequest::Shared { game: game.clone() }
+                    } else {
+                        feeds::FeedRequest::Matches {
                             key: key.clone(),
-                            game,
-                        });
-                    }
+                            game: game.clone(),
+                        }
+                    });
                 }
-                for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
+            }
+            for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
+                // The shared feed brings lineups along.
+                if !key.is_empty() {
                     feeds.send(feeds::FeedRequest::Rosters {
                         key: key.clone(),
                         game,
@@ -1037,6 +1047,17 @@ fn run() -> Result<(), String> {
                     result: Err(error), ..
                 } => state.feeds.matches_error = Some(error),
                 feeds::FeedResponse::Rosters(rosters) => state.feeds.rosters.extend(rosters),
+                feeds::FeedResponse::Shared {
+                    game,
+                    result: Ok((matches, rosters)),
+                } => {
+                    state.feeds.matches.insert(game, matches);
+                    state.feeds.rosters.extend(rosters);
+                    state.feeds.matches_error = None;
+                }
+                feeds::FeedResponse::Shared {
+                    result: Err(error), ..
+                } => state.feeds.matches_error = Some(error),
             }
         }
         while let Ok(response) = platform.receiver.try_recv() {

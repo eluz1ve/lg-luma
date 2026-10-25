@@ -1880,15 +1880,6 @@
     "it": "LIVE",
     "ru": "LIVE"
   },
-  "esportsNoKey": {
-    "en": "Add a free PandaScore key: hold OK here › Widget settings.",
-    "de": "Füge einen kostenlosen PandaScore-Schlüssel hinzu: OK hier halten › Widget-Einstellungen.",
-    "es": "Añade una clave gratuita de PandaScore: mantén OK aquí › Ajustes del widget.",
-    "zh": "添加免费的 PandaScore 密钥：在此长按 OK › 小组件设置。",
-    "pt": "Adicione uma chave gratuita do PandaScore: segure OK aqui › Configurações do widget.",
-    "it": "Aggiungi una chiave gratuita PandaScore: tieni premuto OK qui › Impostazioni widget.",
-    "ru": "Добавьте бесплатный ключ PandaScore: удерживайте OK здесь › Настройки виджета."
-  },
   "esportsBadKey": {
     "en": "PandaScore did not accept the key. Check it in the widget settings.",
     "de": "PandaScore hat den Schlüssel abgelehnt. Prüfe ihn in den Widget-Einstellungen.",
@@ -2016,13 +2007,13 @@
     "ru": "Только крупные турниры"
   },
   "esportsKeyHint": {
-    "en": "A free key: sign up at pandascore.co and copy the token from your dashboard. One key serves every esports widget.",
-    "de": "Kostenloser Schlüssel: auf pandascore.co registrieren und das Token aus dem Dashboard kopieren. Ein Schlüssel gilt für alle E-Sport-Widgets.",
-    "es": "Clave gratuita: regístrate en pandascore.co y copia el token de tu panel. Una clave sirve para todos los widgets de esports.",
-    "zh": "免费密钥：在 pandascore.co 注册并从控制台复制令牌。一个密钥适用于所有电竞小组件。",
-    "pt": "Chave gratuita: cadastre-se em pandascore.co e copie o token do painel. Uma chave serve para todos os widgets de esports.",
-    "it": "Chiave gratuita: registrati su pandascore.co e copia il token dalla dashboard. Una chiave vale per tutti i widget esport.",
-    "ru": "Бесплатный ключ: зарегистрируйтесь на pandascore.co и скопируйте токен из личного кабинета. Один ключ — для всех виджетов киберспорта."
+    "en": "Without a key the widget shows shared test data refreshed every 15 minutes. For personal use, sign up at pandascore.co (free) and add your access token here; it also gives live scores. One key serves every esports widget.",
+    "de": "Ohne Schlüssel zeigt das Widget gemeinsame Testdaten, alle 15 Minuten aktualisiert. Für die persönliche Nutzung auf pandascore.co (kostenlos) registrieren und das Access-Token hier eintragen; damit gibt es auch Live-Stände. Ein Schlüssel gilt für alle E-Sport-Widgets.",
+    "es": "Sin clave, el widget muestra datos de prueba compartidos actualizados cada 15 minutos. Para uso personal, regístrate en pandascore.co (gratis) y añade aquí tu token; también da marcadores en directo. Una clave sirve para todos los widgets de esports.",
+    "zh": "没有密钥时，小组件显示每 15 分钟更新的共享测试数据。个人使用请在 pandascore.co 免费注册，并在此添加访问令牌；还能获得实时比分。一个密钥适用于所有电竞小组件。",
+    "pt": "Sem chave, o widget mostra dados de teste compartilhados atualizados a cada 15 minutos. Para uso pessoal, cadastre-se em pandascore.co (grátis) e adicione seu token aqui; ele também traz placares ao vivo. Uma chave serve para todos os widgets de esports.",
+    "it": "Senza chiave il widget mostra dati di prova condivisi aggiornati ogni 15 minuti. Per l’uso personale registrati su pandascore.co (gratis) e aggiungi qui il tuo token; avrai anche i punteggi in diretta. Una chiave vale per tutti i widget esport.",
+    "ru": "Без ключа виджет показывает общие тестовые данные с обновлением раз в 15 минут. Для личного использования зарегистрируйтесь на pandascore.co (бесплатно) и добавьте здесь свой токен — с ним счёт будет в реальном времени. Один ключ — для всех виджетов киберспорта."
   },
   "esportsPhone": {
     "en": "Enter the key from your phone",
@@ -2176,5 +2167,14 @@
     "pt": "Isso não parece uma chave: use só letras, números, - _ e .",
     "it": "Non sembra una chiave: usa solo lettere, cifre, - _ e .",
     "ru": "Это не похоже на ключ: допустимы только буквы, цифры, - _ и ."
+  },
+  "esportsSharedNote": {
+    "en": "Shared test data, refreshed every 15 minutes. For personal use, sign up at pandascore.co and add your own free key in the widget settings — it also gives live scores.",
+    "de": "Gemeinsame Testdaten, alle 15 Minuten aktualisiert. Für die persönliche Nutzung auf pandascore.co registrieren und einen eigenen kostenlosen Schlüssel eintragen – damit gibt es auch Live-Stände.",
+    "es": "Datos de prueba compartidos, actualizados cada 15 minutos. Para uso personal, regístrate en pandascore.co y añade tu clave gratuita en los ajustes del widget; también da marcadores en directo.",
+    "zh": "共享测试数据，每 15 分钟更新。个人使用请在 pandascore.co 注册，并在小组件设置中添加你自己的免费密钥——还能获得实时比分。",
+    "pt": "Dados de teste compartilhados, atualizados a cada 15 minutos. Para uso pessoal, cadastre-se em pandascore.co e adicione sua chave gratuita nas configurações do widget — ela também traz placares ao vivo.",
+    "it": "Dati di prova condivisi, aggiornati ogni 15 minuti. Per l’uso personale registrati su pandascore.co e aggiungi la tua chiave gratuita nelle impostazioni del widget: avrai anche i punteggi in diretta.",
+    "ru": "Общие тестовые данные, обновляются раз в 15 минут. Для личного использования зарегистрируйтесь на pandascore.co и добавьте свой бесплатный ключ в настройках виджета — с ним счёт будет в реальном времени."
   }
 }

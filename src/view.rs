@@ -3607,9 +3607,6 @@ fn esports_block(
             false,
         );
     };
-    if state.preferences.esports_key.trim().is_empty() {
-        return message(out, "esportsNoKey");
-    }
     if state.feeds.matches_error == Some(crate::feeds::MatchesError::Key) {
         return message(out, "esportsBadKey");
     }
@@ -3858,7 +3855,11 @@ fn match_dialog(
         }
     }
     out.text(
-        language.t("esportsFreeNote"),
+        language.t(if state.preferences.esports_key.trim().is_empty() {
+            "esportsSharedNote"
+        } else {
+            "esportsFreeNote"
+        }),
         Rect::new(panel.x + 40., panel.y + panel.h - 50., panel.w - 80., 22.),
         text(14.4, 400, 0.),
         c(0xf5f5f5, 0.45),

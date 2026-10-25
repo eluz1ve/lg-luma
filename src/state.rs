@@ -1868,6 +1868,8 @@ impl State {
                     .flatten()
                     .map(|team| team.id)
                     .filter(|id| !self.feeds.rosters.contains_key(id))
+                    // The shared feed brings lineups; a personal key fetches missing ones.
+                    .filter(|_| !self.preferences.esports_key.trim().is_empty())
                     .collect();
                 self.overlay = Some(Overlay::Match {
                     instance,

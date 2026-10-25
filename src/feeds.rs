@@ -20,6 +20,19 @@ const SCHEDULES: [&str; 2] = [
 ];
 const POSTER_ORIGIN: &str = "https://static.tvmaze.com/";
 const PANDASCORE: &str = "https://api.pandascore.co";
+/// The shared feed for widgets without a personal key, rebuilt every 15 minutes.
+const FEED: &str = "https://eluz1ve.github.io/luma-feeds/esports";
+
+/// The shared feed's file for a discipline.
+pub fn feed_url(game: &str) -> String {
+    format!("{FEED}/{}.json", game_path(game))
+}
+
+/// Seconds between refreshes with a personal key while a match is live: two lists per
+/// discipline, kept under the free plan's 1000 requests an hour, and never under 30 s.
+pub fn live_interval(games: usize) -> u64 {
+    (games as u64 * 8).max(30)
+}
 /// PandaScore's path for each discipline and its name; the free key covers all of them.
 pub const GAMES: [(&str, &str); 8] = [
     ("csgo", "Counter-Strike 2"),
@@ -145,6 +158,10 @@ pub enum FeedRequest {
         game: String,
         teams: Vec<u64>,
     },
+    /// A discipline from the shared feed, lineups included.
+    Shared {
+        game: String,
+    },
 }
 
 pub enum FeedResponse {
@@ -156,6 +173,10 @@ pub enum FeedResponse {
         result: Result<Vec<CsMatch>, MatchesError>,
     },
     Rosters(Vec<(u64, Vec<String>)>),
+    Shared {
+        game: String,
+        result: Result<(Vec<CsMatch>, Vec<(u64, Vec<String>)>), MatchesError>,
+    },
 }
 
 pub struct Feeds {
@@ -189,6 +210,15 @@ impl Feeds {
                     FeedRequest::Rosters { key, game, teams } => {
                         FeedResponse::Rosters(rosters(&agent, &key, &game, &teams))
                     }
+                    FeedRequest::Shared { game } => FeedResponse::Shared {
+                        result: get_json(&agent, &feed_url(&game))
+                            .map(|body| parse_feed(&body, &game))
+                            .map_err(|error| {
+                                eprintln!("Luma esports feed: {error}");
+                                MatchesError::Unavailable
+                            }),
+                        game,
+                    },
                 };
                 if responses.send(response).is_err() {
                     break;
@@ -562,6 +592,103 @@ pub fn select_matches(
         .filter(|m| !major_only || matches!(m.tier.as_str(), "s" | "a"))
         .take(MATCHES)
         .collect()
+}
+
+/// The shared feed's matches (already filtered to running and upcoming) and their lineups.
+pub fn parse_feed(body: &Value, game: &str) -> (Vec<CsMatch>, Vec<(u64, Vec<String>)>) {
+    let text = |value: Option<&Value>, limit: usize| -> String {
+        value
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(limit)
+            .collect()
+    };
+    let mut rosters = Vec::new();
+    let matches = body
+        .get("matches")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(MATCHES)
+        .filter_map(|item| {
+            let teams: Vec<Option<Team>> = item
+                .get("teams")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(2)
+                .map(|team| {
+                    Some(Team {
+                        id: team.get("id")?.as_u64()?,
+                        name: text(team.get("name"), 40),
+                        short: text(team.get("short"), 12),
+                    })
+                })
+                .collect();
+            let teams = [
+                teams.first().cloned().flatten(),
+                teams.get(1).cloned().flatten(),
+            ];
+            let lineups = item.get("lineups").and_then(Value::as_array);
+            for (side, team) in teams.iter().enumerate() {
+                if let (Some(team), Some(players)) = (
+                    team,
+                    lineups.and_then(|l| l.get(side)).and_then(Value::as_array),
+                ) {
+                    let names: Vec<String> = players
+                        .iter()
+                        .map(|p| text(Some(p), 24))
+                        .filter(|n| !n.is_empty())
+                        .take(7)
+                        .collect();
+                    if !names.is_empty() {
+                        rosters.push((team.id, names));
+                    }
+                }
+            }
+            let score = item.get("score").and_then(Value::as_array);
+            let side = |index: usize| {
+                score
+                    .and_then(|s| s.get(index))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            Some(CsMatch {
+                id: item.get("id")?.as_u64()?,
+                game: game_path(game).into(),
+                running: item
+                    .get("running")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                begin_at: text(item.get("begin_at"), 32),
+                teams,
+                score: [side(0), side(1)],
+                best_of: item.get("best_of").and_then(Value::as_u64).unwrap_or(1),
+                games: item
+                    .get("games")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|game| {
+                        Some(MatchGame {
+                            position: game.get("position")?.as_u64()?,
+                            state: match game.get("state").and_then(Value::as_str) {
+                                Some("running") => GameState::Running,
+                                Some("finished") => GameState::Finished,
+                                _ => GameState::Waiting,
+                            },
+                            winner: game.get("winner").and_then(Value::as_u64),
+                        })
+                    })
+                    .collect(),
+                event: text(item.get("event"), 60),
+                tier: text(item.get("tier"), 12).to_lowercase(),
+            })
+        })
+        .collect();
+    (matches, rosters)
 }
 
 /// Player nicknames by team, from PandaScore team objects.

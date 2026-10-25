@@ -199,3 +199,44 @@ fn rosters_list_each_teams_players_by_nickname() {
         ]
     );
 }
+
+#[test]
+fn the_shared_feed_carries_matches_and_their_lineups() {
+    let body = json!({"game": "csgo", "updated": 1, "matches": [
+        {"id": 5, "running": true, "begin_at": "2026-10-25T11:11:51Z",
+         "teams": [{"id": 1, "name": "Acend", "short": "ACE"}, null],
+         "score": [1, 0], "best_of": 3,
+         "games": [{"position": 1, "state": "finished", "winner": 1},
+                   {"position": 2, "state": "running", "winner": null}],
+         "event": "CCT Europe", "tier": "c",
+         "lineups": [["SHiPZ", "SPELLAN"], []]},
+        {"id": "broken"}
+    ]});
+    let (matches, rosters) = parse_feed(&body, "csgo");
+    assert_eq!(matches.len(), 1);
+    let found = &matches[0];
+    assert_eq!(
+        (found.id, found.game.as_str(), found.running),
+        (5, "csgo", true)
+    );
+    assert_eq!(found.teams[0].as_ref().unwrap().short, "ACE");
+    assert!(found.teams[1].is_none());
+    assert_eq!(found.games[1].state, GameState::Running);
+    assert_eq!(
+        rosters,
+        vec![(1, vec!["SHiPZ".to_owned(), "SPELLAN".to_owned()])]
+    );
+    assert!(feed_url("csgo").starts_with("https://eluz1ve.github.io/luma-feeds/esports/"));
+    assert!(feed_url("../x").ends_with("/csgo.json"));
+}
+
+#[test]
+fn a_personal_key_polls_live_matches_as_often_as_the_free_limit_allows() {
+    assert_eq!(live_interval(1), 30);
+    assert_eq!(live_interval(2), 30);
+    assert_eq!(
+        live_interval(8),
+        64,
+        "8 disciplines × 2 lists stay under 1000 requests an hour"
+    );
+}
