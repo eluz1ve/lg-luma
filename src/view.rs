@@ -389,7 +389,8 @@ pub fn scene_with_pill(
         overlay @ (Overlay::Options { .. }
         | Overlay::Keyboard
         | Overlay::Block { .. }
-        | Overlay::AddBlock { .. }),
+        | Overlay::AddBlock { .. }
+        | Overlay::Poster { .. }),
     ) = &state.overlay
     {
         out.controls.clear();
@@ -439,6 +440,36 @@ pub fn scene_with_pill(
                     &rows,
                     Target::AddKind,
                 );
+            }
+            Overlay::Poster { index, .. } => {
+                if let Some(premiere) = state.feeds.premieres.get(*index) {
+                    let mut rows: Vec<String> = state
+                        .poster_apps()
+                        .iter()
+                        .map(|id| {
+                            let title = state
+                                .inventory
+                                .apps
+                                .iter()
+                                .find(|app| &app.id == id)
+                                .map_or(id.as_str(), |app| app.title.as_str());
+                            language.format("posterOpenIn", &[("app", title)])
+                        })
+                        .collect();
+                    rows.push(language.t("close").to_owned());
+                    let title = format!(
+                        "{} · {}",
+                        premiere.title,
+                        language.format(
+                            "seasonPremiere",
+                            &[
+                                ("season", &premiere.season.to_string()),
+                                ("date", &short_date(&premiere.date, now, language)),
+                            ],
+                        )
+                    );
+                    menu(&mut out, state, assets, &title, &rows, Target::PosterApp);
+                }
             }
             Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
         }
@@ -915,7 +946,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             BlockKind::Favorites => favorites_block(out, state, assets, rect),
             BlockKind::Inputs => inputs_block(out, state, assets, rect),
             BlockKind::Crypto | BlockKind::Premieres => {
-                widget_block(out, state, assets, theme, block.kind, rect)
+                widget_block(out, state, assets, theme, block.kind, rect, now)
             }
         }
         // Blocks without controls of their own are still focusable, to edit them.
@@ -1202,24 +1233,278 @@ fn inputs_block(out: &mut Scene, state: &State, assets: &Assets, rect: Rect) {
     }
 }
 
-/// Data widgets: a card with the widget's name until its data arrives.
+/// A price with the language's separators: `80 378 $`, `$80,378`, `2,31 $`.
+fn price(value: f64, language: Language) -> String {
+    let english = matches!(language, Language::En | Language::Zh);
+    let decimals = if value >= 1000. {
+        0
+    } else if value >= 1. {
+        2
+    } else {
+        4
+    };
+    let text = format!("{value:.decimals$}");
+    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    let group = match language {
+        Language::En | Language::Zh => ',',
+        Language::Ru => ' ',
+        _ => '.',
+    };
+    let mut grouped = String::new();
+    for (index, digit) in whole.chars().enumerate() {
+        if index > 0 && (whole.len() - index).is_multiple_of(3) {
+            grouped.push(group);
+        }
+        grouped.push(digit);
+    }
+    if !fraction.is_empty() {
+        grouped.push(if english { '.' } else { ',' });
+        grouped.push_str(fraction);
+    }
+    if english {
+        format!("${grouped}")
+    } else {
+        format!("{grouped} $")
+    }
+}
+
+/// `Today`, `Tomorrow`, or the day and month in the language's order.
+fn short_date(date: &str, now: OffsetDateTime, language: Language) -> String {
+    let parse = |text: &str| -> Option<time::Date> {
+        let mut parts = text.split('-').map(|part| part.parse::<i32>().ok());
+        let (year, month, day) = (parts.next()??, parts.next()??, parts.next()??);
+        time::Date::from_calendar_date(year, time::Month::try_from(month as u8).ok()?, day as u8)
+            .ok()
+    };
+    let Some(day) = parse(date) else {
+        return date.to_owned();
+    };
+    match (day - now.date()).whole_days() {
+        0 => language.t("today").to_owned(),
+        1 => language.t("tomorrow").to_owned(),
+        _ => match language {
+            Language::En => format!("{}/{}", day.month() as u8, day.day()),
+            Language::Zh => format!("{}月{}日", day.month() as u8, day.day()),
+            _ => format!("{:02}.{:02}", day.day(), day.month() as u8),
+        },
+    }
+}
+
+/// Data widgets: crypto prices and season premieres.
 fn widget_block(
     out: &mut Scene,
     state: &State,
-    _assets: &Assets,
+    assets: &Assets,
     theme: &crate::themes::Theme,
     kind: BlockKind,
+    rect: Rect,
+    now: OffsetDateTime,
+) {
+    match kind {
+        BlockKind::Crypto => crypto_block(out, state, assets, theme, rect),
+        _ => premieres_block(out, state, assets, theme, rect, now),
+    }
+}
+
+/// Coins side by side, as many as fit; a second row of cells adds each coin's 24 h range.
+fn crypto_block(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    theme: &crate::themes::Theme,
     rect: Rect,
 ) {
     let language = state.preferences.language;
     widget_card(out, theme, rect);
+    let quotes = &state.feeds.quotes;
+    if quotes.is_empty() {
+        out.text(
+            language.t(if state.feeds.crypto_failed {
+                "cryptoUnavailable"
+            } else {
+                "cryptoLoading"
+            }),
+            Rect::new(rect.x + 24., rect.y + rect.h / 2. - 14., rect.w - 48., 28.),
+            text(20., 450, -0.02),
+            c(0xf5f5f5, 0.62),
+            false,
+        );
+        return;
+    }
+    let tall = rect.h > 150.;
+    let columns = (((rect.w - 48. + 24.) / 272.).floor() as usize).max(1);
+    let rows = if tall { 2 } else { 1 };
+    let width = (rect.w - 48.) / columns as f32;
+    let row_h = (rect.h - 32.) / rows as f32;
+    for (index, quote) in quotes.iter().take(columns * rows).enumerate() {
+        let x = rect.x + 24. + (index % columns) as f32 * width;
+        let y = rect.y + 16. + (index / columns) as f32 * row_h;
+        let line = y + (row_h - if tall { 52. } else { 26. }) / 2.;
+        let coin = text(21., 650, -0.01);
+        out.text(
+            quote.coin,
+            Rect::new(x, line, 70., 26.),
+            coin,
+            c(0xf5f5f5, 0.6),
+            false,
+        );
+        let value = price(quote.last, language);
+        let value_style = text(21., 550, -0.02);
+        let coin_width = assets.width(quote.coin, coin) + 10.;
+        out.text(
+            &value,
+            Rect::new(x + coin_width, line, width, 26.),
+            value_style,
+            WHITE,
+            false,
+        );
+        let change = format!(
+            "{}{:.1}%",
+            if quote.change >= 0. { "+" } else { "−" },
+            quote.change.abs()
+        );
+        out.text(
+            change,
+            Rect::new(
+                x + coin_width + assets.width(&value, value_style) + 10.,
+                line + 2.,
+                90.,
+                24.,
+            ),
+            text(17.6, 550, 0.),
+            if quote.change >= 0. {
+                c(0x4ade80, 1.)
+            } else {
+                c(0xf87171, 1.)
+            },
+            false,
+        );
+        if tall {
+            out.text(
+                format!(
+                    "{} – {}",
+                    price(quote.low, language),
+                    price(quote.high, language)
+                ),
+                Rect::new(x, line + 30., width, 22.),
+                text(15., 400, 0.),
+                c(0xf5f5f5, 0.5),
+                false,
+            );
+        }
+    }
+}
+
+/// Portrait posters sized by the block's height, each with its title, season and date.
+fn premieres_block(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    theme: &crate::themes::Theme,
+    rect: Rect,
+    now: OffsetDateTime,
+) {
+    let language = state.preferences.language;
     out.text(
-        language.t(kind.name_key()),
-        Rect::new(rect.x + 24., rect.y + 20., rect.w - 48., 28.),
-        text(21., 550, -0.02),
+        language.t("premieresWidget"),
+        Rect::new(rect.x, rect.y, 1000., 31.),
+        text(23.2, 550, -0.035).leading(1.3),
         WHITE,
         false,
     );
+    let premieres = &state.feeds.premieres;
+    if premieres.is_empty() {
+        let area = Rect::new(rect.x, rect.y + 46., rect.w, rect.h - 46.);
+        widget_card(out, theme, area);
+        out.text(
+            language.t(if state.feeds.premieres_failed {
+                "premieresUnavailable"
+            } else {
+                "premieresLoading"
+            }),
+            Rect::new(area.x + 24., area.y + area.h / 2. - 14., area.w - 48., 28.),
+            text(20., 450, -0.02),
+            c(0xf5f5f5, 0.62),
+            false,
+        );
+        return;
+    }
+    let height = rect.h - 46.;
+    let width = (height * 2. / 3.).round();
+    let gap = 18.;
+    let count = (((rect.w + gap) / (width + gap)).floor() as usize).max(1);
+    let radius = theme.radius.min(14.);
+    for (index, premiere) in premieres.iter().take(count).enumerate() {
+        let poster = Rect::new(
+            rect.x + index as f32 * (width + gap),
+            rect.y + 46.,
+            width,
+            height,
+        );
+        let focused = state.focus == Target::Poster(index) && !state.pointer;
+        out.shadow(poster, radius, if focused { 30. } else { 12. }, 8., 0.35);
+        out.draw.push(Draw::RoundedGradient(
+            poster,
+            radius,
+            c(0x3a4250, 1.),
+            c(0x161a22, 1.),
+        ));
+        if let Some(image) = premiere
+            .poster
+            .as_ref()
+            .and_then(|url| state.feeds.posters.get(url))
+        {
+            out.draw
+                .push(Draw::AppImage(image.clone(), poster, [1.; 4]));
+        }
+        // A dark band keeps the caption readable over any poster: up to two lines of title,
+        // then the season and date, shrunk to the poster's width.
+        let band = Rect::new(poster.x, poster.y + poster.h - 96., poster.w, 96.);
+        out.draw.push(Draw::RoundedGradient(
+            band,
+            0.,
+            c(0x05070a, 0.),
+            c(0x05070a, 0.92),
+        ));
+        let title = text(if poster.w < 160. { 14.4 } else { 16.8 }, 600, -0.01).leading(1.15);
+        let lines = assets.lines(&premiere.title, title, poster.w - 20.).min(2) as f32;
+        let info = language.format(
+            "seasonPremiere",
+            &[
+                ("season", &premiere.season.to_string()),
+                ("date", &short_date(&premiere.date, now, language)),
+            ],
+        );
+        let mut info_style = text(13.6, 450, 0.);
+        let info_width = assets.width(&info, info_style);
+        if info_width > poster.w - 20. {
+            info_style.size *= (poster.w - 20.) / info_width;
+        }
+        let info_y = poster.y + poster.h - 26.;
+        out.text(
+            &premiere.title,
+            Rect::new(
+                poster.x + 10.,
+                info_y - 4. - lines * title.size * 1.15,
+                poster.w - 20.,
+                lines * title.size * 1.15 + 2.,
+            ),
+            title,
+            WHITE,
+            false,
+        );
+        out.text(
+            info,
+            Rect::new(poster.x + 10., info_y, poster.w - 20., 18.),
+            info_style,
+            c(0xf5f5f5, 0.78),
+            false,
+        );
+        if focused {
+            out.ring(poster, radius);
+        }
+        out.control(Target::Poster(index), poster, true);
+    }
 }
 
 fn input_card(out: &mut Scene, state: &State, assets: &Assets, input: &Input, rect: Rect) {

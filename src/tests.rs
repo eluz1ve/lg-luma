@@ -1803,3 +1803,103 @@ fn holding_a_favorite_offers_reordering_its_apps_first() {
             .contains(&crate::state::BlockAction::Remove)
     );
 }
+
+fn quote(coin: &'static str) -> crate::feeds::Quote {
+    crate::feeds::Quote {
+        coin,
+        last: 100.,
+        change: 1.5,
+        low: 90.,
+        high: 110.,
+    }
+}
+
+fn scene_text(state: &State) -> Vec<String> {
+    scene(state)
+        .draw
+        .into_iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(text, ..) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn wider_crypto_blocks_show_more_coins() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.feeds.quotes = crate::feeds::COINS.map(quote).to_vec();
+    for (w, shown, hidden) in [(4, "ETH", "SOL"), (6, "SOL", "BNB")] {
+        state.preferences.home_layout = crate::home_grid::classic_layout();
+        state.preferences.home_layout.push(Block {
+            kind: BlockKind::Crypto,
+            x: 0,
+            y: 6,
+            w,
+            h: 1,
+        });
+        let texts = scene_text(&state);
+        assert!(texts.iter().any(|t| t == shown), "{w} columns show {shown}");
+        assert!(
+            !texts.iter().any(|t| t == hidden),
+            "{w} columns hide {hidden}"
+        );
+    }
+}
+
+#[test]
+fn a_premiere_poster_opens_apps_to_watch_it_in() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Premieres,
+        x: 0,
+        y: 6,
+        w: 12,
+        h: 2,
+    });
+    state.feeds.premieres = vec![crate::feeds::Premiere {
+        title: "Lupin".into(),
+        season: 4,
+        date: "2026-10-23".into(),
+        poster: None,
+    }];
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Poster(0))
+    );
+    state.focus = Target::Poster(0);
+    assert_eq!(state.activate(), vec![]);
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Poster { index: 0, .. })
+    ));
+    assert_eq!(state.focus, Target::PosterApp(0));
+    let apps = state.poster_apps();
+    assert!(!apps.is_empty());
+    let first = apps[0].clone();
+    let effects = state.activate();
+    assert!(effects.contains(&Effect::Launch(first.clone())));
+    assert!(effects.contains(&Effect::Save));
+    assert_eq!(state.preferences.poster_app, first);
+    assert!(state.overlay.is_none());
+    assert!(
+        state
+            .notice
+            .as_ref()
+            .is_some_and(|(text, _)| text.contains("Lupin"))
+    );
+    // The app chosen last comes first next time; holding a poster edits its block.
+    assert_eq!(state.poster_apps()[0], first);
+    state.focus = Target::Poster(0);
+    state.hold();
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::Block {
+            kind: BlockKind::Premieres,
+            ..
+        })
+    ));
+}

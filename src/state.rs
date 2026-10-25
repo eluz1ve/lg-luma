@@ -63,6 +63,10 @@ pub enum Target {
     BlockAction(usize),
     /// A row of the add-widget list, in `State::missing_blocks` order.
     AddKind(usize),
+    /// A poster in the premieres widget, by its index in the feed.
+    Poster(usize),
+    /// An app in a poster's dialog, in `State::poster_apps` order; past the end is Close.
+    PosterApp(usize),
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -163,6 +167,11 @@ pub enum Overlay {
     },
     /// "+ Add widget": the kinds not on Home.
     AddBlock {
+        restore: Target,
+    },
+    /// A premiere's dialog: which app to watch it in.
+    Poster {
+        index: usize,
         restore: Target,
     },
     Recents {
@@ -524,8 +533,31 @@ impl State {
             Target::Input(_) => Some(BlockKind::Inputs),
             Target::WeatherConfigure => Some(BlockKind::Weather),
             Target::Block(kind) => Some(*kind),
+            Target::Poster(_) => Some(BlockKind::Premieres),
             _ => None,
         }
+    }
+
+    /// Streaming apps to watch a premiere in, the one chosen last first.
+    pub fn poster_apps(&self) -> Vec<String> {
+        let favorites = self.preferences.favorites(&self.inventory.apps);
+        let mut apps: Vec<&App> = self
+            .inventory
+            .apps
+            .iter()
+            .filter(|app| app.category == "Streaming" && !self.preferences.hidden.contains(&app.id))
+            .collect();
+        apps.sort_by_key(|app| {
+            (
+                app.id != self.preferences.poster_app,
+                favorites
+                    .iter()
+                    .position(|id| id == &app.id)
+                    .unwrap_or(usize::MAX),
+                app.title.to_lowercase(),
+            )
+        });
+        apps.into_iter().take(6).map(|app| app.id.clone()).collect()
     }
 
     /// Moves or resizes the edited block by one cell and reflows the others from the layout
@@ -1667,6 +1699,47 @@ impl State {
                 }
                 return vec![];
             }
+            Target::Poster(index) => {
+                if index < self.feeds.premieres.len() {
+                    self.overlay = Some(Overlay::Poster {
+                        index,
+                        restore: Target::Poster(index),
+                    });
+                    self.focus = Target::PosterApp(0);
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
+                }
+                return vec![];
+            }
+            Target::PosterApp(choice) => {
+                let Some(Overlay::Poster { index, restore }) = self.overlay.take() else {
+                    return vec![];
+                };
+                self.panel_started = None;
+                self.focus = restore;
+                let apps = self.poster_apps();
+                let (Some(id), Some(premiere)) =
+                    (apps.get(choice), self.feeds.premieres.get(index))
+                else {
+                    return vec![];
+                };
+                let title = self
+                    .inventory
+                    .apps
+                    .iter()
+                    .find(|app| &app.id == id)
+                    .map_or(id.as_str(), |app| app.title.as_str())
+                    .to_owned();
+                let notice = self.preferences.language.format(
+                    "posterOpening",
+                    &[("app", &title), ("title", &premiere.title)],
+                );
+                self.preferences.poster_app = id.clone();
+                let id = id.clone();
+                self.notify(notice);
+                return vec![Effect::Save, Effect::Launch(id)];
+            }
             Target::AddBlock => {
                 self.overlay = Some(Overlay::AddBlock {
                     restore: Target::AddBlock,
@@ -1952,7 +2025,8 @@ impl State {
             if let Overlay::Options { restore, .. }
             | Overlay::Recents { restore }
             | Overlay::Block { restore, .. }
-            | Overlay::AddBlock { restore } = overlay
+            | Overlay::AddBlock { restore }
+            | Overlay::Poster { restore, .. } = overlay
             {
                 self.focus = restore;
                 self.recents.pending = None;
