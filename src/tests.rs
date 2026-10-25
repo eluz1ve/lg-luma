@@ -1438,13 +1438,19 @@ fn interface_sizes_default_to_normal_and_recover_from_unknown_values() {
 }
 
 #[test]
-fn interface_section_cycles_sizes_with_ok_and_right() {
+fn interface_scale_opens_from_general_and_cycles_sizes_with_ok_and_right() {
     use crate::model::UiSize;
+    use crate::state::Subpage;
     let mut state = ready();
     state.open(2);
-    state.focus = Target::Sidebar(crate::state::APPEARANCE_SECTION);
-    state.section = crate::state::APPEARANCE_SECTION;
+    state.direction(Direction::Down, &controls(&state));
     state.direction(Direction::Right, &controls(&state));
+    for _ in 0..5 {
+        state.direction(Direction::Down, &controls(&state));
+    }
+    assert_eq!(state.focus, Target::Setting(7));
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.subpage, Some(Subpage::Appearance));
     assert_eq!(state.focus, Target::UiSize(0));
     assert!(
         controls(&state)
@@ -1466,10 +1472,13 @@ fn interface_section_cycles_sizes_with_ok_and_right() {
     assert_eq!(state.focus, Target::Nav(2));
     state.focus = Target::UiSize(2);
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(
-        state.focus,
-        Target::Sidebar(crate::state::APPEARANCE_SECTION)
-    );
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::Setting(7));
+    state.activate();
+    state.direction(Direction::Down, &controls(&state));
+    state.back();
+    assert_eq!(state.focus, Target::Setting(7));
+    assert_eq!(state.section, 0);
 }
 
 #[test]
@@ -1485,7 +1494,7 @@ fn interface_sizes_scale_the_clock_and_hints_and_the_sample_is_not_focusable() {
     };
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::APPEARANCE_SECTION;
+    state.subpage = Some(crate::state::Subpage::Appearance);
     state.focus = Target::UiSize(1);
     let normal = scene(&state);
     let clock_normal = text_size(&normal, "AM").expect("clock");

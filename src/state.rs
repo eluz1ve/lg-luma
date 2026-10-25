@@ -1,18 +1,17 @@
 use crate::i18n::Language;
 use crate::model::{
-    App, BACKGROUNDS, CATEGORIES, INPUT_NAME_LIMIT, InputMode, Inventory, Preferences,
+    App, BACKGROUNDS, CATEGORIES, INPUT_NAME_LIMIT, InputMode, Inventory, Preferences, UiSizes,
     clean_input_name,
 };
 use crate::weather::{self, Unit};
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
-pub const APPEARANCE_SECTION: usize = 1;
-pub const BACKGROUND_SECTION: usize = 2;
-pub const WEATHER_SECTION: usize = 3;
-pub const INPUTS_SECTION: usize = 4;
-pub const SYSTEM_SECTION: usize = 5;
-pub const SECTION_COUNT: usize = 6;
+pub const BACKGROUND_SECTION: usize = 1;
+pub const WEATHER_SECTION: usize = 2;
+pub const INPUTS_SECTION: usize = 3;
+pub const SYSTEM_SECTION: usize = 4;
+pub const SECTION_COUNT: usize = 5;
 pub const APPS_COLUMNS: usize = 6;
 pub const HOME_STRIP_LEFT: f32 = 84.;
 // Six favourites in full and the seventh cut off and fading out at the right (Apple TV rows):
@@ -53,7 +52,7 @@ pub enum Target {
     ClockFormat,
     ClockTimeFormat,
     Background(usize),
-    /// A size row in Settings › Appearance, in `UiSizes` order.
+    /// A size row in General › Interface scale, in `UiSizes` order.
     UiSize(usize),
     InputMode(String),
     InputRename,
@@ -122,6 +121,8 @@ pub enum Subpage {
     WeatherLocation,
     Temperature,
     Language,
+    /// General › Interface scale: per-element sizes with a live preview.
+    Appearance,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -588,7 +589,6 @@ impl State {
 
     fn section_entry(&self) -> Target {
         match self.section {
-            APPEARANCE_SECTION => Target::UiSize(0),
             BACKGROUND_SECTION => Target::Background(
                 BACKGROUNDS
                     .iter()
@@ -629,6 +629,7 @@ impl State {
             Some(Subpage::WeatherLocation) => Target::WeatherLocation,
             Some(Subpage::Temperature) => Target::WeatherTemperature,
             Some(Subpage::Language) => Target::Setting(4),
+            Some(Subpage::Appearance) => Target::Setting(7),
             None => Target::Sidebar(self.section),
         };
         self.scroll = 0.;
@@ -777,6 +778,25 @@ impl State {
                 }
                 return vec![];
             }
+            if let Target::UiSize(index) = self.focus {
+                match direction {
+                    Direction::Left => self.close_subpage(),
+                    Direction::Up => self.focus(
+                        if index == 0 {
+                            Target::Nav(2)
+                        } else {
+                            Target::UiSize(index - 1)
+                        },
+                        controls,
+                    ),
+                    Direction::Down if index + 1 < UiSizes::ROWS => {
+                        self.focus(Target::UiSize(index + 1), controls)
+                    }
+                    Direction::Right => return self.activate(),
+                    Direction::Down => {}
+                }
+                return vec![];
+            }
             if matches!(self.focus, Target::InputRename | Target::InputNameReset) {
                 match direction {
                     Direction::Left => self.close_subpage(),
@@ -821,8 +841,7 @@ impl State {
             }
             if matches!(
                 self.focus,
-                Target::Setting(0 | 1 | 4 | 6)
-                    | Target::UiSize(_)
+                Target::Setting(0 | 1 | 4 | 6 | 7)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -846,9 +865,7 @@ impl State {
                 self.focus(Target::Sidebar(INPUTS_SECTION), controls);
                 return vec![];
             }
-            if matches!(self.focus, Target::Setting(0) | Target::UiSize(0))
-                && matches!(direction, Direction::Up)
-            {
+            if self.focus == Target::Setting(0) && matches!(direction, Direction::Up) {
                 self.focus(Target::Nav(2), controls);
                 return vec![];
             }
@@ -1459,6 +1476,15 @@ impl State {
                         return vec![];
                     }
                     5 => return vec![Effect::Quit],
+                    7 => {
+                        self.subpage = Some(Subpage::Appearance);
+                        self.focus = Target::UiSize(0);
+                        self.scroll = 0.;
+                        if !self.preferences.reduced_motion {
+                            self.panel_started = Some(Instant::now());
+                        }
+                        return vec![];
+                    }
                     6 => {
                         self.subpage = Some(Subpage::Greeting);
                         self.focus = Target::GreetingName;
@@ -1529,7 +1555,8 @@ impl State {
                         Subpage::WeatherLocation
                         | Subpage::Greeting
                         | Subpage::AppNames
-                        | Subpage::Clock,
+                        | Subpage::Clock
+                        | Subpage::Appearance,
                     ) => {
                         return vec![];
                     }

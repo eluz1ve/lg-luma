@@ -4,9 +4,9 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode, UiSizes},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        APPEARANCE_SECTION, APPS_COLUMNS, BACKGROUND_SECTION, Control, HOME_FADE_LEFT,
-        HOME_FADE_RIGHT, HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
-        Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField, WEATHER_SECTION,
+        APPS_COLUMNS, BACKGROUND_SECTION, Control, HOME_FADE_LEFT, HOME_FADE_RIGHT,
+        HOME_STRIP_LEFT, HOME_STRIP_RIGHT, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, Overlay, Page,
+        Rect, SYSTEM_SECTION, State, Subpage, Target, TextField, WEATHER_SECTION,
     },
     weather::{self, Unit},
 };
@@ -1768,16 +1768,9 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
 fn settings(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
     let s = state.scroll;
-    for (index, key) in [
-        "interface",
-        "appearance",
-        "background",
-        "weather",
-        "inputs",
-        "system",
-    ]
-    .into_iter()
-    .enumerate()
+    for (index, key) in ["interface", "background", "weather", "inputs", "system"]
+        .into_iter()
+        .enumerate()
     {
         let label = language.t(key);
         let rect = Rect::new(160., 164.8 + index as f32 * 84. - s, 403.2, 72.);
@@ -1820,6 +1813,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::WeatherLocation) => language.t("location"),
                 Some(Subpage::Temperature) => language.t("temperature"),
                 Some(Subpage::Language) => language.t("language"),
+                Some(Subpage::Appearance) => language.t("uiScale"),
                 None => "",
             };
             let parent_width = assets.width(label, text(20.8, 550, -0.02)) + 2.;
@@ -1838,14 +1832,13 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             );
             let sub_width = rect.w - 24.2 - parent_width - 28. - 24.2;
             let mut sub_style = text(20.8, 550, -0.02);
-            if clock_path.is_some() {
-                sub_style.size *= (sub_width / assets.width(sub, sub_style)).min(1.);
-            }
+            sub_style.size *= (sub_width / assets.width(sub, sub_style)).min(1.);
             out.text(
                 sub,
                 Rect::new(
                     rect.x + 24.2 + parent_width + 28.,
-                    rect.y + 23.5,
+                    // A name shrunk to fit stays centred on the parent's line.
+                    rect.y + 23.5 + (20.8 - sub_style.size) * sub_style.line_height / 2.,
                     sub_width,
                     25.,
                 ),
@@ -1880,13 +1873,18 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         let start = out.draw.len();
         if matches!(
             subpage,
-            Subpage::WeatherLocation | Subpage::Greeting | Subpage::AppNames | Subpage::Clock
+            Subpage::WeatherLocation
+                | Subpage::Greeting
+                | Subpage::AppNames
+                | Subpage::Clock
+                | Subpage::Appearance
         ) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Greeting => greeting_settings(out, state, assets),
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
+                Subpage::Appearance => appearance_settings(out, state, assets),
                 _ => unreachable!(),
             }
             if let Some(opened) = state.panel_started {
@@ -1940,9 +1938,11 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     state.preferences.temperature_unit == Unit::Fahrenheit,
                 ),
             ],
-            Subpage::WeatherLocation | Subpage::Greeting | Subpage::AppNames | Subpage::Clock => {
-                unreachable!()
-            }
+            Subpage::WeatherLocation
+            | Subpage::Greeting
+            | Subpage::AppNames
+            | Subpage::Clock
+            | Subpage::Appearance => unreachable!(),
             Subpage::Language => Language::ALL
                 .into_iter()
                 .map(|option| (option.name(), None, option == language))
@@ -2002,6 +2002,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     }),
                     true,
                 ),
+                (7, "uiScale", "grid", None, true),
             ]
             .into_iter()
             .enumerate()
@@ -2023,7 +2024,6 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 );
             }
         }
-        APPEARANCE_SECTION => appearance_settings(out, state, assets),
         BACKGROUND_SECTION => {
             for (index, (id, _title)) in BACKGROUNDS.iter().enumerate() {
                 let rect = Rect::new(
@@ -2798,8 +2798,8 @@ fn full_screen_fill(draw: &Draw) -> bool {
     }
 }
 
-/// Settings › Appearance: a size row per group of elements, then a live sample of the focused
-/// row at its real size. The clock and the hints are on this screen already and change in place.
+/// General › Interface scale: a size row per group of elements, then a live sample of the
+/// focused row at its real size. The clock and the hints are on this screen already and change in place.
 fn appearance_settings(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
     let s = state.scroll;

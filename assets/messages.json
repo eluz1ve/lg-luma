@@ -1439,15 +1439,6 @@
     "it": "Scheda di test per lo scorrimento; nessuna app da avviare.",
     "ru": "Тестовая карточка для прокрутки; приложение не запускается."
   },
-  "appearance": {
-    "en": "Appearance",
-    "de": "Darstellung",
-    "es": "Apariencia",
-    "zh": "外观",
-    "pt": "Aparência",
-    "it": "Aspetto",
-    "ru": "Интерфейс"
-  },
   "searchField": {
     "en": "Search",
     "de": "Suche",
@@ -1519,5 +1510,14 @@
     "pt": "As dicas na parte inferior mudam conforme você escolhe.",
     "it": "I suggerimenti in basso cambiano mentre scegli.",
     "ru": "Подсказки внизу меняются сразу при выборе."
+  },
+  "uiScale": {
+    "en": "Interface scale",
+    "de": "Skalierung der Oberfläche",
+    "es": "Escala de la interfaz",
+    "zh": "界面元素缩放",
+    "pt": "Escala da interface",
+    "it": "Scala dell’interfaccia",
+    "ru": "Масштаб элементов интерфейса"
   }
 }
