@@ -598,6 +598,53 @@ impl State {
         matches
     }
 
+    /// Team logos the esports widgets on Home show, then the open match's league logo and
+    /// player photos.
+    pub fn wanted_images(&self) -> Vec<String> {
+        let mut urls: Vec<String> = Vec::new();
+        let mut add = |url: &Option<String>| {
+            if let Some(url) = url
+                && !urls.contains(url)
+            {
+                urls.push(url.clone());
+            }
+        };
+        for block in self.home_blocks() {
+            if let crate::home_grid::BlockKind::Esports(n) = block.kind {
+                for found in self.esports_matches(n) {
+                    found
+                        .teams
+                        .iter()
+                        .flatten()
+                        .for_each(|team| add(&team.image));
+                }
+            }
+        }
+        if let Some(Overlay::Match {
+            instance, index, ..
+        }) = self.overlay
+            && let Some(found) = self.esports_matches(instance).get(index)
+        {
+            add(&found.league_image);
+            for team in found.teams.iter().flatten() {
+                for player in self.feeds.rosters.get(&team.id).into_iter().flatten() {
+                    add(&player.image);
+                }
+            }
+        }
+        urls
+    }
+
+    /// When the oldest shared feed an esports widget shows was built, in Unix seconds.
+    pub fn esports_updated(&self, instance: u8) -> Option<i64> {
+        self.esports_widget(instance)
+            .games
+            .iter()
+            .filter_map(|game| self.feeds.updated.get(game))
+            .min()
+            .copied()
+    }
+
     /// Every discipline some esports widget on Home shows.
     pub fn esports_games(&self) -> Vec<String> {
         let mut games: Vec<String> = self
@@ -1877,6 +1924,7 @@ impl State {
                     restore: Target::Match(instance, index),
                 });
                 self.focus = Target::CloseDialog;
+                self.feeds.images_due = true;
                 if !self.preferences.reduced_motion {
                     self.panel_started = Some(Instant::now());
                 }

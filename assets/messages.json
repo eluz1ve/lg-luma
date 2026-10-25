@@ -2176,5 +2176,50 @@
     "pt": "Dados de teste compartilhados, atualizados a cada 15 minutos. Para uso pessoal, cadastre-se em pandascore.co e adicione sua chave gratuita nas configurações do widget — ela também traz placares ao vivo.",
     "it": "Dati di prova condivisi, aggiornati ogni 15 minuti. Per l’uso personale registrati su pandascore.co e aggiungi la tua chiave gratuita nelle impostazioni del widget: avrai anche i punteggi in diretta.",
     "ru": "Общие тестовые данные, обновляются раз в 15 минут. Для личного использования зарегистрируйтесь на pandascore.co и добавьте свой бесплатный ключ в настройках виджета — с ним счёт будет в реальном времени."
+  },
+  "esportsOnline": {
+    "en": "Online",
+    "de": "Online",
+    "es": "Online",
+    "zh": "线上",
+    "pt": "Online",
+    "it": "Online",
+    "ru": "Онлайн"
+  },
+  "esportsStreams": {
+    "en": "Streams",
+    "de": "Streams",
+    "es": "Retransmisiones",
+    "zh": "直播平台",
+    "pt": "Transmissões",
+    "it": "Dirette",
+    "ru": "Трансляции"
+  },
+  "esportsOfficial": {
+    "en": "official",
+    "de": "offiziell",
+    "es": "oficial",
+    "zh": "官方",
+    "pt": "oficial",
+    "it": "ufficiale",
+    "ru": "официальная"
+  },
+  "esportsMinutes": {
+    "en": "{number} min",
+    "de": "{number} Min.",
+    "es": "{number} min",
+    "zh": "{number} 分钟",
+    "pt": "{number} min",
+    "it": "{number} min",
+    "ru": "{number} мин"
+  },
+  "esportsAsOf": {
+    "en": "Data as of {time}",
+    "de": "Stand: {time}",
+    "es": "Datos de las {time}",
+    "zh": "数据截至 {time}",
+    "pt": "Dados de {time}",
+    "it": "Dati delle {time}",
+    "ru": "Данные на {time}"
   }
 }

@@ -927,6 +927,7 @@ fn run() -> Result<(), String> {
                 esports_fetched.clear();
                 state.feeds.matches.clear();
                 state.feeds.rosters.clear();
+                state.feeds.updated.clear();
                 state.feeds.matches_error = None;
             }
             // Without a key, the shared feed (rebuilt every 15 minutes); with one, PandaScore
@@ -953,6 +954,13 @@ fn run() -> Result<(), String> {
                             game: game.clone(),
                         }
                     });
+                }
+            }
+            if std::mem::take(&mut state.feeds.images_due) {
+                for url in state.wanted_images() {
+                    if state.feeds.requested.insert(url.clone()) {
+                        feeds.send(feeds::FeedRequest::Image(url));
+                    }
                 }
             }
             for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
@@ -1021,8 +1029,8 @@ fn run() -> Result<(), String> {
                 }
                 feeds::FeedResponse::Premieres(Ok(premieres)) => {
                     for url in premieres.iter().filter_map(|p| p.poster.as_ref()) {
-                        if !state.feeds.posters.contains_key(url) {
-                            feeds.send(feeds::FeedRequest::Poster(url.clone()));
+                        if !state.feeds.images.contains_key(url) {
+                            feeds.send(feeds::FeedRequest::Image(url.clone()));
                         }
                     }
                     state.feeds.premieres = premieres;
@@ -1032,28 +1040,37 @@ fn run() -> Result<(), String> {
                     eprintln!("Luma premieres: {error}");
                     state.feeds.premieres_failed = true;
                 }
-                feeds::FeedResponse::Poster(url, Some(image)) => {
-                    state.feeds.posters.insert(url, image);
+                feeds::FeedResponse::Image(url, Some(image)) => {
+                    state.feeds.images.insert(url, image);
                 }
-                feeds::FeedResponse::Poster(_, None) => {}
+                feeds::FeedResponse::Image(_, None) => {}
                 feeds::FeedResponse::Matches {
                     game,
                     result: Ok(matches),
                 } => {
                     state.feeds.matches.insert(game, matches);
                     state.feeds.matches_error = None;
+                    state.feeds.images_due = true;
                 }
                 feeds::FeedResponse::Matches {
                     result: Err(error), ..
                 } => state.feeds.matches_error = Some(error),
-                feeds::FeedResponse::Rosters(rosters) => state.feeds.rosters.extend(rosters),
+                feeds::FeedResponse::Rosters(rosters) => {
+                    state.feeds.rosters.extend(rosters);
+                    state.feeds.images_due = true;
+                }
                 feeds::FeedResponse::Shared {
                     game,
-                    result: Ok((matches, rosters)),
+                    result: Ok(feed),
                 } => {
-                    state.feeds.matches.insert(game, matches);
-                    state.feeds.rosters.extend(rosters);
+                    match feed.updated {
+                        Some(updated) => state.feeds.updated.insert(game.clone(), updated),
+                        None => state.feeds.updated.remove(&game),
+                    };
+                    state.feeds.matches.insert(game, feed.matches);
+                    state.feeds.rosters.extend(feed.rosters);
                     state.feeds.matches_error = None;
+                    state.feeds.images_due = true;
                 }
                 feeds::FeedResponse::Shared {
                     result: Err(error), ..

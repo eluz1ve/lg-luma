@@ -19,6 +19,8 @@ const SCHEDULES: [&str; 2] = [
     "https://api.tvmaze.com/schedule",
 ];
 const POSTER_ORIGIN: &str = "https://static.tvmaze.com/";
+/// Team and league logos and player photos.
+const LOGO_ORIGIN: &str = "https://cdn-api.pandascore.co/";
 const PANDASCORE: &str = "https://api.pandascore.co";
 /// The shared feed for widgets without a personal key, rebuilt every 15 minutes.
 const FEED: &str = "https://eluz1ve.github.io/luma-feeds/esports";
@@ -85,6 +87,10 @@ pub struct Team {
     pub name: String,
     /// The acronym when PandaScore has one, else the name.
     pub short: String,
+    /// The logo on PandaScore's CDN, its dark-mode variant first.
+    pub image: Option<String>,
+    /// Country or region code, e.g. `UA`, `EU`.
+    pub location: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +106,33 @@ pub struct MatchGame {
     pub position: u64,
     pub state: GameState,
     pub winner: Option<u64>,
+    /// RFC 3339, UTC; empty before the map starts.
+    pub begin_at: String,
+    /// Seconds, once the map is over.
+    pub length: Option<u64>,
+}
+
+/// Where a match is broadcast.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stream {
+    /// ISO 639-1, e.g. `ru`.
+    pub language: String,
+    /// Twitch, Kick, YouTube or the site's host.
+    pub platform: String,
+    pub official: bool,
+    pub main: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Player {
+    pub name: String,
+    pub real_name: String,
+    /// Country code.
+    pub nationality: String,
+    /// The position in disciplines that have them, e.g. `mid`, `support`.
+    pub role: String,
+    pub age: Option<u64>,
+    pub image: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +152,14 @@ pub struct CsMatch {
     /// League and series, e.g. "BLAST Premier Fall 2026".
     pub event: String,
     pub tier: String,
+    /// The tournament's stage, e.g. "Playoffs", "Group A".
+    pub stage: String,
+    /// As PandaScore writes it, e.g. "1000000 United States Dollar".
+    pub prizepool: String,
+    /// Online or on LAN, when known.
+    pub online: Option<bool>,
+    pub league_image: Option<String>,
+    pub streams: Vec<Stream>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,25 +174,42 @@ pub enum MatchesError {
 pub struct FeedData {
     pub quotes: Vec<Quote>,
     pub premieres: Vec<Premiere>,
-    pub posters: std::collections::HashMap<String, Arc<Artwork>>,
+    /// Posters, logos and player photos by URL.
+    pub images: std::collections::HashMap<String, Arc<Artwork>>,
     pub crypto_failed: bool,
     pub premieres_failed: bool,
     /// Running and upcoming matches by discipline; a discipline is missing until it arrives.
     pub matches: std::collections::HashMap<String, Vec<CsMatch>>,
     pub matches_error: Option<MatchesError>,
-    /// Player nicknames by team id.
-    pub rosters: std::collections::HashMap<u64, Vec<String>>,
+    /// Players by team id.
+    pub rosters: std::collections::HashMap<u64, Vec<Player>>,
+    /// When the shared feed of each discipline was built, in Unix seconds; a personal key's
+    /// disciplines are live and have none.
+    pub updated: std::collections::HashMap<String, i64>,
     /// Lineups a match dialog asked for, sent to the worker by the main loop.
     pub pending_rosters: Vec<(String, Vec<u64>)>,
+    /// Image URLs already asked for, loaded or not: a failed logo is not retried.
+    pub requested: std::collections::HashSet<String>,
+    /// The widgets or a match dialog may want images not asked for yet.
+    pub images_due: bool,
 }
 
-/// A team's id and its players' nicknames.
-pub type Roster = (u64, Vec<String>);
+/// A team's id and its players.
+pub type Roster = (u64, Vec<Player>);
+
+/// One discipline of the shared feed.
+pub struct SharedFeed {
+    pub matches: Vec<CsMatch>,
+    pub rosters: Vec<Roster>,
+    /// When the feed was built, in Unix seconds.
+    pub updated: Option<i64>,
+}
 
 pub enum FeedRequest {
     Crypto,
     Premieres,
-    Poster(String),
+    /// A poster, logo or player photo from an allowed CDN.
+    Image(String),
     Matches {
         key: String,
         game: String,
@@ -170,15 +228,15 @@ pub enum FeedRequest {
 pub enum FeedResponse {
     Crypto(Result<Vec<Quote>, String>),
     Premieres(Result<Vec<Premiere>, String>),
-    Poster(String, Option<Arc<Artwork>>),
+    Image(String, Option<Arc<Artwork>>),
     Matches {
         game: String,
         result: Result<Vec<CsMatch>, MatchesError>,
     },
-    Rosters(Vec<(u64, Vec<String>)>),
+    Rosters(Vec<Roster>),
     Shared {
         game: String,
-        result: Result<(Vec<CsMatch>, Vec<Roster>), MatchesError>,
+        result: Result<SharedFeed, MatchesError>,
     },
 }
 
@@ -202,9 +260,9 @@ impl Feeds {
                 let response = match request {
                     FeedRequest::Crypto => FeedResponse::Crypto(quotes(&agent)),
                     FeedRequest::Premieres => FeedResponse::Premieres(premieres(&agent)),
-                    FeedRequest::Poster(url) => {
-                        let image = poster(&agent, &url);
-                        FeedResponse::Poster(url, image)
+                    FeedRequest::Image(url) => {
+                        let image = image(&agent, &url);
+                        FeedResponse::Image(url, image)
                     }
                     FeedRequest::Matches { key, game } => FeedResponse::Matches {
                         result: matches(&agent, &key, &game),
@@ -384,7 +442,7 @@ pub fn parse_premieres(days: &[Value]) -> Vec<Premiere> {
         let poster = show
             .pointer("/image/medium")
             .and_then(Value::as_str)
-            .filter(|url| poster_allowed(url))
+            .filter(|url| image_allowed(url))
             .map(str::to_owned);
         found.push((
             id,
@@ -405,8 +463,10 @@ pub fn parse_premieres(days: &[Value]) -> Vec<Premiere> {
         .collect()
 }
 
-pub fn poster_allowed(url: &str) -> bool {
-    url.starts_with(POSTER_ORIGIN) && !url.contains("..") && url.len() < 512
+pub fn image_allowed(url: &str) -> bool {
+    (url.starts_with(POSTER_ORIGIN) || url.starts_with(LOGO_ORIGIN))
+        && !url.contains("..")
+        && url.len() < 512
 }
 
 /// A PandaScore list with the user's key; a refused key is told apart from other failures.
@@ -473,7 +533,7 @@ fn matches(agent: &ureq::Agent, key: &str, game: &str) -> Result<Vec<CsMatch>, M
     Ok(matches)
 }
 
-fn rosters(agent: &ureq::Agent, key: &str, game: &str, teams: &[u64]) -> Vec<(u64, Vec<String>)> {
+fn rosters(agent: &ureq::Agent, key: &str, game: &str, teams: &[u64]) -> Vec<Roster> {
     if teams.is_empty() {
         return vec![];
     }
@@ -493,42 +553,151 @@ fn rosters(agent: &ureq::Agent, key: &str, game: &str, teams: &[u64]) -> Vec<(u6
     .unwrap_or_default()
 }
 
+/// Trimmed text of at most `limit` characters; anything else is empty.
+fn text(value: Option<&Value>, limit: usize) -> String {
+    value
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(limit)
+        .collect()
+}
+
+/// The first of these fields holding an image URL Luma may load.
+fn image_field(item: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| item.get(*key)?.as_str())
+        .find(|url| image_allowed(url))
+        .map(str::to_owned)
+}
+
+/// A team from PandaScore (`acronym`, `image_url`) or the shared feed (`short`, `image`).
+fn team(item: &Value) -> Option<Team> {
+    let name = text(item.get("name"), 40);
+    let short = [item.get("short"), item.get("acronym")]
+        .into_iter()
+        .map(|value| text(value, 12))
+        .find(|short| !short.is_empty())
+        .unwrap_or_else(|| name.clone());
+    Some(Team {
+        id: item.get("id")?.as_u64()?,
+        name,
+        short,
+        image: image_field(item, &["image", "dark_mode_image_url", "image_url"]),
+        location: text(item.get("location"), 8),
+    })
+}
+
+/// A map from PandaScore (`status`, `winner.id`) or the shared feed (`state`, `winner`).
+fn game(item: &Value) -> Option<MatchGame> {
+    let state = item.get("state").or_else(|| item.get("status"));
+    Some(MatchGame {
+        position: item.get("position")?.as_u64()?,
+        state: match state.and_then(Value::as_str) {
+            Some("running") => GameState::Running,
+            Some("finished") => GameState::Finished,
+            _ => GameState::Waiting,
+        },
+        winner: item
+            .get("winner")
+            .and_then(|winner| winner.as_u64().or_else(|| winner.get("id")?.as_u64())),
+        begin_at: text(item.get("begin_at"), 32),
+        length: item.get("length").and_then(Value::as_u64),
+    })
+}
+
+/// A broadcast from PandaScore (`raw_url`) or the shared feed (`platform`).
+fn stream(item: &Value) -> Stream {
+    let mut platform = text(item.get("platform"), 24);
+    if platform.is_empty() {
+        let url = text(item.get("raw_url"), 200);
+        let host = url
+            .split("://")
+            .nth(1)
+            .unwrap_or("")
+            .split(['/', '?', ':'])
+            .next()
+            .unwrap_or("");
+        let host = host.strip_prefix("www.").unwrap_or(host);
+        platform = match host {
+            "twitch.tv" => "Twitch".into(),
+            "kick.com" => "Kick".into(),
+            "youtube.com" | "youtu.be" => "YouTube".into(),
+            host => host.chars().take(24).collect(),
+        };
+    }
+    let flag = |key| item.get(key).and_then(Value::as_bool).unwrap_or(false);
+    Stream {
+        language: text(item.get("language"), 8),
+        platform,
+        official: flag("official"),
+        main: flag("main"),
+    }
+}
+
+/// A player from PandaScore (`first_name`, `image_url`) or the shared feed (`real_name`,
+/// `image`); the shared feed's older lineups are bare nicknames.
+fn player(item: &Value) -> Option<Player> {
+    let name = text(item.get("name").or(Some(item)), 24);
+    if name.is_empty() {
+        return None;
+    }
+    let mut real_name = text(item.get("real_name"), 40);
+    if real_name.is_empty() {
+        real_name = format!(
+            "{} {}",
+            text(item.get("first_name"), 24),
+            text(item.get("last_name"), 24)
+        )
+        .trim()
+        .to_owned();
+    }
+    Some(Player {
+        name,
+        real_name,
+        nationality: text(item.get("nationality"), 8),
+        role: text(item.get("role"), 16),
+        age: item.get("age").and_then(Value::as_u64),
+        image: image_field(item, &["image", "image_url"]),
+    })
+}
+
+/// The first two teams; a team still to be decided is `None`.
+fn two_teams<'a>(entries: impl Iterator<Item = &'a Value>, opponent: bool) -> [Option<Team>; 2] {
+    let mut teams = entries.take(2).map(|entry| {
+        if opponent {
+            team(entry.get("opponent")?)
+        } else {
+            team(entry)
+        }
+    });
+    [teams.next().flatten(), teams.next().flatten()]
+}
+
+fn streams(list: Option<&Value>) -> Vec<Stream> {
+    list.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(6)
+        .map(stream)
+        .collect()
+}
+
 /// PandaScore match objects; malformed entries are skipped.
 pub fn parse_matches(body: &Value) -> Vec<CsMatch> {
-    let text = |value: Option<&Value>| value.and_then(Value::as_str).unwrap_or("").to_owned();
     body.as_array()
         .into_iter()
         .flatten()
         .filter_map(|item| {
             let id = item.get("id")?.as_u64()?;
-            let teams: Vec<Option<Team>> = item
-                .get("opponents")
-                .and_then(Value::as_array)
-                .map(|opponents| {
-                    opponents
-                        .iter()
-                        .take(2)
-                        .map(|entry| {
-                            let team = entry.get("opponent")?;
-                            let name: String = text(team.get("name")).chars().take(40).collect();
-                            let acronym = text(team.get("acronym"));
-                            Some(Team {
-                                id: team.get("id")?.as_u64()?,
-                                short: if acronym.is_empty() {
-                                    name.clone()
-                                } else {
-                                    acronym.chars().take(12).collect()
-                                },
-                                name,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let teams = [
-                teams.first().cloned().flatten(),
-                teams.get(1).cloned().flatten(),
-            ];
+            let teams = two_teams(
+                item.get("opponents")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+                true,
+            );
             let results = item.get("results").and_then(Value::as_array);
             let score = teams.clone().map(|team| {
                 let id = team.map(|team| team.id);
@@ -544,26 +713,19 @@ pub fn parse_matches(body: &Value) -> Vec<CsMatch> {
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(|game| {
-                    Some(MatchGame {
-                        position: game.get("position")?.as_u64()?,
-                        state: match game.get("status").and_then(Value::as_str) {
-                            Some("running") => GameState::Running,
-                            Some("finished") => GameState::Finished,
-                            _ => GameState::Waiting,
-                        },
-                        winner: game.pointer("/winner/id").and_then(Value::as_u64),
-                    })
-                })
+                .filter_map(game)
                 .collect();
             games.sort_by_key(|game| game.position);
-            let league = text(item.pointer("/league/name"));
-            let serie = text(item.pointer("/serie/full_name"));
+            let league = text(item.pointer("/league/name"), 40);
+            let serie = text(item.pointer("/serie/full_name"), 40);
             Some(CsMatch {
                 id,
                 game: String::new(),
                 running: item.get("status").and_then(Value::as_str) == Some("running"),
-                begin_at: text(item.get("begin_at").or_else(|| item.get("scheduled_at"))),
+                begin_at: text(
+                    item.get("begin_at").or_else(|| item.get("scheduled_at")),
+                    32,
+                ),
                 teams,
                 score,
                 best_of: item
@@ -576,7 +738,18 @@ pub fn parse_matches(body: &Value) -> Vec<CsMatch> {
                     .chars()
                     .take(60)
                     .collect(),
-                tier: text(item.pointer("/tournament/tier")).to_lowercase(),
+                tier: text(item.pointer("/tournament/tier"), 12).to_lowercase(),
+                stage: text(item.pointer("/tournament/name"), 40),
+                prizepool: text(item.pointer("/tournament/prizepool"), 40),
+                online: match item.pointer("/tournament/type").and_then(Value::as_str) {
+                    Some("online") => Some(true),
+                    Some("offline") => Some(false),
+                    _ => None,
+                },
+                league_image: item
+                    .get("league")
+                    .and_then(|league| image_field(league, &["image_url"])),
+                streams: streams(item.get("streams_list")),
             })
         })
         .collect()
@@ -598,16 +771,7 @@ pub fn select_matches(
 }
 
 /// The shared feed's matches (already filtered to running and upcoming) and their lineups.
-pub fn parse_feed(body: &Value, game: &str) -> (Vec<CsMatch>, Vec<(u64, Vec<String>)>) {
-    let text = |value: Option<&Value>, limit: usize| -> String {
-        value
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .chars()
-            .take(limit)
-            .collect()
-    };
+pub fn parse_feed(body: &Value, game_name: &str) -> SharedFeed {
     let mut rosters = Vec::new();
     let matches = body
         .get("matches")
@@ -616,38 +780,22 @@ pub fn parse_feed(body: &Value, game: &str) -> (Vec<CsMatch>, Vec<(u64, Vec<Stri
         .flatten()
         .take(MATCHES)
         .filter_map(|item| {
-            let teams: Vec<Option<Team>> = item
-                .get("teams")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .take(2)
-                .map(|team| {
-                    Some(Team {
-                        id: team.get("id")?.as_u64()?,
-                        name: text(team.get("name"), 40),
-                        short: text(team.get("short"), 12),
-                    })
-                })
-                .collect();
-            let teams = [
-                teams.first().cloned().flatten(),
-                teams.get(1).cloned().flatten(),
-            ];
+            let teams = two_teams(
+                item.get("teams")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+                false,
+            );
             let lineups = item.get("lineups").and_then(Value::as_array);
             for (side, team) in teams.iter().enumerate() {
                 if let (Some(team), Some(players)) = (
                     team,
                     lineups.and_then(|l| l.get(side)).and_then(Value::as_array),
                 ) {
-                    let names: Vec<String> = players
-                        .iter()
-                        .map(|p| text(Some(p), 24))
-                        .filter(|n| !n.is_empty())
-                        .take(7)
-                        .collect();
-                    if !names.is_empty() {
-                        rosters.push((team.id, names));
+                    let players: Vec<Player> = players.iter().filter_map(player).take(7).collect();
+                    if !players.is_empty() {
+                        rosters.push((team.id, players));
                     }
                 }
             }
@@ -660,7 +808,7 @@ pub fn parse_feed(body: &Value, game: &str) -> (Vec<CsMatch>, Vec<(u64, Vec<Stri
             };
             Some(CsMatch {
                 id: item.get("id")?.as_u64()?,
-                game: game_path(game).into(),
+                game: game_path(game_name).into(),
                 running: item
                     .get("running")
                     .and_then(Value::as_bool)
@@ -674,28 +822,27 @@ pub fn parse_feed(body: &Value, game: &str) -> (Vec<CsMatch>, Vec<(u64, Vec<Stri
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|game| {
-                        Some(MatchGame {
-                            position: game.get("position")?.as_u64()?,
-                            state: match game.get("state").and_then(Value::as_str) {
-                                Some("running") => GameState::Running,
-                                Some("finished") => GameState::Finished,
-                                _ => GameState::Waiting,
-                            },
-                            winner: game.get("winner").and_then(Value::as_u64),
-                        })
-                    })
+                    .filter_map(game)
                     .collect(),
                 event: text(item.get("event"), 60),
                 tier: text(item.get("tier"), 12).to_lowercase(),
+                stage: text(item.get("stage"), 40),
+                prizepool: text(item.get("prizepool"), 40),
+                online: item.get("online").and_then(Value::as_bool),
+                league_image: image_field(item, &["league_image"]),
+                streams: streams(item.get("streams")),
             })
         })
         .collect();
-    (matches, rosters)
+    SharedFeed {
+        matches,
+        rosters,
+        updated: body.get("updated").and_then(Value::as_i64),
+    }
 }
 
-/// Player nicknames by team, from PandaScore team objects.
-pub fn parse_rosters(body: &Value) -> Vec<(u64, Vec<String>)> {
+/// Each team's active players, from PandaScore team objects.
+pub fn parse_rosters(body: &Value) -> Vec<Roster> {
     body.as_array()
         .into_iter()
         .flatten()
@@ -705,8 +852,8 @@ pub fn parse_rosters(body: &Value) -> Vec<(u64, Vec<String>)> {
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(|player| player.get("name")?.as_str())
-                .map(|name| name.trim().chars().take(24).collect())
+                .filter(|p| p.get("active").and_then(Value::as_bool).unwrap_or(true))
+                .filter_map(player)
                 .take(7)
                 .collect();
             Some((team.get("id")?.as_u64()?, players))
@@ -714,18 +861,23 @@ pub fn parse_rosters(body: &Value) -> Vec<(u64, Vec<String>)> {
         .collect()
 }
 
-fn poster(agent: &ureq::Agent, url: &str) -> Option<Arc<Artwork>> {
-    if !poster_allowed(url) {
+/// A poster (up to 300×450) or a logo or photo (up to 160×160), by URL.
+fn image(agent: &ureq::Agent, url: &str) -> Option<Arc<Artwork>> {
+    if !image_allowed(url) {
         return None;
     }
     let bytes = get(agent, url, IMAGE_LIMIT)
-        .map_err(|error| eprintln!("Luma poster: {error}"))
+        .map_err(|error| eprintln!("Luma image: {error}"))
         .ok()?;
     let image = image::load_from_memory(&bytes).ok()?;
-    let pixels = image.thumbnail(300, 450).into_rgba8();
+    let (w, h) = if url.starts_with(POSTER_ORIGIN) {
+        (300, 450)
+    } else {
+        (160, 160)
+    };
     Some(Arc::new(Artwork {
-        key: format!("poster:{url}"),
-        pixels,
+        key: format!("image:{url}"),
+        pixels: image.thumbnail(w, h).into_rgba8(),
         backdrop: [[16, 16, 20]; 2],
     }))
 }

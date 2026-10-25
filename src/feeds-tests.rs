@@ -61,15 +61,19 @@ fn premieres_keep_first_episodes_of_popular_scripted_shows_by_date() {
 }
 
 #[test]
-fn posters_only_come_from_the_tvmaze_image_origin() {
-    assert!(poster_allowed(
+fn images_only_come_from_the_tvmaze_and_pandascore_cdns() {
+    assert!(image_allowed(
         "https://static.tvmaze.com/uploads/images/medium_portrait/1/2.jpg"
     ));
-    assert!(!poster_allowed("http://static.tvmaze.com/a.jpg"));
-    assert!(!poster_allowed(
+    assert!(image_allowed(
+        "https://cdn-api.pandascore.co/images/team/image/1/logo.png"
+    ));
+    assert!(!image_allowed("http://static.tvmaze.com/a.jpg"));
+    assert!(!image_allowed(
         "https://static.tvmaze.com.evil.example/a.jpg"
     ));
-    assert!(!poster_allowed("https://example.com/a.jpg"));
+    assert!(!image_allowed("https://api.pandascore.co/csgo/matches"));
+    assert!(!image_allowed("https://example.com/a.jpg"));
 }
 
 #[test]
@@ -85,12 +89,17 @@ fn cs_match(id: u64, tier: &str, begin: &str, teams: [(u64, &str, &str); 2]) -> 
     json!({
         "id": id, "status": "not_started", "begin_at": begin, "number_of_games": 3,
         "opponents": teams.map(|(id, name, acronym)| json!({
-            "type": "Team", "opponent": {"id": id, "name": name, "acronym": acronym}
+            "type": "Team", "opponent": {"id": id, "name": name, "acronym": acronym,
+                "location": "UA",
+                "image_url": format!("https://cdn-api.pandascore.co/light/{id}.png"),
+                "dark_mode_image_url": format!("https://cdn-api.pandascore.co/dark/{id}.png")}
         })),
         "results": [{"team_id": teams[0].0, "score": 0}, {"team_id": teams[1].0, "score": 0}],
         "games": [],
         "league": {"name": "BLAST"}, "serie": {"full_name": "Premier Fall 2026"},
-        "tournament": {"name": "Playoffs", "tier": tier}
+        "tournament": {"name": "Playoffs", "tier": tier, "prizepool": "1000000 United States Dollar",
+                       "type": "offline"},
+        "streams_list": [{"language": "ru", "raw_url": "https://www.twitch.tv/x", "official": false}]
     })
 }
 
@@ -106,7 +115,7 @@ fn matches_carry_teams_series_score_and_maps() {
     live["results"] = json!([{"team_id": 2, "score": 0}, {"team_id": 1, "score": 1}]);
     live["games"] = json!([
         {"position": 2, "status": "running", "winner": {"id": null, "type": "Team"}},
-        {"position": 1, "status": "finished", "winner": {"id": 1, "type": "Team"}},
+        {"position": 1, "status": "finished", "winner": {"id": 1, "type": "Team"}, "length": 2400},
         {"position": 3, "status": "not_started", "winner": {"id": null}}
     ]);
     let matches = parse_matches(&json!([live]));
@@ -116,6 +125,26 @@ fn matches_carry_teams_series_score_and_maps() {
     assert_eq!(found.score, [1, 0], "scores follow the opponents' order");
     assert_eq!(found.best_of, 3);
     assert_eq!(found.event, "BLAST Premier Fall 2026");
+    assert_eq!(found.stage, "Playoffs");
+    assert_eq!(found.prizepool, "1000000 United States Dollar");
+    assert_eq!(found.online, Some(false));
+    assert_eq!(
+        found.streams,
+        vec![Stream {
+            language: "ru".into(),
+            platform: "Twitch".into(),
+            official: false,
+            main: false,
+        }]
+    );
+    let navi = found.teams[0].as_ref().unwrap();
+    assert_eq!(
+        navi.image.as_deref(),
+        Some("https://cdn-api.pandascore.co/dark/1.png"),
+        "dark logo first"
+    );
+    assert_eq!(navi.location, "UA");
+    assert_eq!(found.games[0].length, Some(2400));
     assert_eq!(
         found
             .games
@@ -186,33 +215,57 @@ fn unknown_disciplines_fall_back_to_counter_strike() {
 }
 
 #[test]
-fn rosters_list_each_teams_players_by_nickname() {
+fn rosters_list_each_teams_active_players_with_their_details() {
     let teams = json!([
-        {"id": 1, "players": [{"name": "s1mple"}, {"name": "b1t "}, {"first_name": "x"}]},
+        {"id": 1, "players": [
+            {"name": "s1mple", "first_name": "Oleksandr", "last_name": "Kostyliev",
+             "nationality": "UA", "role": null, "age": 28,
+             "image_url": "https://cdn-api.pandascore.co/images/player/1.png"},
+            {"name": "b1t ", "active": true},
+            {"name": "benched", "active": false},
+            {"first_name": "x"}
+        ]},
         {"id": 2, "players": []}
     ]);
+    let rosters = parse_rosters(&teams);
+    assert_eq!(rosters.len(), 2);
+    let (id, players) = &rosters[0];
+    assert_eq!(*id, 1);
     assert_eq!(
-        parse_rosters(&teams),
-        vec![
-            (1, vec!["s1mple".to_owned(), "b1t".to_owned()]),
-            (2, vec![])
-        ]
+        players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["s1mple", "b1t"]
     );
+    assert_eq!(players[0].real_name, "Oleksandr Kostyliev");
+    assert_eq!(
+        (players[0].nationality.as_str(), players[0].age),
+        ("UA", Some(28))
+    );
+    assert!(players[0].image.is_some());
 }
 
 #[test]
 fn the_shared_feed_carries_matches_and_their_lineups() {
     let body = json!({"game": "csgo", "updated": 1, "matches": [
         {"id": 5, "running": true, "begin_at": "2026-10-25T11:11:51Z",
-         "teams": [{"id": 1, "name": "Acend", "short": "ACE"}, null],
+         "teams": [{"id": 1, "name": "Acend", "short": "ACE",
+                    "image": "https://cdn-api.pandascore.co/a.png", "location": "BG"}, null],
          "score": [1, 0], "best_of": 3,
          "games": [{"position": 1, "state": "finished", "winner": 1},
                    {"position": 2, "state": "running", "winner": null}],
-         "event": "CCT Europe", "tier": "c",
-         "lineups": [["SHiPZ", "SPELLAN"], []]},
+         "event": "CCT Europe", "tier": "c", "stage": "Playoffs", "prizepool": "25000 United States Dollar",
+         "online": true, "league_image": "https://cdn-api.pandascore.co/l.png",
+         "streams": [{"language": "en", "platform": "Kick", "official": true, "main": true}],
+         "lineups": [[{"name": "SHiPZ", "real_name": "Georgi Grigorov", "nationality": "BG",
+                       "role": "", "age": 26, "image": "https://cdn-api.pandascore.co/p.png"},
+                      {"name": "SPELLAN"}], []]},
         {"id": "broken"}
     ]});
-    let (matches, rosters) = parse_feed(&body, "csgo");
+    let SharedFeed {
+        matches,
+        rosters,
+        updated,
+    } = parse_feed(&body, "csgo");
+    assert_eq!(updated, Some(1), "when the feed was built");
     assert_eq!(matches.len(), 1);
     let found = &matches[0];
     assert_eq!(
@@ -222,10 +275,20 @@ fn the_shared_feed_carries_matches_and_their_lineups() {
     assert_eq!(found.teams[0].as_ref().unwrap().short, "ACE");
     assert!(found.teams[1].is_none());
     assert_eq!(found.games[1].state, GameState::Running);
+    assert_eq!(found.teams[0].as_ref().unwrap().location, "BG");
     assert_eq!(
-        rosters,
-        vec![(1, vec!["SHiPZ".to_owned(), "SPELLAN".to_owned()])]
+        (found.stage.as_str(), found.online),
+        ("Playoffs", Some(true))
     );
+    assert_eq!(
+        found.league_image.as_deref(),
+        Some("https://cdn-api.pandascore.co/l.png")
+    );
+    assert_eq!(found.streams[0].platform, "Kick");
+    assert_eq!(rosters.len(), 1);
+    assert_eq!(rosters[0].0, 1);
+    assert_eq!(rosters[0].1[0].real_name, "Georgi Grigorov");
+    assert_eq!(rosters[0].1[1].name, "SPELLAN");
     assert!(feed_url("csgo").starts_with("https://eluz1ve.github.io/luma-feeds/esports/"));
     assert!(feed_url("../x").ends_with("/csgo.json"));
 }

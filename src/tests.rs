@@ -1937,6 +1937,8 @@ fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
             id,
             name: short.into(),
             short: short.into(),
+            image: None,
+            location: "EU".into(),
         })
     };
     crate::feeds::CsMatch {
@@ -1950,6 +1952,16 @@ fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
         games: vec![],
         event: "BLAST Premier".into(),
         tier: tier.into(),
+        stage: "Playoffs".into(),
+        prizepool: "1000000 United States Dollar".into(),
+        online: Some(false),
+        league_image: None,
+        streams: vec![crate::feeds::Stream {
+            language: "ru".into(),
+            platform: "Twitch".into(),
+            official: true,
+            main: true,
+        }],
     }
 }
 
@@ -1969,7 +1981,17 @@ fn a_match_opens_its_details_and_asks_for_missing_lineups() {
         .feeds
         .matches
         .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
-    state.feeds.rosters.insert(2, vec!["ropz".into()]);
+    state.feeds.rosters.insert(
+        2,
+        vec![crate::feeds::Player {
+            name: "ropz".into(),
+            real_name: "Robin Kool".into(),
+            nationality: "EE".into(),
+            role: String::new(),
+            age: Some(26),
+            image: None,
+        }],
+    );
     assert!(
         controls(&state)
             .iter()
@@ -1988,7 +2010,16 @@ fn a_match_opens_its_details_and_asks_for_missing_lineups() {
             ..
         })
     ));
-    assert!(scene_text(&state).iter().any(|t| t == "ropz"));
+    let texts = scene_text(&state);
+    assert!(texts.iter().any(|t| t == "ropz"));
+    assert!(texts.iter().any(|t| t.contains("Robin Kool")), "real names");
+    assert!(texts.iter().any(|t| t.contains("Twitch")), "streams");
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("1 000 000") || t.contains("1,000,000")),
+        "prize pool"
+    );
     state.back();
     assert!(state.overlay.is_none());
     assert_eq!(state.focus, Target::Match(0, 0));
@@ -2166,4 +2197,80 @@ fn up_reaches_a_wide_block_directly_above_rather_than_a_closer_centre() {
     assert!(matches!(state.focus, Target::App(_)));
     state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::Block(BlockKind::Esports(0)));
+}
+
+#[test]
+fn esports_widgets_load_team_logos_and_an_open_match_its_photos() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    let logo = "https://cdn-api.pandascore.co/navi.png".to_owned();
+    let league = "https://cdn-api.pandascore.co/blast.png".to_owned();
+    let photo = "https://cdn-api.pandascore.co/b1t.png".to_owned();
+    let mut found = esports_match("csgo", 7, "s");
+    found.teams[0].as_mut().unwrap().image = Some(logo.clone());
+    found.league_image = Some(league.clone());
+    state.feeds.matches.insert("csgo".into(), vec![found]);
+    state.feeds.rosters.insert(
+        1,
+        vec![crate::feeds::Player {
+            name: "b1t".into(),
+            real_name: String::new(),
+            nationality: String::new(),
+            role: String::new(),
+            age: None,
+            image: Some(photo.clone()),
+        }],
+    );
+    assert_eq!(state.wanted_images(), vec![logo.clone()]);
+    state.focus = Target::Match(0, 0);
+    state.activate();
+    assert!(
+        state.feeds.images_due,
+        "opening a match asks for its images"
+    );
+    assert_eq!(state.wanted_images(), vec![logo, league, photo]);
+}
+
+#[test]
+fn the_shared_feed_tells_how_old_its_data_is_and_which_lineups_it_lacks() {
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 6,
+        h: 2,
+    });
+    state
+        .feeds
+        .matches
+        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
+    state.feeds.updated.insert("csgo".into(), 0);
+    let as_of = |state: &State| {
+        scene_text(state)
+            .iter()
+            .any(|t| t.starts_with("Data as of"))
+    };
+    assert!(as_of(&state), "shared data says when it was built");
+    // Without a key the feed is the only source: a lineup it lacks is not coming.
+    state.focus = Target::Match(0, 0);
+    state.activate();
+    let texts = scene_text(&state);
+    assert!(texts.iter().any(|t| t == "Lineup not announced"));
+    assert!(!texts.iter().any(|t| t == "Loading lineup…"));
+    state.back();
+    state.preferences.esports_key = "key".into();
+    state.feeds.updated.clear();
+    assert!(!as_of(&state), "a personal key polls live data");
+    assert_eq!(view::prize("2,500 United States Dollar"), "$2 500");
+    assert_eq!(view::prize("50000 Euro"), "€50 000");
+    assert_eq!(view::prize("TBA"), "TBA");
 }
