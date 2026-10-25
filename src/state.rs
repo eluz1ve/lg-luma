@@ -645,6 +645,36 @@ impl State {
             .copied()
     }
 
+    /// A personal key's live matches of a discipline, named from the shared feed fetched last.
+    pub fn esports_received(&mut self, game: String, mut matches: Vec<crate::feeds::CsMatch>) {
+        if let Some(shared) = self.feeds.maps.get(&game) {
+            crate::feeds::merge_maps(&mut matches, shared);
+        }
+        self.feeds.matches.insert(game, matches);
+        self.feeds.matches_error = None;
+        self.feeds.images_due = true;
+    }
+
+    /// A discipline of the shared feed: the matches themselves without a key, their map names
+    /// with one.
+    pub fn shared_received(&mut self, game: String, feed: crate::feeds::SharedFeed) {
+        if !self.preferences.esports_key.trim().is_empty() {
+            if let Some(live) = self.feeds.matches.get_mut(&game) {
+                crate::feeds::merge_maps(live, &feed.matches);
+            }
+            self.feeds.maps.insert(game, feed.matches);
+            return;
+        }
+        match feed.updated {
+            Some(updated) => self.feeds.updated.insert(game.clone(), updated),
+            None => self.feeds.updated.remove(&game),
+        };
+        self.feeds.matches.insert(game, feed.matches);
+        self.feeds.rosters.extend(feed.rosters);
+        self.feeds.matches_error = None;
+        self.feeds.images_due = true;
+    }
+
     /// Every discipline some esports widget on Home shows.
     pub fn esports_games(&self) -> Vec<String> {
         let mut games: Vec<String> = self

@@ -199,6 +199,8 @@ pub struct FeedData {
     /// When the shared feed of each discipline was built, in Unix seconds; a personal key's
     /// disciplines are live and have none.
     pub updated: std::collections::HashMap<String, i64>,
+    /// With a personal key, the shared feed's matches by discipline, for their map names.
+    pub maps: std::collections::HashMap<String, Vec<CsMatch>>,
     /// Lineups a match dialog asked for, sent to the worker by the main loop.
     pub pending_rosters: Vec<(String, Vec<u64>)>,
     /// Image URLs already asked for, loaded or not: a failed logo is not retried.
@@ -864,6 +866,33 @@ pub fn parse_feed(body: &Value, game_name: &str) -> SharedFeed {
         matches,
         rosters,
         updated: body.get("updated").and_then(Value::as_i64),
+    }
+}
+
+/// Map names, scores and picks from the shared feed for a personal key's live matches, by match
+/// id and map position; the live state, winners and series score stay PandaScore's.
+pub fn merge_maps(live: &mut [CsMatch], shared: &[CsMatch]) {
+    for found in live {
+        let Some(named) = shared.iter().find(|m| m.id == found.id) else {
+            continue;
+        };
+        let mut merged = false;
+        for game in &mut found.games {
+            let Some(from) = named.games.iter().find(|g| g.position == game.position) else {
+                continue;
+            };
+            game.map.clone_from(&from.map);
+            game.score = from.score;
+            game.picked_by = from.picked_by;
+            game.decider = from.decider;
+            merged |= !game.map.is_empty()
+                || game.score.is_some()
+                || game.picked_by.is_some()
+                || game.decider;
+        }
+        if merged {
+            found.maps_source.clone_from(&named.maps_source);
+        }
     }
 }
 

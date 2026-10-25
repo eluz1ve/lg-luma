@@ -2043,6 +2043,90 @@ fn a_match_names_its_maps_with_scores_picks_and_their_source() {
 }
 
 #[test]
+fn a_personal_key_names_live_maps_from_the_shared_feed_and_credits_it() {
+    use crate::feeds::{GameState, MatchGame, SharedFeed};
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 12,
+        h: 2,
+    });
+    state.preferences.esports_key = "key".into();
+    let map = |position, state, name: &str| MatchGame {
+        position,
+        state,
+        winner: (state == GameState::Finished).then_some(1),
+        begin_at: String::new(),
+        length: None,
+        map: name.into(),
+        score: None,
+        picked_by: None,
+        decider: false,
+    };
+    // PandaScore's lists: live, but the maps are only numbered.
+    let mut live = esports_match("csgo", 7, "s");
+    live.games = vec![
+        map(1, GameState::Finished, ""),
+        map(2, GameState::Running, ""),
+        map(3, GameState::Waiting, ""),
+    ];
+    // The shared feed names them, though its own state is minutes behind.
+    let mut shared = live.clone();
+    shared.score = [0, 0];
+    shared.games = vec![
+        map(1, GameState::Running, "Dust II"),
+        map(2, GameState::Waiting, "Nuke"),
+        map(3, GameState::Waiting, "Ancient"),
+    ];
+    shared.games[0].score = Some([9., 4.]);
+    shared.maps_source = "Liquipedia".into();
+    state.esports_received("csgo".into(), vec![live.clone()]);
+    state.shared_received(
+        "csgo".into(),
+        SharedFeed {
+            matches: vec![shared],
+            rosters: vec![],
+            updated: Some(0),
+        },
+    );
+    let dialog = |state: &mut State| {
+        state.focus = Target::Match(0, 0);
+        state.activate();
+        let texts = scene_text(state);
+        state.back();
+        texts
+    };
+    assert!(
+        scene_text(&state).iter().any(|t| t == "Map 2 · Nuke"),
+        "PandaScore tells which map is live, the feed its name"
+    );
+    assert!(
+        !scene_text(&state)
+            .iter()
+            .any(|t| t.starts_with("Data as of")),
+        "the matches stay live"
+    );
+    let texts = dialog(&mut state);
+    for name in ["Dust II", "Nuke", "Ancient", "9:4"] {
+        assert!(texts.iter().any(|t| t == name), "{name}");
+    }
+    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
+    // The next PandaScore poll keeps the names until the feed is fetched again.
+    state.esports_received("csgo".into(), vec![live]);
+    let texts = dialog(&mut state);
+    assert!(texts.iter().any(|t| t == "Nuke"));
+    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
+    assert_eq!(
+        state.feeds.matches["csgo"][0].score,
+        [1, 0],
+        "the series score stays PandaScore's"
+    );
+}
+
+#[test]
 fn a_match_opens_its_details_and_asks_for_missing_lineups() {
     use crate::home_grid::{Block, BlockKind};
     let mut state = ready();

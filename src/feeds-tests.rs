@@ -325,6 +325,82 @@ fn the_shared_feed_names_maps_with_their_scores_and_picks_from_liquipedia() {
 }
 
 #[test]
+fn live_matches_take_map_names_from_the_shared_feed_by_match_and_position() {
+    let mut live = cs_match(
+        7,
+        "s",
+        "2026-10-25T18:00:00Z",
+        [(1, "Natus Vincere", "NAVI"), (2, "FaZe Clan", "FaZe")],
+    );
+    live["status"] = json!("running");
+    live["results"] = json!([{"team_id": 1, "score": 1}, {"team_id": 2, "score": 0}]);
+    live["games"] = json!([
+        {"position": 1, "status": "finished", "winner": {"id": 1}},
+        {"position": 2, "status": "running", "winner": {"id": null}},
+        {"position": 3, "status": "not_started", "winner": {"id": null}}
+    ]);
+    let other = cs_match(
+        8,
+        "a",
+        "2026-10-26T12:00:00Z",
+        [(3, "Vitality", "VIT"), (4, "G2", "G2")],
+    );
+    let mut matches = parse_matches(&json!([live, other]));
+    // Rebuilt every 15 minutes, the shared feed's own state lags behind PandaScore's.
+    let shared = parse_feed(
+        &json!({"matches": [
+            {"id": 7, "running": true, "score": [0, 0], "maps_source": "Liquipedia",
+             "teams": [{"id": 1, "name": "Natus Vincere"}, {"id": 2, "name": "FaZe Clan"}],
+             "games": [{"position": 1, "state": "running", "map": "Dust II", "score": [13, 11],
+                        "picked_by": 2},
+                       {"position": 2, "state": "waiting", "map": "Nuke", "picked_by": 1},
+                       {"position": 3, "state": "waiting", "map": "Ancient", "decider": true},
+                       {"position": 4, "state": "waiting", "map": "Inferno"}]},
+            {"id": 9, "maps_source": "Liquipedia", "games": [{"position": 1, "map": "Mirage"}]}
+        ]}),
+        "csgo",
+    )
+    .matches;
+    merge_maps(&mut matches, &shared);
+    let (found, other) = (&matches[0], &matches[1]);
+    assert_eq!(found.maps_source, "Liquipedia");
+    assert_eq!(
+        found
+            .games
+            .iter()
+            .map(|g| (g.position, g.map.as_str()))
+            .collect::<Vec<_>>(),
+        [(1, "Dust II"), (2, "Nuke"), (3, "Ancient")],
+        "a map PandaScore does not list is left out"
+    );
+    assert_eq!(
+        (found.games[0].score, found.games[0].picked_by),
+        (Some([13., 11.]), Some(2))
+    );
+    assert_eq!(found.games[1].picked_by, Some(1));
+    assert!(found.games[2].decider);
+    assert_eq!(
+        found
+            .games
+            .iter()
+            .map(|g| (g.state, g.winner))
+            .collect::<Vec<_>>(),
+        [
+            (GameState::Finished, Some(1)),
+            (GameState::Running, None),
+            (GameState::Waiting, None)
+        ],
+        "the live state and winners stay PandaScore's"
+    );
+    assert!(found.running);
+    assert_eq!(found.score, [1, 0], "so does the series score");
+    assert_eq!(
+        other.maps_source, "",
+        "a match the feed lacks credits no one"
+    );
+}
+
+#[test]
 fn a_personal_key_polls_live_matches_as_often_as_the_free_limit_allows() {
     assert_eq!(live_interval(1), 30);
     assert_eq!(live_interval(2), 30);

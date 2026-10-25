@@ -873,6 +873,7 @@ fn run() -> Result<(), String> {
     let mut premieres_fetched: Option<Instant> = None;
     // Esports matches per discipline, refetched sooner while one is live; a new key starts over.
     let mut esports_fetched: std::collections::HashMap<String, Instant> = Default::default();
+    let mut maps_fetched: std::collections::HashMap<String, Instant> = Default::default();
     let mut esports_key = String::new();
     let mut last_minute = None;
     let mut frame = 0u64;
@@ -925,13 +926,16 @@ fn run() -> Result<(), String> {
             if key != esports_key {
                 esports_key = key.clone();
                 esports_fetched.clear();
+                maps_fetched.clear();
                 state.feeds.matches.clear();
+                state.feeds.maps.clear();
                 state.feeds.rosters.clear();
                 state.feeds.updated.clear();
                 state.feeds.matches_error = None;
             }
             // Without a key, the shared feed (rebuilt every 15 minutes); with one, PandaScore
-            // directly, as often as the free plan allows while a match is live.
+            // directly, as often as the free plan allows while a match is live, and the shared
+            // feed at its own pace for the map names PandaScore's free lists lack.
             let games = state.esports_games();
             for game in &games {
                 let live = state
@@ -954,6 +958,10 @@ fn run() -> Result<(), String> {
                             game: game.clone(),
                         }
                     });
+                }
+                if !key.is_empty() && due(maps_fetched.get(game).copied(), 300) {
+                    maps_fetched.insert(game.clone(), Instant::now());
+                    feeds.send(feeds::FeedRequest::Shared { game: game.clone() });
                 }
             }
             if std::mem::take(&mut state.feeds.images_due) {
@@ -1047,11 +1055,7 @@ fn run() -> Result<(), String> {
                 feeds::FeedResponse::Matches {
                     game,
                     result: Ok(matches),
-                } => {
-                    state.feeds.matches.insert(game, matches);
-                    state.feeds.matches_error = None;
-                    state.feeds.images_due = true;
-                }
+                } => state.esports_received(game, matches),
                 feeds::FeedResponse::Matches {
                     result: Err(error), ..
                 } => state.feeds.matches_error = Some(error),
@@ -1062,19 +1066,14 @@ fn run() -> Result<(), String> {
                 feeds::FeedResponse::Shared {
                     game,
                     result: Ok(feed),
-                } => {
-                    match feed.updated {
-                        Some(updated) => state.feeds.updated.insert(game.clone(), updated),
-                        None => state.feeds.updated.remove(&game),
-                    };
-                    state.feeds.matches.insert(game, feed.matches);
-                    state.feeds.rosters.extend(feed.rosters);
-                    state.feeds.matches_error = None;
-                    state.feeds.images_due = true;
-                }
+                } => state.shared_received(game, feed),
+                // With a key the matches are PandaScore's: only their map names are missing.
                 feeds::FeedResponse::Shared {
                     result: Err(error), ..
-                } => state.feeds.matches_error = Some(error),
+                } if state.preferences.esports_key.trim().is_empty() => {
+                    state.feeds.matches_error = Some(error)
+                }
+                feeds::FeedResponse::Shared { .. } => {}
             }
         }
         while let Ok(response) = platform.receiver.try_recv() {
