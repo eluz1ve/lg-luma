@@ -1934,6 +1934,33 @@
     "it": "Mappa {number}",
     "ru": "Карта {number}"
   },
+  "esportsPick": {
+    "en": "{team} pick",
+    "de": "Pick {team}",
+    "es": "Pick de {team}",
+    "zh": "{team} 选图",
+    "pt": "Pick de {team}",
+    "it": "Pick {team}",
+    "ru": "Пик {team}"
+  },
+  "esportsDecider": {
+    "en": "Decider",
+    "de": "Decider",
+    "es": "Decisivo",
+    "zh": "决胜图",
+    "pt": "Decisivo",
+    "it": "Decisiva",
+    "ru": "Десайдер"
+  },
+  "esportsMapsCredit": {
+    "en": "Maps: Liquipedia (CC-BY-SA)",
+    "de": "Maps: Liquipedia (CC-BY-SA)",
+    "es": "Mapas: Liquipedia (CC-BY-SA)",
+    "zh": "地图：Liquipedia（CC-BY-SA）",
+    "pt": "Mapas: Liquipedia (CC-BY-SA)",
+    "it": "Mappe: Liquipedia (CC-BY-SA)",
+    "ru": "Карты: Liquipedia (CC-BY-SA)"
+  },
   "esportsLineup": {
     "en": "{team} lineup",
     "de": "Aufstellung {team}",

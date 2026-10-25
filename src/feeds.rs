@@ -53,6 +53,8 @@ pub fn game_path(game: &str) -> &'static str {
         .find(|(path, _)| *path == game)
         .map_or("csgo", |(path, _)| path)
 }
+/// A loaded logo's backdrop when it has no colour of its own.
+pub const NO_ACCENT: [u8; 3] = [16, 16, 20];
 /// Kept per discipline at most.
 const MATCHES: usize = 20;
 const JSON_LIMIT: usize = 1024 * 1024;
@@ -100,7 +102,8 @@ pub enum GameState {
     Finished,
 }
 
-/// One map of a series; PandaScore's free lists carry its state and winner, not the map's name.
+/// One map of a series; PandaScore's free lists carry its state and winner, the shared feed
+/// adds its name, score and pick from Liquipedia when it finds them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchGame {
     pub position: u64,
@@ -110,6 +113,14 @@ pub struct MatchGame {
     pub begin_at: String,
     /// Seconds, once the map is over.
     pub length: Option<u64>,
+    /// E.g. "Dust II"; empty when unknown.
+    pub map: String,
+    /// Rounds or points, in the teams' order; Overwatch's Push counts metres.
+    pub score: Option<[f64; 2]>,
+    /// The team that picked the map.
+    pub picked_by: Option<u64>,
+    /// Left over once both teams have picked and banned.
+    pub decider: bool,
 }
 
 /// Where a match is broadcast.
@@ -160,6 +171,8 @@ pub struct CsMatch {
     pub online: Option<bool>,
     pub league_image: Option<String>,
     pub streams: Vec<Stream>,
+    /// Who named the maps, e.g. "Liquipedia", to credit; empty when none are named.
+    pub maps_source: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -604,6 +617,17 @@ fn game(item: &Value) -> Option<MatchGame> {
             .and_then(|winner| winner.as_u64().or_else(|| winner.get("id")?.as_u64())),
         begin_at: text(item.get("begin_at"), 32),
         length: item.get("length").and_then(Value::as_u64),
+        map: text(item.get("map"), 32),
+        score: item
+            .get("score")
+            .and_then(Value::as_array)
+            .filter(|score| score.len() == 2)
+            .and_then(|score| Some([score[0].as_f64()?, score[1].as_f64()?])),
+        picked_by: item.get("picked_by").and_then(Value::as_u64),
+        decider: item
+            .get("decider")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -750,6 +774,7 @@ pub fn parse_matches(body: &Value) -> Vec<CsMatch> {
                     .get("league")
                     .and_then(|league| image_field(league, &["image_url"])),
                 streams: streams(item.get("streams_list")),
+                maps_source: String::new(),
             })
         })
         .collect()
@@ -831,6 +856,7 @@ pub fn parse_feed(body: &Value, game_name: &str) -> SharedFeed {
                 online: item.get("online").and_then(Value::as_bool),
                 league_image: image_field(item, &["league_image"]),
                 streams: streams(item.get("streams")),
+                maps_source: text(item.get("maps_source"), 24),
             })
         })
         .collect();
@@ -875,10 +901,13 @@ fn image(agent: &ureq::Agent, url: &str) -> Option<Arc<Artwork>> {
     } else {
         (160, 160)
     };
+    let pixels = image.thumbnail(w, h).into_rgba8();
+    // A logo's own colour tints the match dialog around it.
+    let accent = crate::app_artwork::accent(&pixels);
     Some(Arc::new(Artwork {
         key: format!("image:{url}"),
-        pixels: image.thumbnail(w, h).into_rgba8(),
-        backdrop: [[16, 16, 20]; 2],
+        pixels,
+        backdrop: accent.map_or([NO_ACCENT; 2], |accent| [accent; 2]),
     }))
 }
 

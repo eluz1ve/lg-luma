@@ -3568,10 +3568,6 @@ fn local_time(instant: OffsetDateTime, now: OffsetDateTime, language: Language) 
     }
 }
 
-fn team_name(team: &Option<crate::feeds::Team>) -> &str {
-    team.as_ref().map_or("TBD", |team| team.short.as_str())
-}
-
 fn game_name(game: &str) -> &'static str {
     crate::feeds::GAMES
         .iter()
@@ -3602,14 +3598,35 @@ fn feed_image<'a>(
     url.as_ref().and_then(|url| state.feeds.images.get(url))
 }
 
-/// An image, or the initials of `name` on a disc until it arrives (or when there is none).
-fn emblem(out: &mut Scene, state: &State, image: &Option<String>, name: &str, rect: Rect) {
+/// An image, or the initials of `name` on a disc until it arrives (or when there is none),
+/// in `tint` when given.
+fn emblem(
+    out: &mut Scene,
+    state: &State,
+    image: &Option<String>,
+    name: &str,
+    rect: Rect,
+    tint: Option<Color>,
+) {
     if let Some(image) = feed_image(state, image) {
         out.draw.push(Draw::AppImage(image.clone(), rect, [1.; 4]));
         return;
     }
-    out.shape(rect, rect.w / 2., c(0xffffff, 0.08));
-    out.border(rect, rect.w / 2., 1., c(0xffffff, 0.10));
+    match tint {
+        Some(tint) => {
+            out.draw.push(Draw::RoundedGradient(
+                rect,
+                rect.w / 2.,
+                alpha(tint, 0.42),
+                alpha(tint, 0.2),
+            ));
+            out.border(rect, rect.w / 2., 1., alpha(tint, 0.6));
+        }
+        None => {
+            out.shape(rect, rect.w / 2., c(0xffffff, 0.08));
+            out.border(rect, rect.w / 2., 1., c(0xffffff, 0.10));
+        }
+    }
     let initials: String = name
         .chars()
         .filter(|c| c.is_alphanumeric())
@@ -3637,8 +3654,15 @@ fn emblem(out: &mut Scene, state: &State, image: &Option<String>, name: &str, re
 
 fn team_logo(out: &mut Scene, state: &State, team: &Option<crate::feeds::Team>, rect: Rect) {
     match team {
-        Some(team) => emblem(out, state, &team.image, &team.short, rect),
-        None => emblem(out, state, &None, "?", rect),
+        Some(team) => emblem(
+            out,
+            state,
+            &team.image,
+            &team.short,
+            rect,
+            Some(name_tint(&team.short)),
+        ),
+        None => emblem(out, state, &None, "?", rect, None),
     }
 }
 
@@ -3720,7 +3744,7 @@ fn minutes_since(begin_at: &str, now: OffsetDateTime) -> Option<i64> {
     Some((now - start).whole_minutes()).filter(|minutes| *minutes >= 0)
 }
 
-/// An esports widget: its disciplines' live and upcoming matches as scoreboard rows.
+/// An esports widget: its disciplines' live and upcoming matches as scoreboard cards.
 fn esports_block(
     out: &mut Scene,
     state: &State,
@@ -3789,93 +3813,286 @@ fn esports_block(
             },
         );
     }
+    // As many cards as fit at 316 × 200 or more, row by row; a two-row widget has one
+    // row of compact cards.
     let several = widget.games.len() > 1;
-    let rows = ((rect.h - 62.) / 50.).floor().max(1.) as usize;
-    let name_style = text(18.4, 600, -0.01);
-    for (index, found) in matches.iter().take(rows).enumerate() {
-        let row = Rect::new(
-            rect.x + 12.,
-            rect.y + 56. + index as f32 * 50.,
-            rect.w - 24.,
-            44.,
+    let inner = Rect::new(rect.x + 16., rect.y + 56., rect.w - 32., rect.h - 70.);
+    let gap = 14.;
+    let columns = ((inner.w + gap) / (316. + gap)).floor().max(1.) as usize;
+    let rows = ((inner.h + gap) / (200. + gap)).floor().max(1.) as usize;
+    let card_w = (inner.w - gap * (columns - 1) as f32) / columns as f32;
+    let card_h = (inner.h - gap * (rows - 1) as f32) / rows as f32;
+    for (index, found) in matches.iter().take(columns * rows).enumerate() {
+        let card = Rect::new(
+            inner.x + (index % columns) as f32 * (card_w + gap),
+            inner.y + (index / columns) as f32 * (card_h + gap),
+            card_w,
+            card_h,
         );
         let target = Target::Match(instance, index);
-        if state.focus == target && !state.pointer {
-            out.shape(row, 12., c(0xffffff, 0.10));
-            out.ring(row, 12.);
-        }
-        // Status, then "name logo  score  logo name" around a fixed centre, then the event.
-        let status = Rect::new(row.x + 10., row.y + 11., 84., 22.);
-        if found.running {
-            live_badge(out, language, Rect::new(status.x, status.y, 56., 22.), 13.);
-        } else {
-            out.text(
-                match_time(&found.begin_at, now, language),
-                Rect::new(status.x, row.y + 12., status.w + 16., 22.),
-                text(16., 500, 0.),
-                c(0xf5f5f5, 0.7),
-                false,
-            );
-        }
-        let start = row.x + 112.;
-        let end = (start + 440.).min(row.x + row.w - 12.);
-        let middle = (start + end) / 2.;
-        let logo = 28.;
-        let left_logo = Rect::new(middle - 34. - logo, row.y + 8., logo, logo);
-        let right_logo = Rect::new(middle + 34., row.y + 8., logo, logo);
-        team_logo(out, state, &found.teams[0], left_logo);
-        team_logo(out, state, &found.teams[1], right_logo);
-        let name_w = left_logo.x - 10. - start;
-        out.text(
-            fit(assets, team_name(&found.teams[0]), name_style, name_w),
-            Rect::new(start, row.y + 11., name_w, 24.),
-            name_style.right(),
-            WHITE,
-            false,
-        );
-        out.text(
-            fit(assets, team_name(&found.teams[1]), name_style, name_w),
-            Rect::new(right_logo.x + logo + 10., row.y + 11., name_w, 24.),
-            name_style,
-            WHITE,
-            false,
-        );
-        if found.running || found.score != [0, 0] {
-            out.text(
-                format!("{} : {}", found.score[0], found.score[1]),
-                Rect::new(middle - 30., row.y + 10., 60., 26.),
-                text(20., 650, 0.),
-                WHITE,
-                true,
-            );
-        } else {
-            out.text(
-                "vs",
-                Rect::new(middle - 30., row.y + 13., 60., 20.),
-                text(15.2, 500, 0.04),
-                c(0xf5f5f5, 0.42),
-                true,
-            );
-        }
-        let detail = if several {
-            format!("{} · {}", game_name(&found.game), found.event)
-        } else {
-            found.event.clone()
-        };
-        let detail_x = end + 20.;
-        let detail_w = row.x + row.w - 14. - detail_x;
-        if detail_w > 80. {
-            let style = text(15.2, 450, 0.);
-            out.text(
-                fit(assets, &detail, style, detail_w),
-                Rect::new(detail_x, row.y + 13., detail_w, 20.),
-                style.right(),
-                c(0xf5f5f5, 0.5),
-                false,
-            );
-        }
-        out.control(target, row, true);
+        let focused = state.focus == target && !state.pointer;
+        match_card(out, state, assets, found, card, several, focused, now);
+        out.control(target, card, true);
     }
+}
+
+/// One match on Home: event and status, both teams with their maps won, then the live map or
+/// the series length and stage.
+#[allow(clippy::too_many_arguments)]
+fn match_card(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    found: &crate::feeds::CsMatch,
+    card: Rect,
+    several: bool,
+    focused: bool,
+    now: OffsetDateTime,
+) {
+    use crate::feeds::GameState;
+    let language = state.preferences.language;
+    let dim = |alpha| c(0xf5f5f5, alpha);
+    let compact = card.h < 200.;
+    let radius = 18.;
+    out.draw.push(Draw::RoundedGradient(
+        card,
+        radius,
+        c(0xffffff, if focused { 0.15 } else { 0.09 }),
+        c(0xffffff, if focused { 0.07 } else { 0.03 }),
+    ));
+    out.border(
+        card,
+        radius,
+        1.,
+        if found.running {
+            c(0xe5484d, 0.32)
+        } else {
+            c(0xffffff, 0.08)
+        },
+    );
+    if focused {
+        out.ring(card, radius);
+    }
+    let pad = 18.;
+    let right = card.x + card.w - pad;
+
+    // Top: league logo and event, then LIVE or the start.
+    let top = card.y + if compact { 13. } else { 18. };
+    let status_w = if found.running {
+        live_badge(out, language, Rect::new(right - 56., top, 56., 22.), 13.);
+        56.
+    } else {
+        let style = text(16., 600, 0.);
+        let start = match_time(&found.begin_at, now, language);
+        let w = assets.width(&start, style) + 4.;
+        out.text(
+            &start,
+            Rect::new(right - w, top + 1., w, 22.),
+            style,
+            dim(0.88),
+            false,
+        );
+        w
+    };
+    let mut x = card.x + pad;
+    if let Some(image) = feed_image(state, &found.league_image) {
+        out.draw.push(Draw::AppImage(
+            image.clone(),
+            Rect::new(x, top - 1., 24., 24.),
+            [1.; 4],
+        ));
+        x += 34.;
+    }
+    let event = if several {
+        format!("{} · {}", game_name(&found.game), found.event)
+    } else {
+        found.event.clone()
+    };
+    let event_style = text(15.2, 500, 0.);
+    let event_w = right - status_w - 12. - x;
+    out.text(
+        fit(assets, &event, event_style, event_w),
+        Rect::new(x, top + 2., event_w, 20.),
+        event_style,
+        dim(0.6),
+        false,
+    );
+
+    // Teams, the side ahead in white.
+    let (row_h, logo, name_size, score_size) = if compact {
+        (36., 30., 18.4, 24.)
+    } else {
+        (52., 42., 21., 30.)
+    };
+    let teams_y = if compact {
+        card.y + 42.
+    } else {
+        card.y + 52. + ((card.h - 52. - 50.) - 2. * row_h) / 2.
+    };
+    let scored = found.running || found.score != [0, 0];
+    let score_w = if scored { score_size * 1.5 } else { 0. };
+    for (side, team) in found.teams.iter().enumerate() {
+        let y = teams_y + side as f32 * row_h;
+        team_logo(
+            out,
+            state,
+            team,
+            Rect::new(card.x + pad, y + (row_h - logo) / 2., logo, logo),
+        );
+        let name_x = card.x + pad + logo + 14.;
+        let name_w = right - score_w - 10. - name_x;
+        let style = text(name_size, 600, -0.01);
+        let name = match team {
+            Some(team) if assets.width(&team.name, style) <= name_w => team.name.as_str(),
+            Some(team) => team.short.as_str(),
+            None => "TBD",
+        };
+        out.text(
+            fit(assets, name, style, name_w),
+            Rect::new(
+                name_x,
+                y + (row_h - name_size * 1.3) / 2.,
+                name_w,
+                name_size * 1.3,
+            ),
+            style,
+            if team.is_some() { WHITE } else { dim(0.5) },
+            false,
+        );
+        if scored {
+            let ahead = found.score[side] >= found.score[1 - side];
+            out.text(
+                found.score[side].to_string(),
+                Rect::new(
+                    right - score_w,
+                    y + (row_h - score_size * 1.3) / 2.,
+                    score_w,
+                    score_size * 1.3,
+                ),
+                text(score_size, 650, 0.).right(),
+                if ahead { WHITE } else { dim(0.42) },
+                false,
+            );
+        }
+    }
+
+    // Bottom: the live map with its rounds and a dot per map, or the series and stage.
+    let bottom = card.y + card.h - if compact { 29. } else { 38. };
+    if !compact {
+        out.shape(
+            Rect::new(card.x + pad, bottom - 12., card.w - 2. * pad, 1.),
+            0.,
+            c(0xffffff, 0.08),
+        );
+    }
+    let style = text(15.2, 500, 0.);
+    if !found.running {
+        let parts: Vec<String> = [format!("BO{}", found.best_of), found.stage.clone()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect();
+        out.text(
+            fit(assets, &parts.join(" · "), style, card.w - 2. * pad),
+            Rect::new(card.x + pad, bottom, card.w - 2. * pad, 20.),
+            style,
+            dim(0.55),
+            false,
+        );
+        return;
+    }
+    let count = found.best_of.clamp(1, 7) as usize;
+    let dots_x = right - (count as f32 * 14. - 6.);
+    for position in 1..=count {
+        let dot = Rect::new(dots_x + (position - 1) as f32 * 14., bottom + 6., 8., 8.);
+        match found
+            .games
+            .iter()
+            .find(|game| game.position == position as u64)
+            .map(|game| game.state)
+        {
+            Some(GameState::Running) => out.shape(dot, 4., c(0xff5a5f, 1.)),
+            Some(GameState::Finished) => out.shape(dot, 4., dim(0.75)),
+            _ => out.border(dot, 4., 1.5, dim(0.3)),
+        }
+    }
+    let live = found
+        .games
+        .iter()
+        .find(|game| game.state == GameState::Running);
+    let number = live.map_or_else(
+        || {
+            found
+                .games
+                .iter()
+                .filter(|game| game.state == GameState::Finished)
+                .count() as u64
+                + 1
+        },
+        |game| game.position,
+    );
+    let mut label = language.format("esportsMap", &[("number", &number.to_string())]);
+    if let Some(game) = live.filter(|game| !game.map.is_empty()) {
+        label = format!("{label} · {}", game.map);
+    }
+    let mut label_w = dots_x - 14. - (card.x + pad);
+    if let Some(score) = live.and_then(|game| game.score) {
+        let rounds = map_score(score);
+        let rounds_style = text(15.2, 650, 0.);
+        let w = assets.width(&rounds, rounds_style) + 4.;
+        out.text(
+            &rounds,
+            Rect::new(dots_x - 14. - w, bottom, w, 20.),
+            rounds_style,
+            WHITE,
+            false,
+        );
+        label_w -= w + 10.;
+    }
+    out.text(
+        fit(assets, &label, style, label_w),
+        Rect::new(card.x + pad, bottom, label_w, 20.),
+        style,
+        dim(0.8),
+        false,
+    );
+}
+
+/// "13:11"; Overwatch's Push distances keep one decimal.
+fn map_score(score: [f64; 2]) -> String {
+    let points = |value: f64| {
+        if value.fract() == 0. {
+            format!("{}", value as i64)
+        } else {
+            format!("{value:.1}")
+        }
+    };
+    format!("{}:{}", points(score[0]), points(score[1]))
+}
+
+/// A team's colour: its logo's accent once loaded, else a steady one from its name.
+fn team_tint(state: &State, team: &crate::feeds::Team) -> Color {
+    feed_image(state, &team.image)
+        .map(|image| image.backdrop[0])
+        .filter(|rgb| *rgb != crate::feeds::NO_ACCENT)
+        .map_or_else(
+            || name_tint(&team.short),
+            |[r, g, b]| [r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.],
+        )
+}
+
+/// One of a few calm colours, always the same for the same name.
+fn name_tint(name: &str) -> Color {
+    const TINTS: [u32; 8] = [
+        0x5b7cfa, 0xe5484d, 0x2fb67c, 0xf5a524, 0x9b6cf6, 0x17b3c7, 0xe0609f, 0x8a94a6,
+    ];
+    let hash = name.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    c(TINTS[hash as usize % TINTS.len()], 1.)
+}
+
+fn alpha(color: Color, alpha: f32) -> Color {
+    [color[0], color[1], color[2], alpha]
 }
 
 /// A match's details: event, scoreboard with logos, each map, lineups and where it streams.
@@ -3899,16 +4116,16 @@ fn match_dialog(
         .esports_updated(instance)
         .and_then(|updated| OffsetDateTime::from_unix_timestamp(updated).ok())
         .map_or(now, |updated| updated.min(now));
-    let panel = Rect::new(320., 110., 1280., 860.);
+    let panel = Rect::new(296., 52., 1328., 976.);
     out.modal = Some(panel);
-    out.shadow(panel, 27.2, 120., 25., 0.47);
+    out.shadow(panel, 28., 120., 25., 0.5);
     out.draw.push(Draw::RoundedGradient(
         panel,
-        27.2,
-        c(0x34383b, 0.97),
-        c(0x24282d, 0.99),
+        28.,
+        c(0x2f3337, 0.98),
+        c(0x1a1d21, 0.99),
     ));
-    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    out.border(panel, 28., 1., c(0xffffff, 0.11));
     let close = Rect::new(panel.x + panel.w - 82., panel.y + 40., 33.6, 33.6);
     out.shape(close, 16.8, c(0xffffff, 0.035));
     out.border(close, 16.8, 1., c(0xffffff, 0.07));
@@ -3920,22 +4137,31 @@ fn match_dialog(
     let left = panel.x + 48.;
     let width = panel.w - 96.;
     let dim = |alpha| c(0xf5f5f5, alpha);
+    let caps = |out: &mut Scene, label: &str, rect: Rect| {
+        out.text(
+            label.to_uppercase(),
+            rect,
+            text(14.4, 650, 0.1),
+            dim(0.5),
+            false,
+        );
+    };
 
-    // Header: league logo, event, discipline and stage.
+    // Header: league logo, event, discipline and stage, then the series' facts.
     let mut x = left;
     if let Some(image) = feed_image(state, &found.league_image) {
         out.draw.push(Draw::AppImage(
             image.clone(),
-            Rect::new(left, panel.y + 40., 56., 56.),
+            Rect::new(left, panel.y + 38., 58., 58.),
             [1.; 4],
         ));
-        x += 74.;
+        x += 76.;
     }
     let header_w = close.x - 24. - x;
-    let title = text(26., 600, -0.02);
+    let title = text(28., 650, -0.02);
     out.text(
         fit(assets, &found.event, title, header_w),
-        Rect::new(x, panel.y + 40., header_w, 32.),
+        Rect::new(x, panel.y + 36., header_w, 34.),
         title,
         WHITE,
         false,
@@ -3951,8 +4177,6 @@ fn match_dialog(
         dim(0.6),
         false,
     );
-
-    // Chips: series length, tier, LAN or online, prize pool.
     let neutral = (c(0xffffff, 0.07), WHITE);
     let chips_y = panel.y + 116.;
     let mut cx = chip(
@@ -3985,32 +4209,51 @@ fn match_dialog(
         let gold = (c(0xf5c451, 0.16), c(0xf7d88a, 1.));
         chip(out, assets, &prize(&found.prizepool), cx, chips_y, gold);
     }
-    out.shape(
-        Rect::new(left, panel.y + 170., width, 1.),
-        0.,
-        c(0xffffff, 0.08),
-    );
 
-    // Scoreboard: logo, name and region on each side of the series score.
-    let board_y = panel.y + 192.;
-    let column = 440.;
+    // Scoreboard: each team in its own colour around the series score.
+    let hero = Rect::new(left, panel.y + 168., width, 226.);
+    out.draw.push(Draw::RoundedGradient(
+        hero,
+        22.,
+        if found.running {
+            c(0x5c262b, 0.55)
+        } else {
+            c(0xffffff, 0.06)
+        },
+        c(0xffffff, 0.02),
+    ));
+    out.border(
+        hero,
+        22.,
+        1.,
+        if found.running {
+            c(0xe5484d, 0.3)
+        } else {
+            c(0xffffff, 0.07)
+        },
+    );
+    let column = 420.;
     for (side, team) in found.teams.iter().enumerate() {
         let x = if side == 0 {
-            left
+            hero.x
         } else {
-            left + width - column
+            hero.x + hero.w - column
         };
-        team_logo(
-            out,
-            state,
-            team,
-            Rect::new(x + (column - 96.) / 2., board_y, 96., 96.),
-        );
-        let style = text(26., 600, -0.02);
+        let logo = Rect::new(x + (column - 112.) / 2., hero.y + 24., 112., 112.);
+        if let Some(team) = team {
+            out.draw.push(Draw::Shadow(
+                logo.inset(10.),
+                46.,
+                64.,
+                alpha(team_tint(state, team), 0.3),
+            ));
+        }
+        team_logo(out, state, team, logo);
+        let style = text(28., 650, -0.02);
         let name = team.as_ref().map_or("TBD", |team| team.name.as_str());
         out.text(
-            fit(assets, name, style, column),
-            Rect::new(x, board_y + 108., column, 32.),
+            fit(assets, name, style, column - 32.),
+            Rect::new(x, hero.y + 150., column, 34.),
             style,
             WHITE,
             true,
@@ -4018,35 +4261,35 @@ fn match_dialog(
         if let Some(team) = team.as_ref().filter(|team| !team.location.is_empty()) {
             out.text(
                 &team.location,
-                Rect::new(x, board_y + 144., column, 20.),
-                text(15.2, 500, 0.08),
+                Rect::new(x, hero.y + 188., column, 20.),
+                text(15.2, 600, 0.1),
                 dim(0.5),
                 true,
             );
         }
     }
-    let middle = Rect::new(left + column, board_y, width - 2. * column, 170.);
+    let middle = Rect::new(hero.x + column, hero.y, hero.w - 2. * column, hero.h);
     let centre = middle.x + middle.w / 2.;
     if found.running || found.score != [0, 0] {
-        let style = text(64., 650, -0.02);
-        let tone = |mine: u64, theirs: u64| if mine >= theirs { WHITE } else { dim(0.5) };
+        let style = text(84., 800, -0.03);
+        let tone = |mine: u64, theirs: u64| if mine >= theirs { WHITE } else { dim(0.42) };
         out.text(
             found.score[0].to_string(),
-            Rect::new(middle.x, board_y + 8., centre - 28. - middle.x, 80.),
+            Rect::new(middle.x, hero.y + 24., centre - 34. - middle.x, 104.),
             style.right(),
             tone(found.score[0], found.score[1]),
             false,
         );
         out.text(
             ":",
-            Rect::new(centre - 28., board_y + 4., 56., 80.),
+            Rect::new(centre - 34., hero.y + 18., 68., 104.),
             style,
-            dim(0.4),
+            dim(0.35),
             true,
         );
         out.text(
             found.score[1].to_string(),
-            Rect::new(centre + 28., board_y + 8., middle.w / 2. - 28., 80.),
+            Rect::new(centre + 34., hero.y + 24., middle.w / 2. - 34., 104.),
             style,
             tone(found.score[1], found.score[0]),
             false,
@@ -4054,9 +4297,9 @@ fn match_dialog(
     } else {
         out.text(
             "VS",
-            Rect::new(middle.x, board_y + 22., middle.w, 52.),
-            text(40., 650, 0.06),
-            dim(0.32),
+            Rect::new(middle.x, hero.y + 44., middle.w, 56.),
+            text(44., 650, 0.08),
+            dim(0.3),
             true,
         );
     }
@@ -4064,147 +4307,257 @@ fn match_dialog(
         live_badge(
             out,
             language,
-            Rect::new(middle.x, board_y + 108., middle.w, 30.),
+            Rect::new(middle.x, hero.y + 134., middle.w, 30.),
             15.2,
+        );
+        // The map being played, with its rounds when known.
+        let live = found.games.iter().find(|g| g.state == GameState::Running);
+        let number = live.map_or_else(
+            || {
+                found
+                    .games
+                    .iter()
+                    .filter(|g| g.state == GameState::Finished)
+                    .count() as u64
+                    + 1
+            },
+            |g| g.position,
+        );
+        let mut parts = vec![language.format("esportsMap", &[("number", &number.to_string())])];
+        parts.extend(live.filter(|g| !g.map.is_empty()).map(|g| g.map.clone()));
+        parts.extend(live.and_then(|g| g.score).map(map_score));
+        let style = text(16., 600, 0.);
+        out.text(
+            fit(assets, &parts.join(" · "), style, middle.w),
+            Rect::new(middle.x, hero.y + 172., middle.w, 22.),
+            style,
+            dim(0.85),
+            true,
         );
         if let Some(as_of) = &as_of {
             out.text(
                 as_of,
-                Rect::new(middle.x, board_y + 146., middle.w, 20.),
+                Rect::new(middle.x, hero.y + 198., middle.w, 20.),
                 text(14.4, 500, 0.),
-                dim(0.5),
+                dim(0.48),
                 true,
             );
         }
     } else {
         out.text(
             match_time(&found.begin_at, now, language),
-            Rect::new(middle.x, board_y + 110., middle.w, 26.),
-            text(20., 550, 0.),
-            dim(0.75),
+            Rect::new(middle.x, hero.y + 142., middle.w, 30.),
+            text(24., 650, 0.),
+            dim(0.85),
             true,
         );
     }
 
-    // Maps: one tile per map of the series.
-    let maps_y = panel.y + 384.;
-    out.text(
+    // Maps: a tile per map with its name, who picked it, its winner and rounds.
+    let maps_y = hero.y + hero.h + 26.;
+    caps(
+        out,
         language.t("esportsMaps"),
-        Rect::new(left, maps_y, 400., 24.),
-        text(17.6, 600, 0.),
-        dim(0.8),
-        false,
+        Rect::new(left, maps_y, 400., 20.),
     );
     let count = found.best_of.clamp(1, 7) as usize;
     let gap = 14.;
-    let tile_w = ((width - gap * (count - 1) as f32) / count as f32).min(220.);
+    let tile_w = ((width - gap * (count - 1) as f32) / count as f32).min(400.);
     let minutes =
         |minutes: i64| language.format("esportsMinutes", &[("number", &minutes.to_string())]);
     for position in 1..=count {
         let game = found.games.iter().find(|g| g.position == position as u64);
         let tile = Rect::new(
             left + (position - 1) as f32 * (tile_w + gap),
-            maps_y + 34.,
+            maps_y + 30.,
             tile_w,
-            92.,
+            136.,
         );
         let running = game.is_some_and(|g| g.state == GameState::Running);
         if running {
-            out.shape(tile, 14., c(0xe5484d, 0.14));
-            out.border(tile, 14., 1.5, c(0xe5484d, 0.7));
-        } else {
-            out.shape(
+            out.draw.push(Draw::RoundedGradient(
                 tile,
-                14.,
-                c(0xffffff, if game.is_some() { 0.06 } else { 0.03 }),
-            );
-            out.border(tile, 14., 1., c(0xffffff, 0.06));
+                18.,
+                c(0xe5484d, 0.3),
+                c(0xe5484d, 0.08),
+            ));
+            out.border(tile, 18., 1.5, c(0xe5484d, 0.75));
+        } else if game.is_some_and(|g| g.state == GameState::Finished) {
+            out.draw.push(Draw::RoundedGradient(
+                tile,
+                18.,
+                c(0xffffff, 0.08),
+                c(0xffffff, 0.035),
+            ));
+            out.border(tile, 18., 1., c(0xffffff, 0.08));
+        } else {
+            out.shape(tile, 18., c(0xffffff, 0.03));
+            out.border(tile, 18., 1., c(0xffffff, 0.06));
         }
-        out.text(
-            language.format("esportsMap", &[("number", &position.to_string())]),
-            Rect::new(tile.x, tile.y + 10., tile.w, 18.),
-            text(13.6, 500, 0.02),
-            dim(0.55),
-            true,
-        );
+        let inner_x = tile.x + 20.;
+        let mut inner_w = tile.w - 40.;
+        // The map's number, large and faint, where a wide tile has room for it.
+        if tile.w >= 260. {
+            out.text(
+                format!("{position:02}"),
+                Rect::new(tile.x + tile.w - 104., tile.y + 6., 88., 70.),
+                text(56., 800, -0.02).right(),
+                c(0xffffff, if running { 0.1 } else { 0.06 }),
+                false,
+            );
+            inner_w -= 64.;
+        }
+        match game.filter(|g| !g.map.is_empty()) {
+            Some(game) => {
+                let style = text(23., 650, -0.01);
+                out.text(
+                    fit(assets, &game.map, style, inner_w),
+                    Rect::new(inner_x, tile.y + 16., inner_w, 30.),
+                    style,
+                    WHITE,
+                    false,
+                );
+            }
+            None => out.text(
+                language.format("esportsMap", &[("number", &position.to_string())]),
+                Rect::new(inner_x, tile.y + 18., inner_w, 26.),
+                text(19.2, 600, 0.),
+                dim(0.62),
+                false,
+            ),
+        }
+        let pick = game.and_then(|g| {
+            if g.decider {
+                return Some(language.t("esportsDecider").to_owned());
+            }
+            let team = found
+                .teams
+                .iter()
+                .flatten()
+                .find(|team| Some(team.id) == g.picked_by)?;
+            Some(language.format("esportsPick", &[("team", &team.short)]))
+        });
+        if let Some(pick) = pick {
+            let style = text(14.4, 550, 0.02);
+            out.text(
+                fit(assets, &pick, style, inner_w),
+                Rect::new(inner_x, tile.y + 50., inner_w, 20.),
+                style,
+                dim(0.55),
+                false,
+            );
+        }
+        // The result row: rounds on the right, the winner or LIVE on the left.
+        let row_y = tile.y + tile.h - 48.;
+        let inner_w = tile.w - 40.;
+        let mut result_w = inner_w;
+        if let Some(score) = game.and_then(|g| g.score) {
+            let rounds = map_score(score);
+            let style = text(23., 650, 0.);
+            let w = assets.width(&rounds, style) + 4.;
+            out.text(
+                &rounds,
+                Rect::new(inner_x + inner_w - w, row_y - 2., w, 30.),
+                style,
+                WHITE,
+                false,
+            );
+            result_w -= w + 10.;
+        }
         let winner = game
             .and_then(|g| g.winner)
             .and_then(|id| found.teams.iter().flatten().find(|team| team.id == id));
-        let foot = Rect::new(tile.x, tile.y + 66., tile.w, 18.);
         match (game, winner) {
             (Some(game), _) if running => {
+                let style = text(17.6, 650, 0.06);
+                let live = language.t("live");
                 out.text(
-                    language.t("live"),
-                    Rect::new(tile.x, tile.y + 34., tile.w, 24.),
-                    text(19.2, 650, 0.06),
+                    live,
+                    Rect::new(inner_x, row_y + 2., result_w, 24.),
+                    style,
                     c(0xff6b6f, 1.),
-                    true,
+                    false,
                 );
                 if let Some(elapsed) = minutes_since(&game.begin_at, data_time) {
-                    out.text(minutes(elapsed), foot, text(13.6, 450, 0.), dim(0.6), true);
+                    let x = inner_x + assets.width(live, style) + 10.;
+                    out.text(
+                        minutes(elapsed),
+                        Rect::new(x, row_y + 4., inner_x + result_w - x, 20.),
+                        text(15.2, 500, 0.),
+                        dim(0.65),
+                        false,
+                    );
                 }
             }
             (Some(game), Some(team)) => {
-                let style = text(17.6, 600, 0.);
-                let label = fit(assets, &team.short, style, tile.w - 58.);
-                let w = 24. + 8. + assets.width(&label, style);
-                let x = tile.x + (tile.w - w) / 2.;
                 emblem(
                     out,
                     state,
                     &team.image,
                     &team.short,
-                    Rect::new(x, tile.y + 34., 24., 24.),
+                    Rect::new(inner_x, row_y, 26., 26.),
+                    Some(team_tint(state, team)),
                 );
+                let style = text(17.6, 650, 0.);
+                let mut label = team.short.clone();
+                if let Some(length) = game.length {
+                    label = format!("{label} · {}", minutes((length / 60) as i64));
+                }
                 out.text(
-                    label,
-                    Rect::new(x + 32., tile.y + 36., w, 22.),
+                    fit(assets, &label, style, result_w - 36.),
+                    Rect::new(inner_x + 36., row_y + 2., result_w - 36., 24.),
                     style,
                     WHITE,
                     false,
                 );
-                if let Some(length) = game.length {
-                    out.text(
-                        minutes((length / 60) as i64),
-                        foot,
-                        text(13.6, 450, 0.),
-                        dim(0.5),
-                        true,
-                    );
-                }
             }
             _ => out.text(
                 "—",
-                Rect::new(tile.x, tile.y + 34., tile.w, 24.),
+                Rect::new(inner_x, row_y, result_w, 26.),
                 text(19.2, 500, 0.),
-                dim(0.35),
-                true,
+                dim(0.3),
+                false,
             ),
         }
     }
 
     // Lineups side by side: photo, nickname, real name, then country and role.
-    let footer_y = panel.y + panel.h - 92.;
-    let lineup_y = panel.y + 534.;
-    let column_w = (width - 48.) / 2.;
+    let footer_y = panel.y + panel.h - 86.;
+    let lineup_y = maps_y + 30. + 136. + 24.;
+    let column_w = (width - 24.) / 2.;
     for (side, team) in found.teams.iter().enumerate() {
-        let x = left + side as f32 * (column_w + 48.);
+        let card = Rect::new(
+            left + side as f32 * (column_w + 24.),
+            lineup_y,
+            column_w,
+            footer_y - 16. - lineup_y,
+        );
+        out.draw.push(Draw::RoundedGradient(
+            card,
+            18.,
+            c(0xffffff, 0.05),
+            c(0xffffff, 0.02),
+        ));
+        out.border(card, 18., 1., c(0xffffff, 0.06));
+        let x = card.x + 20.;
+        let inner_w = card.w - 40.;
         let name = team.as_ref().map_or("TBD", |team| team.short.as_str());
-        team_logo(out, state, team, Rect::new(x, lineup_y - 2., 28., 28.));
+        team_logo(out, state, team, Rect::new(x, card.y + 16., 28., 28.));
         out.text(
             language.format("esportsLineup", &[("team", name)]),
-            Rect::new(x + 40., lineup_y, column_w - 40., 24.),
-            text(17.6, 600, 0.),
-            dim(0.8),
+            Rect::new(x + 40., card.y + 19., inner_w - 40., 24.),
+            text(17.6, 650, 0.),
+            dim(0.88),
             false,
         );
         let players = team
             .as_ref()
             .and_then(|team| state.feeds.rosters.get(&team.id));
-        let rows_y = lineup_y + 40.;
+        let tint = team.as_ref().map(|team| alpha(team_tint(state, team), 0.8));
+        let rows_y = card.y + 58.;
         match players {
             Some(players) if !players.is_empty() => {
-                let row_h = ((footer_y - 12. - rows_y) / players.len() as f32).min(38.);
+                let row_h = ((card.y + card.h - 10. - rows_y) / players.len() as f32).min(40.);
                 let avatar = (row_h - 6.).min(32.);
                 for (row, player) in players.iter().enumerate() {
                     let y = rows_y + row as f32 * row_h;
@@ -4214,6 +4567,7 @@ fn match_dialog(
                         &player.image,
                         &player.name,
                         Rect::new(x, y, avatar, avatar),
+                        tint,
                     );
                     let meta: Vec<String> =
                         [player.nationality.clone(), player.role.to_uppercase()]
@@ -4221,12 +4575,12 @@ fn match_dialog(
                             .filter(|part| !part.is_empty())
                             .collect();
                     let meta = meta.join(" · ");
-                    let meta_style = text(14.4, 500, 0.06);
+                    let meta_style = text(14.4, 600, 0.08);
                     let meta_w = assets.width(&meta, meta_style);
                     out.text(
                         &meta,
                         Rect::new(
-                            x + column_w - meta_w - 4.,
+                            x + inner_w - meta_w - 4.,
                             y + (avatar - 18.) / 2.,
                             meta_w + 4.,
                             18.,
@@ -4235,18 +4589,18 @@ fn match_dialog(
                         dim(0.5),
                         false,
                     );
-                    let nick = text(19.2, 600, -0.01);
+                    let nick = text(19.2, 650, -0.01);
                     let text_y = y + (avatar - 24.) / 2.;
                     let nick_x = x + avatar + 14.;
                     out.text(
                         &player.name,
-                        Rect::new(nick_x, text_y, column_w, 24.),
+                        Rect::new(nick_x, text_y, inner_w, 24.),
                         nick,
                         WHITE,
                         false,
                     );
                     let real_x = nick_x + assets.width(&player.name, nick) + 12.;
-                    let real_w = x + column_w - meta_w - 20. - real_x;
+                    let real_w = x + inner_w - meta_w - 20. - real_x;
                     if !player.real_name.is_empty() && real_w > 40. {
                         let style = text(16., 450, 0.);
                         out.text(
@@ -4271,15 +4625,15 @@ fn match_dialog(
                         "esportsLineupLoading"
                     },
                 ),
-                Rect::new(x, rows_y, column_w, 26.),
+                Rect::new(x, rows_y + 4., inner_w, 26.),
                 text(17.6, 450, 0.),
-                dim(0.55),
+                dim(0.5),
                 false,
             ),
         }
     }
 
-    // Footer: where it streams, official ones first, then the data note.
+    // Footer: where it streams, official ones first, the maps' credit, then the data note.
     let mut streams: Vec<&crate::feeds::Stream> = found.streams.iter().collect();
     streams.sort_by_key(|s| (!s.official, !s.main));
     let mut seen = Vec::new();
@@ -4303,14 +4657,23 @@ fn match_dialog(
             }
         })
         .collect();
-    out.shape(
-        Rect::new(left, footer_y - 8., width, 1.),
-        0.,
-        c(0xffffff, 0.08),
-    );
+    let mut streams_w = width;
+    if !found.maps_source.is_empty() {
+        let credit = language.t("esportsMapsCredit");
+        let style = text(14.4, 500, 0.);
+        let w = assets.width(credit, style) + 4.;
+        out.text(
+            credit,
+            Rect::new(left + width - w, footer_y + 8., w, 20.),
+            style,
+            dim(0.5),
+            false,
+        );
+        streams_w -= w + 24.;
+    }
     if !streams.is_empty() {
         let label = format!("{}:", language.t("esportsStreams"));
-        let label_style = text(16., 600, 0.);
+        let label_style = text(16., 650, 0.);
         let label_w = assets.width(&label, label_style);
         out.text(
             &label,
@@ -4321,11 +4684,16 @@ fn match_dialog(
         );
         let style = text(16., 450, 0.);
         out.text(
-            fit(assets, &streams.join(" · "), style, width - label_w - 12.),
+            fit(
+                assets,
+                &streams.join(" · "),
+                style,
+                streams_w - label_w - 12.,
+            ),
             Rect::new(
                 left + label_w + 10.,
                 footer_y + 6.,
-                width - label_w - 10.,
+                streams_w - label_w - 10.,
                 22.,
             ),
             style,
@@ -4342,7 +4710,7 @@ fn match_dialog(
         // Up to two lines: the shared feed's note is long in some languages.
         Rect::new(left, footer_y + 38., width, 44.),
         text(14.4, 400, 0.).leading(1.4),
-        dim(0.45),
+        dim(0.42),
         false,
     );
 }

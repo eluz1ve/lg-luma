@@ -1962,7 +1962,84 @@ fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
             official: true,
             main: true,
         }],
+        maps_source: String::new(),
     }
+}
+
+#[test]
+fn a_match_names_its_maps_with_scores_picks_and_their_source() {
+    use crate::feeds::{GameState, MatchGame};
+    use crate::home_grid::{Block, BlockKind};
+    let mut state = ready();
+    state.preferences.home_layout.push(Block {
+        kind: BlockKind::Esports(0),
+        x: 0,
+        y: 6,
+        w: 12,
+        h: 2,
+    });
+    let map = |position, state, name: &str, score, picked_by, decider| MatchGame {
+        position,
+        state,
+        winner: (state == GameState::Finished).then_some(1),
+        begin_at: String::new(),
+        length: None,
+        map: name.into(),
+        score,
+        picked_by,
+        decider,
+    };
+    let mut found = esports_match("csgo", 7, "s");
+    found.games = vec![
+        map(
+            1,
+            GameState::Finished,
+            "Dust II",
+            Some([13., 11.]),
+            Some(2),
+            false,
+        ),
+        map(
+            2,
+            GameState::Running,
+            "Nuke",
+            Some([7., 5.]),
+            Some(1),
+            false,
+        ),
+        map(3, GameState::Waiting, "Ancient", None, None, true),
+    ];
+    found.maps_source = "Liquipedia".into();
+    state.feeds.matches.insert("csgo".into(), vec![found]);
+    assert!(
+        scene_text(&state).iter().any(|t| t == "Map 2 · Nuke"),
+        "Home tells which map is live"
+    );
+    state.focus = Target::Match(0, 0);
+    state.activate();
+    let texts = scene_text(&state);
+    for name in ["Dust II", "Nuke", "Ancient"] {
+        assert!(texts.iter().any(|t| t == name), "{name}");
+    }
+    assert!(!texts.iter().any(|t| t == "Map 1"), "a known map is named");
+    assert!(
+        texts.iter().any(|t| t == "13:11"),
+        "rounds of a finished map"
+    );
+    assert!(texts.iter().any(|t| t == "7:5"), "rounds of the live map");
+    assert!(texts.iter().any(|t| t == "FaZe pick"));
+    assert!(texts.iter().any(|t| t == "Decider"));
+    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
+    // PandaScore's own data: numbered maps and no credit.
+    let found = &mut state.feeds.matches.get_mut("csgo").unwrap()[0];
+    found.maps_source.clear();
+    for game in &mut found.games {
+        game.map.clear();
+        game.score = None;
+    }
+    let texts = scene_text(&state);
+    assert!(texts.iter().any(|t| t == "Map 1"));
+    assert!(!texts.iter().any(|t| t.contains("Liquipedia")));
 }
 
 #[test]

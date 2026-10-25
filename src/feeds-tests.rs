@@ -294,6 +294,37 @@ fn the_shared_feed_carries_matches_and_their_lineups() {
 }
 
 #[test]
+fn the_shared_feed_names_maps_with_their_scores_and_picks_from_liquipedia() {
+    let body = json!({"game": "csgo", "updated": 1, "matches": [
+        {"id": 5, "running": true, "begin_at": "2026-10-25T11:11:51Z",
+         "teams": [{"id": 1, "name": "Acend", "short": "ACE"},
+                   {"id": 2, "name": "DINERO", "short": "DINERO"}],
+         "score": [1, 0], "best_of": 3, "maps_source": "Liquipedia",
+         "games": [{"position": 1, "state": "finished", "winner": 1, "map": "Dust II",
+                    "score": [13, 11], "picked_by": 2},
+                   {"position": 2, "state": "running", "map": "Nuke", "score": [78.45, 102.6]},
+                   {"position": 3, "state": "waiting", "map": "Ancient", "decider": true},
+                   {"position": 4, "state": "waiting", "map": 7, "score": [1]}]},
+        {"id": 6, "teams": [], "games": [{"position": 1}]}
+    ]});
+    let matches = parse_feed(&body, "csgo").matches;
+    let games = &matches[0].games;
+    assert_eq!(matches[0].maps_source, "Liquipedia");
+    assert_eq!(
+        (games[0].map.as_str(), games[0].score, games[0].picked_by),
+        ("Dust II", Some([13., 11.]), Some(2))
+    );
+    assert_eq!(games[1].score, Some([78.45, 102.6]), "points, e.g. Push");
+    assert!(games[2].decider && games[2].picked_by.is_none());
+    assert_eq!((games[3].map.as_str(), games[3].score), ("", None));
+    assert_eq!(
+        matches[1].maps_source, "",
+        "PandaScore's own data names no maps"
+    );
+    assert_eq!(matches[1].games[0].map, "");
+}
+
+#[test]
 fn a_personal_key_polls_live_matches_as_often_as_the_free_limit_allows() {
     assert_eq!(live_interval(1), 30);
     assert_eq!(live_interval(2), 30);
