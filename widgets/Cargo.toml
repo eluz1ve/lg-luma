@@ -1,0 +1,13 @@
+[package]
+name = "luma-widgets"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "MIT"
+description = "Data-only Luma widgets: manifests, documents, the catalog and jq transforms"
+
+[dependencies]
+regex-lite = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
