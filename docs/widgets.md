@@ -601,8 +601,11 @@ Preferences gain:
   additions above, scheduling in `main.rs`, and the `--widget-transform` child entry before SDL
   starts.
 - Desktop-only flags for development and screenshots: `--widget-catalog <https URL or folder>`
-  with `--widget-catalog-key <public key>` to use a test catalog, and `--widget-dev <folder>` to
-  run a widget straight from its source folder, unsigned (section 9).
+  with `--widget-catalog-key <public key>` to use a test catalog, `--widget-dev <folder>` to run
+  a widget straight from its source folder, unsigned (section 9), and `--widget-fixtures
+  <folder>` to answer its requests from a fixture case. A secret for one run comes from
+  `LUMA_WIDGET_SECRET_<WIDGET>_<SETTING>` (e.g. `LUMA_WIDGET_SECRET_ESPORTS_KEY`): used, never
+  saved. Transform children start with an empty environment.
 - New messages in `assets/messages.json` for the store, the generic row states, "Data as of",
   minutes and the secret rows, in all seven languages. Everything a widget says itself comes
   from its manifest.

@@ -26,6 +26,8 @@ pub struct Store {
     dir: Option<PathBuf>,
     manifests: HashMap<String, Arc<Manifest>>,
     secrets: BTreeMap<String, BTreeMap<String, String>>,
+    /// Desktop development: secrets from the environment, used but never saved.
+    runtime: BTreeMap<String, BTreeMap<String, String>>,
     /// Installed widgets that could not be loaded, and why.
     pub broken: BTreeMap<String, String>,
 }
@@ -143,15 +145,25 @@ impl Store {
     }
 
     pub fn secret(&self, widget: &str, setting: &str) -> Option<&str> {
-        self.secrets
-            .get(widget)?
-            .get(setting)
+        [&self.runtime, &self.secrets]
+            .into_iter()
+            .find_map(|secrets| secrets.get(widget)?.get(setting))
             .map(String::as_str)
             .filter(|s| !s.is_empty())
     }
 
     pub fn secrets(&self, widget: &str) -> BTreeMap<String, String> {
-        self.secrets.get(widget).cloned().unwrap_or_default()
+        let mut secrets = self.secrets.get(widget).cloned().unwrap_or_default();
+        secrets.extend(self.runtime.get(widget).cloned().unwrap_or_default());
+        secrets
+    }
+
+    /// A secret for this run only (desktop development), never written anywhere.
+    pub fn set_runtime_secret(&mut self, widget: &str, setting: &str, value: String) {
+        self.runtime
+            .entry(widget.into())
+            .or_default()
+            .insert(setting.into(), value);
     }
 
     pub fn set_secret(
@@ -185,6 +197,14 @@ impl Store {
         let bytes = serde_json::to_vec(&self.secrets).map_err(|e| e.to_string())?;
         write_private(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+/// The environment variable a desktop run reads a widget's secret from, e.g.
+/// `LUMA_WIDGET_SECRET_ESPORTS_KEY`.
+pub fn runtime_secret_variable(widget: &str, setting: &str) -> String {
+    format!("LUMA_WIDGET_SECRET_{widget}_{setting}")
+        .to_uppercase()
+        .replace('-', "_")
 }
 
 /// The catalog as the store last saw it.

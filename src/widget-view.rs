@@ -1298,9 +1298,10 @@ fn lists_section(
     }
 }
 
-/// The store's panel: the same surface as the item dialog, a little smaller.
-fn store_panel(out: &mut Scene, state: &State, assets: &Assets) -> Rect {
-    let panel = Rect::new(400., 110., 1120., 860.);
+/// The store's panel: the same surface as the item dialog, as tall as its content.
+fn store_panel(out: &mut Scene, state: &State, assets: &Assets, height: f32) -> Rect {
+    let height = height.clamp(320., 860.);
+    let panel = Rect::new(400., (540. - height / 2.).max(110.), 1120., height);
     out.modal = Some(panel);
     out.shadow(panel, 28., 120., 25., 0.5);
     out.draw.push(Draw::RoundedGradient(
@@ -1336,7 +1337,10 @@ fn host(origin: &str) -> &str {
 pub(super) fn store(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
     let code = language.code();
-    let panel = store_panel(out, state, assets);
+    let entries = state.store_entries();
+    let row_h = 112.;
+    let rows = entries.len().clamp(1, 5) as f32;
+    let panel = store_panel(out, state, assets, 140. + rows * (row_h + 14.) - 14. + 48.);
     let left = panel.x + 48.;
     let width = panel.w - 96.;
     out.text(
@@ -1358,7 +1362,7 @@ pub(super) fn store(out: &mut Scene, state: &State, assets: &Assets) {
         design::ink(0.6),
         false,
     );
-    let list = Rect::new(left, panel.y + 140., width, panel.h - 180.);
+    let list = Rect::new(left, panel.y + 140., width, panel.h - 188.);
     let message = match &state.widgets.catalog {
         CatalogState::Idle | CatalogState::Loading => Some(language.t("widgetStoreLoading")),
         CatalogState::Unavailable => Some(language.t("widgetStoreUnavailable")),
@@ -1372,13 +1376,11 @@ pub(super) fn store(out: &mut Scene, state: &State, assets: &Assets) {
         ghost(
             out,
             assets,
-            Rect::new(list.x, list.y, list.w, 120.),
+            Rect::new(list.x, list.y, list.w, row_h),
             message,
         );
         return;
     }
-    let entries = state.store_entries();
-    let row_h = 112.;
     let visible = ((list.h + 14.) / (row_h + 14.)).floor().max(1.) as usize;
     let focused = match state.focus {
         Target::StoreEntry(index) => index,
@@ -1478,10 +1480,37 @@ pub(super) fn store(out: &mut Scene, state: &State, assets: &Assets) {
 pub(super) fn store_entry(out: &mut Scene, state: &State, assets: &Assets, id: &str) {
     let language = state.preferences.language;
     let code = language.code();
-    let panel = store_panel(out, state, assets);
+    let entry = state.store_entries().into_iter().find(|e| e.id == id);
+    // The content's height first, so the panel fits it.
+    let width = 1120. - 96.;
+    let style = text(20., 450, -0.01).leading(1.45);
+    let height = entry.map_or(320., |entry| {
+        let lines = assets
+            .lines(entry.description.get(code), style, width)
+            .min(3) as f32;
+        let mut rows = 1.;
+        let mut x = 0.;
+        for origin in &entry.origins {
+            let w = assets.width(host(origin.as_str()), text(15.2, 550, 0.01)) + 38.;
+            if x + w > width + 10. {
+                rows += 1.;
+                x = 0.;
+            }
+            x += w;
+        }
+        168. + lines * 20. * 1.45
+            + 36.
+            + 32.
+            + rows * 40.
+            + 12.
+            + entry.secrets.len() as f32 * 34.
+            + 34.
+            + 60.
+            + 48.
+    });
+    let panel = store_panel(out, state, assets, height);
     let left = panel.x + 48.;
-    let width = panel.w - 96.;
-    let Some(entry) = state.store_entries().into_iter().find(|e| e.id == id) else {
+    let Some(entry) = entry else {
         out.text(
             language.t("widgetNoLonger"),
             Rect::new(left, panel.y + 48., width - 80., 30.),
@@ -1522,7 +1551,6 @@ pub(super) fn store_entry(out: &mut Scene, state: &State, assets: &Assets, id: &
         false,
     );
     let mut y = panel.y + 168.;
-    let style = text(20., 450, -0.01).leading(1.45);
     let description = entry.description.get(code);
     let lines = assets.lines(description, style, width).min(3) as f32;
     out.text(

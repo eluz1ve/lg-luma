@@ -51,7 +51,21 @@ enum Reply {
 /// Runs `job` in `exe flag`, killed after the wall-clock limit.
 pub fn run(exe: &Path, flag: &str, job: &Job, limits: &Limits) -> Result<Value, Error> {
     let input = serde_json::to_vec(job).map_err(|e| Error(e.to_string()))?;
-    let mut child = Command::new(exe)
+    let mut command = Command::new(exe);
+    // The child sees none of the parent's environment (which may hold a developer's secret),
+    // only what finding its libraries needs.
+    command.env_clear();
+    for name in [
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let mut child = command
         .arg(flag)
         .env("LUMA_TRANSFORM_CPU", limits.cpu_seconds.to_string())
         .env("LUMA_TRANSFORM_MEMORY", limits.memory.to_string())

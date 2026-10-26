@@ -655,6 +655,31 @@ fn run() -> Result<(), String> {
     }
     state.widgets.store =
         widget_store::Store::open(&preferences_path, &state.preferences.widgets.installed);
+    // Desktop development: secrets from the environment for this run only (never saved), e.g.
+    // a personal API key for a live screenshot.
+    if !webos {
+        for id in state.widgets.store.ids() {
+            let Some(manifest) = state.widgets.store.manifest(&id) else {
+                continue;
+            };
+            for setting in &manifest.settings {
+                let variable = widget_store::runtime_secret_variable(&id, &setting.id);
+                if let Ok(value) = std::env::var(&variable)
+                    && matches!(
+                        setting.kind,
+                        luma_widgets::manifest::SettingKind::Secret { .. }
+                    )
+                    && setting.accepts(value.trim())
+                {
+                    eprintln!("Luma widget {id}: {} from {variable}", setting.id);
+                    state
+                        .widgets
+                        .store
+                        .set_runtime_secret(&id, &setting.id, value.trim().into());
+                }
+            }
+        }
+    }
     if let Some(dir) = &options.widget_dev {
         let (manifest, bytes) = luma_widgets::tree::load(dir).map_err(|e| e.0)?;
         let id = manifest.id.clone();

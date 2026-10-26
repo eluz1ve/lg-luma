@@ -825,3 +825,37 @@ fn a_secret_typed_or_sent_from_a_phone_goes_to_the_secrets_file() {
     state.activate();
     assert_eq!(state.widgets.store.secret("scores", "key"), None);
 }
+
+#[test]
+fn a_secret_given_at_run_time_is_used_but_never_saved() {
+    let prefs = scratch("runtime-secret");
+    let mut state = installed(&prefs);
+    state
+        .widgets
+        .store
+        .set_runtime_secret("scores", "key", "from-the-environment".into());
+    assert_eq!(
+        state.widgets.store.secret("scores", "key"),
+        Some("from-the-environment")
+    );
+    let job = state
+        .widget_requests(Instant::now(), true)
+        .into_iter()
+        .find_map(|r| match r {
+            WidgetRequest::Refresh(job) => Some(job),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(job.secrets["key"], "from-the-environment");
+    // Saving another secret does not write it either.
+    state
+        .set_widget_secret(0, "key", Some("typed".into()))
+        .unwrap();
+    let file =
+        std::fs::read_to_string(prefs.parent().unwrap().join("secrets.json")).unwrap_or_default();
+    assert!(!file.contains("from-the-environment"));
+    assert_eq!(
+        crate::widget_store::runtime_secret_variable("my-widget", "api_key"),
+        "LUMA_WIDGET_SECRET_MY_WIDGET_API_KEY"
+    );
+}
