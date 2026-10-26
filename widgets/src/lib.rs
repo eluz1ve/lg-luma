@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod plan;
 pub mod refresh;
 pub mod sandbox;
+pub mod tree;
 
 /// Why a manifest, document, catalog or transform was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
