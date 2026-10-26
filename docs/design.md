@@ -9,13 +9,15 @@ corner radii or type of their own.
 
 Home is a page title followed by rows, with small glance widgets beside the title.
 
-| Kind       | Widgets                                | Looks like                                                                                                                                                                                                                                                                             |
-| ---------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Title**  | Greeting (date and greeting)           | Text straight on the wallpaper, never on a card.                                                                                                                                                                                                                                       |
-| **Glance** | Weather, Crypto                        | One or two lines of facts in the weather line's type (23.2 px). On the wallpaper in themes without cards (Classic), on the theme's surface card (`widget_card`, `RADIUS` corners) in themes with cards. All glance widgets of a theme look the same: never one bare and one on a card. |
-| **Row**    | Favourites, Inputs, Esports, Premieres | A row header, then a carousel of cards. No box behind the row: the cards are the surfaces.                                                                                                                                                                                             |
+| Kind       | Widgets                                               | Looks like                                                                                                                                                                                                                                                                             |
+| ---------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Title**  | Greeting (date and greeting)                          | Text straight on the wallpaper, never on a card.                                                                                                                                                                                                                                       |
+| **Glance** | Weather, Crypto                                       | One or two lines of facts in the weather line's type (23.2 px). On the wallpaper in themes without cards (Classic), on the theme's surface card (`widget_card`, `RADIUS` corners) in themes with cards. All glance widgets of a theme look the same: never one bare and one on a card. |
+| **Row**    | Favourites, Inputs, Esports, Premieres, store widgets | A row header, then a carousel of cards. No box behind the row: the cards are the surfaces.                                                                                                                                                                                             |
 
-A new widget is a row unless it is one or two lines of facts.
+A new widget is a row unless it is one or two lines of facts. Widgets from the store are rows
+drawn by Luma's templates (`scoreboard`, `media` and `ticker` cards, and one dialog); see
+[widgets.md](widgets.md#5-templates).
 
 ## Rows
 

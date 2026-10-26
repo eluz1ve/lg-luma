@@ -166,6 +166,41 @@ pub struct Preferences {
     /// Each esports widget's settings, by its instance number.
     #[serde(deserialize_with = "deserialize_esports")]
     pub esports: BTreeMap<u8, EsportsWidget>,
+    /// Widgets from the store (docs/widgets.md): what is installed and each block's settings.
+    #[serde(deserialize_with = "deserialize_widgets")]
+    pub widgets: WidgetPrefs,
+}
+
+/// The store's widgets: installed manifests (their files are next to the preferences) and the
+/// slots their Home blocks use. Secrets are not here but in their own file.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct WidgetPrefs {
+    /// The newest catalog this installation accepted; an older one is refused.
+    pub catalog_sequence: u64,
+    pub installed: BTreeMap<String, InstalledWidget>,
+    /// `BlockKind::Widget(slot)` blocks: which widget and its settings.
+    pub slots: BTreeMap<u8, WidgetSlot>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct InstalledWidget {
+    pub version: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct WidgetSlot {
+    pub widget: String,
+    pub settings: serde_json::Map<String, serde_json::Value>,
+}
+
+fn deserialize_widgets<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<WidgetPrefs, D::Error> {
+    Ok(serde_json::from_value(serde_json::Value::deserialize(deserializer)?).unwrap_or_default())
 }
 
 /// One esports widget: the disciplines it shows (PandaScore paths) and its event filter.
@@ -214,6 +249,7 @@ impl Default for Preferences {
             poster_app: String::new(),
             esports_key: String::new(),
             esports: BTreeMap::new(),
+            widgets: WidgetPrefs::default(),
         }
     }
 }

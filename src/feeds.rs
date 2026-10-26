@@ -243,6 +243,11 @@ pub enum FeedRequest {
     Shared {
         game: String,
     },
+    /// A store widget's image; the widget's origins were checked already.
+    WidgetImage {
+        url: String,
+        poster: bool,
+    },
 }
 
 pub enum FeedResponse {
@@ -282,6 +287,10 @@ impl Feeds {
                     FeedRequest::Premieres => FeedResponse::Premieres(premieres(&agent)),
                     FeedRequest::Image(url) => {
                         let image = image(&agent, &url);
+                        FeedResponse::Image(url, image)
+                    }
+                    FeedRequest::WidgetImage { url, poster } => {
+                        let image = load_image(&agent, &url, poster);
                         FeedResponse::Image(url, image)
                     }
                     FeedRequest::Matches { key, game } => FeedResponse::Matches {
@@ -951,15 +960,19 @@ fn image(agent: &ureq::Agent, url: &str) -> Option<Arc<Artwork>> {
     if !image_allowed(url) {
         return None;
     }
+    load_image(agent, url, url.starts_with(POSTER_ORIGIN))
+}
+
+/// An image over HTTPS, decoded and shrunk here, off the SDL thread.
+fn load_image(agent: &ureq::Agent, url: &str, poster: bool) -> Option<Arc<Artwork>> {
+    if !url.starts_with("https://") {
+        return None;
+    }
     let bytes = get(agent, url, IMAGE_LIMIT)
         .map_err(|error| eprintln!("Luma image: {error}"))
         .ok()?;
     let image = image::load_from_memory(&bytes).ok()?;
-    let (w, h) = if url.starts_with(POSTER_ORIGIN) {
-        (300, 450)
-    } else {
-        (160, 160)
-    };
+    let (w, h) = if poster { (300, 450) } else { (160, 160) };
     let pixels = image.thumbnail(w, h).into_rgba8();
     // A logo's own colour tints the match dialog around it.
     let accent = crate::app_artwork::accent(&pixels);

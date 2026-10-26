@@ -8,6 +8,7 @@ fn texts() -> PageTexts {
         send: "Send".into(),
         saved: "Saved".into(),
         invalid: "Invalid".into(),
+        accepts: None,
     }
 }
 
@@ -74,4 +75,25 @@ fn the_qr_code_is_a_square_image_with_a_quiet_zone() {
     // The corner is the white quiet zone; the finder pattern starts dark after it.
     assert_eq!(image.get_pixel(2, 2)[0], 255);
     assert_eq!(image.get_pixel(4 * 8 + 2, 4 * 8 + 2)[0], 0);
+}
+
+#[test]
+fn a_store_widget_secret_is_checked_by_its_own_rule() {
+    let mut texts = texts();
+    // E.g. a manifest's pattern: exactly eight digits, spaces allowed around.
+    texts.accepts = Some(std::sync::Arc::new(|key: &str| {
+        key.len() == 8 && key.bytes().all(|b| b.is_ascii_digit())
+    }));
+    let post = |body: &str| {
+        format!(
+            "POST /a1b2c3 HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    let (page, key) = respond(post("key=12345678").as_bytes(), "a1b2c3", &texts);
+    assert!(String::from_utf8(page).unwrap().contains("Saved"));
+    assert_eq!(key.as_deref(), Some("12345678"));
+    let (page, key) = respond(post("key=ps_Ab-12").as_bytes(), "a1b2c3", &texts);
+    assert!(String::from_utf8(page).unwrap().contains("Invalid"));
+    assert_eq!(key, None);
 }

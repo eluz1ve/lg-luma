@@ -69,6 +69,14 @@ pub enum Target {
     PosterApp(usize),
     /// A match in an esports widget: the widget's instance and the match's index in its list.
     Match(u8, usize),
+    /// A card of a store widget: its slot and the item's index in its document.
+    WidgetItem(u8, usize),
+    /// A widget in the store's list, by its index in the catalog.
+    StoreEntry(usize),
+    /// A button on a store widget's page, in `State::store_actions` order.
+    StoreAction(usize),
+    /// A row of a store widget's settings page, in `State::widget_setting_rows` order.
+    WidgetSetting(usize),
     /// An esports widget's settings: the shared PandaScore key, its disciplines, major events.
     EsportsKey,
     /// Enter the key from a phone: a QR code to a one-time page on the home network.
@@ -195,6 +203,21 @@ pub enum Overlay {
     PhoneKey {
         restore: Target,
     },
+    /// A store widget's item: its dialog, by the item's id.
+    WidgetDialog {
+        slot: u8,
+        id: String,
+        restore: Target,
+    },
+    /// The widget store's list.
+    Store {
+        restore: Target,
+    },
+    /// One widget's page in the store, by its id.
+    StoreEntry {
+        id: String,
+        restore: Target,
+    },
     Recents {
         restore: Target,
     },
@@ -220,6 +243,9 @@ pub enum Subpage {
     /// An esports widget's settings, and its list of disciplines.
     Esports(u8),
     EsportsGames(u8),
+    /// A store widget's settings, by slot, and the options of one of its settings.
+    Widget(u8),
+    WidgetOptions(u8, usize),
     /// System › Luma as Home: on (replace LG Home) or off.
     HomeTakeover,
 }
@@ -231,6 +257,8 @@ pub enum TextField {
     Name,
     InputName,
     ApiKey,
+    /// A store widget's text or secret setting, as `State::widget_editing` names it.
+    Widget,
 }
 
 #[derive(Clone, Copy)]
@@ -313,6 +341,21 @@ pub struct State {
     pub phone_key: Option<(String, std::sync::Arc<crate::app_artwork::Artwork>)>,
     /// Set by `Effect::PhoneKeyStart`; the main loop starts the page.
     pub phone_key_start: bool,
+    /// Widgets from the store.
+    pub widgets: crate::widget_store::WidgetState,
+    /// The store widget setting the keyboard or the phone page is filling: slot and setting id.
+    pub widget_editing: Option<(u8, String)>,
+    pub widget_text_draft: String,
+}
+
+/// A row of "Add widget".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AddChoice {
+    Kind(crate::home_grid::BlockKind),
+    /// An installed store widget, by id.
+    Widget(String),
+    /// "Widget store…".
+    Store,
 }
 
 impl State {
@@ -353,6 +396,9 @@ impl State {
             feeds: crate::feeds::FeedData::default(),
             phone_key: None,
             phone_key_start: false,
+            widgets: Default::default(),
+            widget_editing: None,
+            widget_text_draft: String::new(),
         }
     }
 
@@ -553,7 +599,10 @@ impl State {
         if from_app && kind == crate::home_grid::BlockKind::Favorites {
             actions.push(BlockAction::Reorder);
         }
-        if matches!(kind, crate::home_grid::BlockKind::Esports(_)) {
+        if matches!(
+            kind,
+            crate::home_grid::BlockKind::Esports(_) | crate::home_grid::BlockKind::Widget(_)
+        ) {
             actions.push(BlockAction::Settings);
         }
         actions.extend([BlockAction::Move, BlockAction::Resize]);
@@ -607,6 +656,14 @@ impl State {
                 self.esports_matches(*instance).len(),
             ),
             Target::Poster(index) => (BlockKind::Premieres, *index, self.feeds.premieres.len()),
+            Target::WidgetItem(slot, index) => (
+                BlockKind::Widget(*slot),
+                *index,
+                self.widgets
+                    .slot(*slot)
+                    .and_then(|s| s.document.as_ref())
+                    .map_or(0, |d| d.items.len()),
+            ),
             Target::Input(id) => {
                 let inputs = self.home_inputs();
                 let index = inputs.iter().position(|input| &input.id == id)?;
@@ -623,6 +680,7 @@ impl State {
         Some(match target {
             Target::Match(instance, _) => Target::Match(*instance, index),
             Target::Poster(_) => Target::Poster(index),
+            Target::WidgetItem(slot, _) => Target::WidgetItem(*slot, index),
             Target::Input(_) => Target::Input(self.home_inputs().get(index)?.id.clone()),
             _ => return None,
         })
@@ -767,6 +825,7 @@ impl State {
             Target::Block(kind) => Some(*kind),
             Target::Poster(_) => Some(BlockKind::Premieres),
             Target::Match(instance, _) => Some(BlockKind::Esports(*instance)),
+            Target::WidgetItem(slot, _) => Some(BlockKind::Widget(*slot)),
             _ => None,
         }
     }
@@ -813,7 +872,7 @@ impl State {
             Direction::Down => (0, 1),
         };
         let columns = i16::from(crate::home_grid::COLUMNS);
-        let ((min_w, min_h), (max_w, max_h)) = edit.kind.limits();
+        let ((min_w, min_h), (max_w, max_h)) = self.block_limits(edit.kind);
         if edit.resize {
             let max_w = i16::from(max_w).min(columns - i16::from(block.x));
             block.w = (i16::from(block.w) + dx).clamp(i16::from(min_w), max_w) as u8;
@@ -1102,7 +1161,7 @@ impl State {
         }
     }
 
-    fn close_subpage(&mut self) {
+    pub(crate) fn close_subpage(&mut self) {
         if self.subpage == Some(Subpage::WeatherLocation) {
             self.weather.cancel_search();
         }
@@ -1130,6 +1189,11 @@ impl State {
             Some(Subpage::EsportsGames(instance)) => {
                 self.subpage = Some(Subpage::Esports(instance));
                 Target::EsportsGames
+            }
+            Some(Subpage::Widget(_)) => Target::Sidebar(0),
+            Some(Subpage::WidgetOptions(slot, setting)) => {
+                self.subpage = Some(Subpage::Widget(slot));
+                Target::WidgetSetting(self.widget_row_of(slot, setting))
             }
             Some(Subpage::HomeTakeover) => Target::Setting(8),
             None => Target::Sidebar(self.section),
@@ -1242,6 +1306,9 @@ impl State {
                     Some(Subpage::Appearance) => UiSize::ALL.len(),
                     Some(Subpage::Theme) => crate::themes::THEMES.len(),
                     Some(Subpage::EsportsGames(_)) => crate::feeds::GAMES.len(),
+                    Some(Subpage::WidgetOptions(slot, setting)) => {
+                        self.widget_options(slot, setting).len().max(1)
+                    }
                     _ => 3,
                 };
                 match direction {
@@ -1314,6 +1381,7 @@ impl State {
                     | Target::EsportsPhone
                     | Target::EsportsGames
                     | Target::EsportsMajor
+                    | Target::WidgetSetting(_)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -1640,6 +1708,18 @@ impl State {
                 self.dirty = true;
                 return;
             }
+            if self.keyboard_field == TextField::Widget {
+                let limit = self.widget_text_limit();
+                let draft = &mut self.widget_text_draft;
+                let length = draft.chars().count();
+                draft.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .take(limit.saturating_sub(length)),
+                );
+                self.dirty = true;
+                return;
+            }
             if self.keyboard_field == TextField::ApiKey {
                 let key = &mut self.api_key_draft;
                 key.extend(
@@ -1682,6 +1762,8 @@ impl State {
                 self.input_name.pop();
             } else if self.keyboard_field == TextField::ApiKey {
                 self.api_key_draft.pop();
+            } else if self.keyboard_field == TextField::Widget {
+                self.widget_text_draft.pop();
             } else {
                 self.query.pop();
             }
@@ -1718,6 +1800,9 @@ impl State {
                 return vec![Effect::Save];
             }
             return vec![];
+        }
+        if self.keyboard_field == TextField::Widget {
+            return self.commit_widget_text();
         }
         if self.keyboard_field == TextField::ApiKey {
             let key = std::mem::take(&mut self.api_key_draft);
@@ -1774,6 +1859,8 @@ impl State {
             self.input_name = query;
         } else if self.keyboard_field == TextField::ApiKey {
             self.api_key_draft = query;
+        } else if self.keyboard_field == TextField::Widget {
+            self.widget_text_draft = query;
         } else {
             self.query = query;
             self.scroll = 0.;
@@ -1787,6 +1874,7 @@ impl State {
             TextField::Name => &self.greeting_name_draft,
             TextField::InputName => &self.input_name,
             TextField::ApiKey => &self.api_key_draft,
+            TextField::Widget => &self.widget_text_draft,
             TextField::Apps => &self.query,
         }
     }
@@ -1794,9 +1882,19 @@ impl State {
     /// A key sent from the phone page: saved, and the dialog closes.
     pub fn phone_key_received(&mut self, key: String) -> Vec<Effect> {
         self.phone_key = None;
+        let mut for_widget = false;
         if let Some(Overlay::PhoneKey { restore }) = self.overlay.take() {
+            for_widget = matches!(restore, Target::WidgetSetting(_));
             self.focus = restore;
             self.panel_started = None;
+        }
+        if for_widget {
+            let language = self.preferences.language;
+            let label = self.widget_editing_label();
+            if self.widget_secret_from_phone(key) {
+                self.notify(language.format("widgetSecretSaved", &[("secret", &label)]));
+            }
+            return vec![];
         }
         self.preferences.esports_key = key;
         self.notify(self.preferences.language.t("phoneKeySaved"));
@@ -1827,6 +1925,9 @@ impl State {
         if field == TextField::ApiKey {
             self.api_key_draft.clear();
         }
+        if field == TextField::Widget {
+            self.widget_text_draft.clear();
+        }
         if cfg!(all(
             feature = "webos",
             target_os = "linux",
@@ -1838,6 +1939,7 @@ impl State {
                 TextField::Name => Target::GreetingName,
                 TextField::InputName => Target::InputRename,
                 TextField::ApiKey => Target::EsportsKey,
+                TextField::Widget => self.keyboard_return(),
                 TextField::Apps => Target::Search,
             };
             self.panel_started = None;
@@ -1867,6 +1969,7 @@ impl State {
             TextField::Name => Target::GreetingName,
             TextField::InputName => Target::InputRename,
             TextField::ApiKey => Target::EsportsKey,
+            TextField::Widget => self.widget_editing_target(),
             TextField::Apps => Target::Search,
         }
     }
@@ -2029,12 +2132,19 @@ impl State {
                             self.open(2);
                             self.open_esports_settings(instance);
                         }
+                        if let crate::home_grid::BlockKind::Widget(slot) = kind {
+                            self.open(2);
+                            self.open_widget_settings(slot);
+                        }
                         return vec![];
                     }
                     Some(BlockAction::Remove) => {
                         self.preferences.home_layout.retain(|b| b.kind != kind);
                         if let crate::home_grid::BlockKind::Esports(n) = kind {
                             self.preferences.esports.remove(&n);
+                        }
+                        if let crate::home_grid::BlockKind::Widget(slot) = kind {
+                            self.remove_widget_block(slot);
                         }
                         self.focus = self.first_content();
                         return vec![Effect::Save];
@@ -2074,6 +2184,10 @@ impl State {
                     vec![Effect::Rosters(game, missing)]
                 };
             }
+            Target::WidgetItem(slot, index) => return self.open_widget_dialog(slot, index),
+            Target::WidgetSetting(row) => return self.activate_widget_setting(row),
+            Target::StoreEntry(index) => return self.open_store_entry(index),
+            Target::StoreAction(index) => return self.store_action(index),
             Target::EsportsKey => self.open_keyboard(TextField::ApiKey),
             Target::EsportsPhone => {
                 self.overlay = Some(Overlay::PhoneKey {
@@ -2161,8 +2275,20 @@ impl State {
                 };
                 self.panel_started = None;
                 self.focus = restore;
-                let Some(kind) = self.missing_blocks().get(index).copied() else {
-                    return vec![];
+                let kind = match self.add_choices().get(index).cloned() {
+                    Some(AddChoice::Kind(kind)) => kind,
+                    Some(AddChoice::Widget(id)) => {
+                        return if self.add_widget(&id).is_ok() {
+                            vec![Effect::Save]
+                        } else {
+                            vec![]
+                        };
+                    }
+                    Some(AddChoice::Store) => {
+                        self.open_store(self.focus.clone());
+                        return vec![];
+                    }
+                    None => return vec![],
                 };
                 let mut blocks = self.home_blocks();
                 let (w, h) = kind.default_size();
@@ -2316,6 +2442,10 @@ impl State {
                         }
                         return vec![Effect::Save];
                     }
+                    // A store widget's options: a checklist stays open, a choice closes.
+                    Some(Subpage::WidgetOptions(slot, setting)) => {
+                        return self.choose_widget_option(slot, setting, index);
+                    }
                     // A theme stays open too: its wallpaper shows behind the list at once.
                     Some(Subpage::Theme) => {
                         let theme =
@@ -2354,7 +2484,8 @@ impl State {
                         | Subpage::Greeting
                         | Subpage::AppNames
                         | Subpage::Clock
-                        | Subpage::Esports(_),
+                        | Subpage::Esports(_)
+                        | Subpage::Widget(_),
                     ) => {
                         return vec![];
                     }
@@ -2440,6 +2571,7 @@ impl State {
                     TextField::Name => self.greeting_name_draft.clear(),
                     TextField::InputName => self.input_name.clear(),
                     TextField::ApiKey => self.api_key_draft.clear(),
+                    TextField::Widget => self.widget_text_draft.clear(),
                     TextField::Apps => self.query.clear(),
                 },
                 "Done" => {
@@ -2476,13 +2608,19 @@ impl State {
                     self.recents.closing_focus = None;
                 }
             }
+            if let Overlay::StoreEntry { id, restore } = overlay {
+                self.back_to_store(&id, restore);
+                return vec![];
+            }
             if let Overlay::Options { restore, .. }
             | Overlay::Recents { restore }
             | Overlay::Block { restore, .. }
             | Overlay::AddBlock { restore }
             | Overlay::Poster { restore, .. }
             | Overlay::Match { restore, .. }
-            | Overlay::PhoneKey { restore } = overlay
+            | Overlay::PhoneKey { restore }
+            | Overlay::WidgetDialog { restore, .. }
+            | Overlay::Store { restore } = overlay
             {
                 self.focus = restore;
                 self.recents.pending = None;

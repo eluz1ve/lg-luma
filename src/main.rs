@@ -35,9 +35,15 @@ mod weather_service;
 #[cfg(all(feature = "webos", any(target_os = "linux", test)))]
 #[path = "webos-compat.rs"]
 mod webos_compat;
+mod widget_state;
+mod widget_store;
+mod widget_worker;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "widget-tests.rs"]
+mod widget_tests;
 
 use platform::{Platform, Request, Response};
 use raster::Size;
@@ -72,6 +78,13 @@ struct Options {
     profile_frames: Option<usize>,
     weather_test_server: Option<String>,
     test_extra_apps: usize,
+    /// Desktop development: another catalog (an https URL or a folder) and its key.
+    widget_catalog: Option<String>,
+    widget_catalog_key: Option<String>,
+    /// Desktop development: a widget's source folder, installed as it is.
+    widget_dev: Option<PathBuf>,
+    /// Desktop development: sample replies instead of the network, for the widget in development.
+    widget_fixtures: Option<PathBuf>,
 }
 
 impl Options {
@@ -135,6 +148,10 @@ impl Options {
                 }
                 "--diagnostics" => result.diagnostics = Some(value.into()),
                 "--weather-test-server" => result.weather_test_server = Some(value),
+                "--widget-catalog" => result.widget_catalog = Some(value),
+                "--widget-catalog-key" => result.widget_catalog_key = Some(value),
+                "--widget-dev" => result.widget_dev = Some(value.into()),
+                "--widget-fixtures" => result.widget_fixtures = Some(value.into()),
                 "--test-extra-apps" => {
                     result.test_extra_apps = value
                         .parse::<usize>()
@@ -407,6 +424,10 @@ fn script(
 }
 
 fn main() {
+    // A store widget's transform, in a limited child process (docs/widgets.md §3.5).
+    if std::env::args().nth(1).as_deref() == Some(widget_worker::TRANSFORM_FLAG) {
+        luma_widgets::sandbox::child_main();
+    }
     if let Err(error) = run() {
         eprintln!("Luma native: {error}");
         std::process::exit(1);
@@ -623,6 +644,32 @@ fn run() -> Result<(), String> {
     }
     if webos && options.weather_test_server.is_some() {
         return Err("Weather test servers are only available in desktop builds".into());
+    }
+    if webos
+        && (options.widget_catalog.is_some()
+            || options.widget_catalog_key.is_some()
+            || options.widget_dev.is_some()
+            || options.widget_fixtures.is_some())
+    {
+        return Err("Widget development options are only available in desktop builds".into());
+    }
+    state.widgets.store =
+        widget_store::Store::open(&preferences_path, &state.preferences.widgets.installed);
+    if let Some(dir) = &options.widget_dev {
+        let (manifest, bytes) = luma_widgets::tree::load(dir).map_err(|e| e.0)?;
+        let id = manifest.id.clone();
+        state.widget_installed(manifest, &bytes)?;
+        let shown = state
+            .preferences
+            .widgets
+            .slots
+            .values()
+            .any(|s| s.widget == id);
+        if !shown {
+            state.add_widget(&id)?;
+        }
+        storage::save(&preferences_path, &state.preferences)?;
+        eprintln!("Luma widget {id}: from {}", dir.display());
     }
     let weather_cache = weather_service::cache_path(&preferences_path);
     state.weather.cache = weather_service::load_cache(&weather_cache);
@@ -868,6 +915,25 @@ fn run() -> Result<(), String> {
     let mut last_frame = Instant::now();
     // Home widgets' data: fetched only while their blocks are on a visible Home.
     let feeds = feeds::Feeds::new();
+    // Store widgets: the catalog, installs and refreshes, with transforms in child processes.
+    let widgets = widget_worker::Worker::new(widget_worker::Config {
+        catalog: match &options.widget_catalog {
+            Some(source) if source.starts_with("https://") => {
+                widget_worker::CatalogSource::Url(format!("{}/", source.trim_end_matches('/')))
+            }
+            Some(folder) => widget_worker::CatalogSource::Dir(folder.into()),
+            None => widget_worker::CatalogSource::Url(widget_store::CATALOG_URL.into()),
+        },
+        keys: match &options.widget_catalog_key {
+            Some(key) => vec![luma_widgets::catalog::public_key(key).map_err(|e| e.0)?],
+            None => widget_store::CATALOG_KEYS
+                .iter()
+                .filter_map(|key| luma_widgets::catalog::public_key(key).ok())
+                .collect(),
+        },
+        exe: std::env::current_exe().map_err(|e| e.to_string())?,
+        fixtures: options.widget_fixtures.clone(),
+    });
     // The one-time phone page for a long key, while its dialog is open.
     let mut phone_server: Option<phone_key::PhoneKey> = None;
     let mut crypto_fetched: Option<Instant> = None;
@@ -972,6 +1038,12 @@ fn run() -> Result<(), String> {
                         feeds.send(feeds::FeedRequest::Image(url));
                     }
                 }
+                // Store widgets' images, already limited to their widgets' origins.
+                for (url, poster) in state.wanted_widget_images() {
+                    if state.feeds.requested.insert(url.clone()) {
+                        feeds.send(feeds::FeedRequest::WidgetImage { url, poster });
+                    }
+                }
             }
             for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
                 // The shared feed brings lineups along.
@@ -984,18 +1056,51 @@ fn run() -> Result<(), String> {
                 }
             }
         }
+        for request in
+            state.widget_requests(Instant::now(), visible && state.page == state::Page::Home)
+        {
+            widgets.send(request);
+        }
+        while let Ok(response) = widgets.receiver.try_recv() {
+            let pending = state.widget_response(response);
+            running &= effects(
+                pending,
+                &mut state,
+                &platform,
+                &preferences_path,
+                &weather_service,
+            );
+        }
         if std::mem::take(&mut state.phone_key_start) {
             phone_server = None;
             let language = state.preferences.language;
-            let texts = phone_key::PageTexts {
-                title: language.t("phonePageTitle").into(),
-                steps: ["phonePageStep1", "phonePageStep2", "phonePageStep3"]
-                    .map(|key| language.t(key).to_owned())
-                    .to_vec(),
-                field: language.t("esportsKey").into(),
-                send: language.t("phonePageSend").into(),
-                saved: language.t("phonePageSaved").into(),
-                invalid: language.t("phonePageInvalid").into(),
+            let texts = match state.phone_widget_secret() {
+                // A store widget's secret: its label, its hint and its own rule.
+                Some((label, hint, setting)) => phone_key::PageTexts {
+                    title: language.format("widgetPhonePageTitle", &[("secret", &label)]),
+                    steps: vec![
+                        hint.unwrap_or_else(|| {
+                            language.format("widgetPhoneStep3", &[("secret", &label)])
+                        }),
+                        language.t("phonePageStep3").to_owned(),
+                    ],
+                    send: language.t("phonePageSend").into(),
+                    saved: language.t("phonePageSaved").into(),
+                    invalid: language.format("widgetSecretInvalid", &[("secret", &label)]),
+                    field: label,
+                    accepts: Some(std::sync::Arc::new(move |key: &str| setting.accepts(key))),
+                },
+                None => phone_key::PageTexts {
+                    title: language.t("phonePageTitle").into(),
+                    steps: ["phonePageStep1", "phonePageStep2", "phonePageStep3"]
+                        .map(|key| language.t(key).to_owned())
+                        .to_vec(),
+                    field: language.t("esportsKey").into(),
+                    send: language.t("phonePageSend").into(),
+                    saved: language.t("phonePageSaved").into(),
+                    invalid: language.t("phonePageInvalid").into(),
+                    accepts: None,
+                },
             };
             match phone_key::PhoneKey::start(texts) {
                 Ok(server) => {

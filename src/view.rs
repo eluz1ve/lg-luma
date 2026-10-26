@@ -17,6 +17,9 @@ use std::{
 };
 use time::OffsetDateTime;
 
+#[path = "widget-view.rs"]
+mod widget_view;
+
 const MAIN_TOP: f32 = 108.8;
 const FACE_HEIGHT: f32 = 154.4;
 const GRID_PITCH: f32 = 296.4;
@@ -394,7 +397,10 @@ pub fn scene_with_pill(
         | Overlay::AddBlock { .. }
         | Overlay::Poster { .. }
         | Overlay::Match { .. }
-        | Overlay::PhoneKey { .. }),
+        | Overlay::PhoneKey { .. }
+        | Overlay::WidgetDialog { .. }
+        | Overlay::Store { .. }
+        | Overlay::StoreEntry { .. }),
     ) = &state.overlay
     {
         out.controls.clear();
@@ -425,16 +431,24 @@ pub fn scene_with_pill(
                     &mut out,
                     state,
                     assets,
-                    language.t(kind.name_key()),
+                    &state.block_name(*kind),
                     &rows,
                     Target::BlockAction,
                 );
             }
             Overlay::AddBlock { .. } => {
                 let rows: Vec<String> = state
-                    .missing_blocks()
+                    .add_choices()
                     .into_iter()
-                    .map(|kind| language.t(kind.name_key()).to_owned())
+                    .map(|choice| match choice {
+                        crate::state::AddChoice::Kind(kind) => state.block_name(kind),
+                        crate::state::AddChoice::Widget(id) => state
+                            .widgets
+                            .store
+                            .manifest(&id)
+                            .map_or(id, |m| m.name.get(language.code()).to_owned()),
+                        crate::state::AddChoice::Store => language.t("widgetStore").to_owned(),
+                    })
                     .collect();
                 menu(
                     &mut out,
@@ -449,6 +463,11 @@ pub fn scene_with_pill(
                 instance, index, ..
             } => match_dialog(&mut out, state, assets, *instance, *index, now),
             Overlay::PhoneKey { .. } => phone_key_dialog(&mut out, state, assets),
+            Overlay::WidgetDialog { slot, id, .. } => {
+                widget_view::dialog(&mut out, state, assets, *slot, id, now)
+            }
+            Overlay::Store { .. } => widget_view::store(&mut out, state, assets),
+            Overlay::StoreEntry { id, .. } => widget_view::store_entry(&mut out, state, assets, id),
             Overlay::Poster { index, .. } => {
                 if let Some(premiere) = state.feeds.premieres.get(*index) {
                     let mut rows: Vec<String> = state
@@ -958,6 +977,9 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             BlockKind::Esports(instance) => {
                 esports_block(out, state, assets, theme, instance, block, rect, now)
             }
+            BlockKind::Widget(slot) => {
+                widget_view::row(out, state, assets, theme, slot, block, rect, now)
+            }
         }
         // Blocks without controls of their own are still focusable, to edit them.
         if out.controls.len() == controls {
@@ -980,12 +1002,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
                 if active { 4. } else { 1.5 },
                 color,
             );
-            let label = format!(
-                "{} · {}×{}",
-                state.preferences.language.t(block.kind.name_key()),
-                block.w,
-                block.h
-            );
+            let label = format!("{} · {}×{}", state.block_name(block.kind), block.w, block.h);
             let style = text(16., 500, 0.);
             let width = assets.width(&label, style) + 24.;
             let tag = Rect::new(rect.x + rect.w - width - 8., rect.y + 8., width, 30.);
@@ -2490,6 +2507,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 )),
                 _ => None,
             };
+            let mut widget_title: Option<String> = None;
             let sub = match &state.subpage {
                 Some(Subpage::AppNames) => language.t("appNames"),
                 Some(Subpage::Greeting) => language.t("greeting"),
@@ -2510,6 +2528,18 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Theme) => language.t("homeTheme"),
                 Some(Subpage::Esports(_)) => language.t("esportsWidget"),
                 Some(Subpage::EsportsGames(_)) => language.t("esportsGames"),
+                Some(Subpage::Widget(slot)) => widget_title
+                    .get_or_insert(state.block_name(crate::home_grid::BlockKind::Widget(*slot))),
+                Some(Subpage::WidgetOptions(slot, setting)) => widget_title.get_or_insert(
+                    state
+                        .slot_manifest(*slot)
+                        .and_then(|m| {
+                            m.settings
+                                .get(*setting)
+                                .map(|s| s.label.get(language.code()).to_owned())
+                        })
+                        .unwrap_or_default(),
+                ),
                 Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
                 None => "",
             };
@@ -2575,6 +2605,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 | Subpage::AppNames
                 | Subpage::Clock
                 | Subpage::Esports(_)
+                | Subpage::Widget(_)
         ) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
@@ -2582,6 +2613,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
                 Subpage::Esports(instance) => esports_settings(out, state, assets, *instance),
+                Subpage::Widget(slot) => widget_view::settings(out, state, assets, *slot),
                 _ => unreachable!(),
             }
             if let Some(opened) = state.panel_started {
@@ -2589,7 +2621,15 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             }
             return;
         }
+        let widget_options: Vec<(String, bool)> = match subpage {
+            Subpage::WidgetOptions(slot, setting) => state.widget_options(*slot, *setting),
+            _ => vec![],
+        };
         let options: Vec<(&str, Option<&str>, bool)> = match subpage {
+            Subpage::WidgetOptions(..) => widget_options
+                .iter()
+                .map(|(label, chosen)| (label.as_str(), None, *chosen))
+                .collect(),
             Subpage::ClockFormat => vec![
                 (language.t("hour12"), None, !state.preferences.hour_24),
                 (language.t("hour24"), None, state.preferences.hour_24),
@@ -2667,7 +2707,8 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             | Subpage::Greeting
             | Subpage::AppNames
             | Subpage::Clock
-            | Subpage::Esports(_) => unreachable!(),
+            | Subpage::Esports(_)
+            | Subpage::Widget(_) => unreachable!(),
             Subpage::Language => Language::ALL
                 .into_iter()
                 .map(|option| (option.name(), None, option == language))
@@ -3482,6 +3523,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str) {
 
 fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
+    let keyboard_title = state.widget_editing_label();
     let panel = Rect::new(350., 290., 1220., 530.);
     out.modal = Some(panel);
     out.shadow(panel, 27.2, 90., 20., 0.45);
@@ -3498,6 +3540,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             TextField::Name => language.t("greetingName"),
             TextField::InputName => language.t("inputName"),
             TextField::ApiKey => language.t("esportsKey"),
+            TextField::Widget => keyboard_title.as_str(),
             TextField::Apps => language.t("findApp"),
         },
         Rect::new(389., 324., 1000., 44.),

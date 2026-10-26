@@ -22,6 +22,8 @@ pub enum BlockKind {
     Premieres,
     /// An esports widget; several can be on Home, told apart by their instance number.
     Esports(u8),
+    /// A widget from the store (docs/widgets.md), by its slot in `WidgetPrefs::slots`.
+    Widget(u8),
 }
 
 impl BlockKind {
@@ -47,6 +49,8 @@ impl BlockKind {
             Self::Crypto => ((3, 1), (6, 2)),
             Self::Premieres => ((6, 2), (12, 3)),
             Self::Esports(_) => ((6, 2), (12, 3)),
+            // A store widget's own limits apply when it is added and resized.
+            Self::Widget(_) => ((4, 1), (12, 3)),
         }
     }
 
@@ -58,7 +62,7 @@ impl BlockKind {
             Self::Inputs => (12, 1),
             Self::Crypto => (4, 1),
             Self::Premieres => (12, 2),
-            Self::Esports(_) => (6, 2),
+            Self::Esports(_) | Self::Widget(_) => (6, 2),
         }
     }
 
@@ -77,6 +81,7 @@ impl BlockKind {
             Self::Crypto => "cryptoWidget",
             Self::Premieres => "premieresWidget",
             Self::Esports(_) => "esportsWidget",
+            Self::Widget(_) => "widgetStoreWidget",
         }
     }
 }

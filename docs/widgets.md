@@ -683,10 +683,13 @@ widgets/
     live.jq
     library.jq
     fixtures/
-      shared/feed.csgo.json            a sample reply per step (and per item)
-      live/running.csgo.json …
-      expected/shared.json             the documents the fixtures must produce
-      expected/live.json
+      shared/context.json              a case: settings, secrets set, language, time
+      shared/index.json                which file answers which exact URL
+      shared/csgo.json …               sample replies
+      live/…
+    expected/
+      shared.json                      the document each case must produce
+      live.json
     preview.png          a desktop screenshot of the row and the dialog
     README.md            what it shows, where the data comes from, its licence and credits
   _template/             a minimal widget to copy
@@ -703,16 +706,19 @@ the TV:
 
 ```sh
 luma-widget check widgets/esports          # schema, limits, origins, templates, jq without forbidden filters
-luma-widget run widgets/esports live       # run a source on its fixtures, print the document
-luma-widget test widgets/esports           # every source's fixtures against expected/
-luma-widget pack widgets out               # inline .jq files, hash, write manifests/ and index.json
-luma-widget sign out --key <file>          # publish workflow only
+luma-widget run widgets/esports live       # run a fixture case (or --network), print the document
+luma-widget test widgets/esports           # every case against expected/
+luma-widget eval '<jq>' '<json>'           # try an expression with Luma's jq
+luma-widget pack widgets out --sequence N  # inline .jq files, hash, write manifests/ and index.json
+luma-widget sign out                       # publish workflow only, key in $CATALOG_SIGNING_KEY
+luma-widget verify out --key <public key>  # what Luma checks, before deploying
+luma-widget keygen --secret-out <file>     # a new catalog key; prints the public half
 ```
 
 **Seeing it.** `luma --widget-dev widgets/esports` on the desktop shows the widget from its
 folder as if installed, with the real templates and real requests to its origins, so an author
-sees exactly what a TV will draw. `--widget-dev … --fixtures` draws the fixtures instead, with no
-network.
+sees exactly what a TV will draw. `--widget-fixtures widgets/esports/fixtures/live` answers its
+requests from a fixture case instead, with no network.
 
 **Submitting.** Fork the repository, add `widgets/<id>/`, open a pull request. The check workflow
 validates it and runs its fixtures; it needs no secrets, so it runs safely on forks.

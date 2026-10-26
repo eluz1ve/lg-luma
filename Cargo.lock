@@ -532,6 +532,7 @@ dependencies = [
  "image",
  "libc",
  "luma-vector-geometry",
+ "luma-widgets",
  "owned_ttf_parser",
  "qrcode",
  "sdl2",

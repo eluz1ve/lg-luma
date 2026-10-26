@@ -16,7 +16,10 @@ use std::{
 
 const PORTS: std::ops::RangeInclusive<u16> = 8765..=8775;
 const REQUEST_LIMIT: usize = 8 * 1024;
-const KEY_LIMIT: usize = 128;
+const KEY_LIMIT: usize = 256;
+
+/// A rule a key must pass, e.g. a store widget's pattern.
+pub type Accepts = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// The phone page's words, in Luma's language.
 #[derive(Clone)]
@@ -27,6 +30,9 @@ pub struct PageTexts {
     pub send: String,
     pub saved: String,
     pub invalid: String,
+    /// A store widget's own rule for its secret; without one, a key of letters, digits,
+    /// `-`, `_` and `.` up to 128 characters.
+    pub accepts: Option<Accepts>,
 }
 
 /// A running one-time server; dropping it stops the server.
@@ -179,9 +185,15 @@ pub fn respond(request: &[u8], token: &str, texts: &PageTexts) -> (Vec<u8>, Opti
                 .unwrap_or_default();
             let valid = !key.is_empty()
                 && key.len() <= KEY_LIMIT
-                && key
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+                && match &texts.accepts {
+                    Some(accepts) => accepts(&key),
+                    None => {
+                        key.len() <= 128
+                            && key
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                    }
+                };
             if valid {
                 (http("200 OK", &page(texts, Some(&texts.saved))), Some(key))
             } else if key.is_empty() {

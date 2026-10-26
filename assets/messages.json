@@ -2284,5 +2284,347 @@
     "pt": "Dados de {time}",
     "it": "Dati delle {time}",
     "ru": "Данные на {time}"
+  },
+  "widgetStoreWidget": {
+    "en": "Store widget",
+    "de": "Store-Widget",
+    "es": "Widget de la tienda",
+    "zh": "商店小组件",
+    "pt": "Widget da loja",
+    "it": "Widget dello store",
+    "ru": "Виджет из магазина"
+  },
+  "widgetStore": {
+    "en": "Widget store…",
+    "de": "Widget-Store …",
+    "es": "Tienda de widgets…",
+    "zh": "小组件商店…",
+    "pt": "Loja de widgets…",
+    "it": "Store dei widget…",
+    "ru": "Магазин виджетов…"
+  },
+  "widgetStoreTitle": {
+    "en": "Widget store",
+    "de": "Widget-Store",
+    "es": "Tienda de widgets",
+    "zh": "小组件商店",
+    "pt": "Loja de widgets",
+    "it": "Store dei widget",
+    "ru": "Магазин виджетов"
+  },
+  "widgetStoreHint": {
+    "en": "Widgets from Luma's signed catalog. Each shows what it connects to before you install it.",
+    "de": "Widgets aus Lumas signiertem Katalog. Vor der Installation siehst du, womit sich jedes verbindet.",
+    "es": "Widgets del catálogo firmado de Luma. Antes de instalar, cada uno muestra a qué se conecta.",
+    "zh": "来自 Luma 签名目录的小组件。安装前会显示每个小组件连接的地址。",
+    "pt": "Widgets do catálogo assinado do Luma. Antes de instalar, cada um mostra a que se conecta.",
+    "it": "Widget dal catalogo firmato di Luma. Prima dell'installazione ognuno mostra a cosa si collega.",
+    "ru": "Виджеты из подписанного каталога Luma. Перед установкой каждый показывает, к чему подключается."
+  },
+  "widgetStoreLoading": {
+    "en": "Loading the catalog…",
+    "de": "Katalog wird geladen …",
+    "es": "Cargando el catálogo…",
+    "zh": "正在加载目录…",
+    "pt": "Carregando o catálogo…",
+    "it": "Caricamento del catalogo…",
+    "ru": "Загружаем каталог…"
+  },
+  "widgetStoreUnavailable": {
+    "en": "The catalog can't be reached right now.",
+    "de": "Der Katalog ist gerade nicht erreichbar.",
+    "es": "Ahora no se puede acceder al catálogo.",
+    "zh": "目前无法访问目录。",
+    "pt": "O catálogo não está acessível no momento.",
+    "it": "Il catalogo non è raggiungibile ora.",
+    "ru": "Каталог сейчас недоступен."
+  },
+  "widgetStoreUnverified": {
+    "en": "The widget catalog could not be verified, so nothing can be installed.",
+    "de": "Der Widget-Katalog konnte nicht verifiziert werden, daher lässt sich nichts installieren.",
+    "es": "No se pudo verificar el catálogo de widgets, así que no se puede instalar nada.",
+    "zh": "无法验证小组件目录，因此无法安装任何内容。",
+    "pt": "Não foi possível verificar o catálogo de widgets, então nada pode ser instalado.",
+    "it": "Impossibile verificare il catalogo dei widget, quindi non si può installare nulla.",
+    "ru": "Не удалось проверить подпись каталога, поэтому установка недоступна."
+  },
+  "widgetStoreEmpty": {
+    "en": "No widgets in the catalog yet.",
+    "de": "Noch keine Widgets im Katalog.",
+    "es": "Aún no hay widgets en el catálogo.",
+    "zh": "目录中还没有小组件。",
+    "pt": "Ainda não há widgets no catálogo.",
+    "it": "Nessun widget nel catalogo per ora.",
+    "ru": "В каталоге пока нет виджетов."
+  },
+  "widgetInstalled": {
+    "en": "Installed",
+    "de": "Installiert",
+    "es": "Instalado",
+    "zh": "已安装",
+    "pt": "Instalado",
+    "it": "Installato",
+    "ru": "Установлен"
+  },
+  "widgetUpdateAvailable": {
+    "en": "Update",
+    "de": "Update",
+    "es": "Actualización",
+    "zh": "可更新",
+    "pt": "Atualização",
+    "it": "Aggiornamento",
+    "ru": "Обновление"
+  },
+  "widgetNeedsLuma": {
+    "en": "Needs Luma {version}",
+    "de": "Erfordert Luma {version}",
+    "es": "Requiere Luma {version}",
+    "zh": "需要 Luma {version}",
+    "pt": "Requer Luma {version}",
+    "it": "Richiede Luma {version}",
+    "ru": "Нужна Luma {version}"
+  },
+  "widgetNoLonger": {
+    "en": "No longer in the catalog",
+    "de": "Nicht mehr im Katalog",
+    "es": "Ya no está en el catálogo",
+    "zh": "已不在目录中",
+    "pt": "Não está mais no catálogo",
+    "it": "Non più nel catalogo",
+    "ru": "Больше нет в каталоге"
+  },
+  "widgetInstall": {
+    "en": "Install and add to Home",
+    "de": "Installieren und zum Home hinzufügen",
+    "es": "Instalar y añadir a Inicio",
+    "zh": "安装并添加到主页",
+    "pt": "Instalar e adicionar à Início",
+    "it": "Installa e aggiungi alla Home",
+    "ru": "Установить и добавить на главную"
+  },
+  "widgetAdd": {
+    "en": "Add to Home",
+    "de": "Zum Home hinzufügen",
+    "es": "Añadir a Inicio",
+    "zh": "添加到主页",
+    "pt": "Adicionar à Início",
+    "it": "Aggiungi alla Home",
+    "ru": "Добавить на главную"
+  },
+  "widgetUpdate": {
+    "en": "Update",
+    "de": "Aktualisieren",
+    "es": "Actualizar",
+    "zh": "更新",
+    "pt": "Atualizar",
+    "it": "Aggiorna",
+    "ru": "Обновить"
+  },
+  "widgetRemove": {
+    "en": "Remove",
+    "de": "Entfernen",
+    "es": "Eliminar",
+    "zh": "移除",
+    "pt": "Remover",
+    "it": "Rimuovi",
+    "ru": "Удалить"
+  },
+  "widgetInstalling": {
+    "en": "Installing…",
+    "de": "Wird installiert …",
+    "es": "Instalando…",
+    "zh": "正在安装…",
+    "pt": "Instalando…",
+    "it": "Installazione…",
+    "ru": "Устанавливается…"
+  },
+  "widgetBy": {
+    "en": "{authors} · version {version}",
+    "de": "{authors} · Version {version}",
+    "es": "{authors} · versión {version}",
+    "zh": "{authors} · 版本 {version}",
+    "pt": "{authors} · versão {version}",
+    "it": "{authors} · versione {version}",
+    "ru": "{authors} · версия {version}"
+  },
+  "widgetConnectsTo": {
+    "en": "Connects to",
+    "de": "Verbindet sich mit",
+    "es": "Se conecta a",
+    "zh": "连接到",
+    "pt": "Conecta-se a",
+    "it": "Si collega a",
+    "ru": "Подключается к"
+  },
+  "widgetSendsSecret": {
+    "en": "Your {secret} is sent only to {origins}.",
+    "de": "Dein {secret} wird nur an {origins} gesendet.",
+    "es": "Tu {secret} solo se envía a {origins}.",
+    "zh": "你的{secret}只会发送到 {origins}。",
+    "pt": "Sua {secret} é enviada só para {origins}.",
+    "it": "{secret} viene inviata solo a {origins}.",
+    "ru": "{secret} отправляется только на {origins}."
+  },
+  "widgetConsent": {
+    "en": "This update also connects to {origins}. Update to accept.",
+    "de": "Dieses Update verbindet sich auch mit {origins}. Aktualisiere, um zuzustimmen.",
+    "es": "Esta actualización también se conecta a {origins}. Actualiza para aceptarlo.",
+    "zh": "此更新还会连接到 {origins}。更新即表示同意。",
+    "pt": "Esta atualização também se conecta a {origins}. Atualize para aceitar.",
+    "it": "Questo aggiornamento si collega anche a {origins}. Aggiorna per accettare.",
+    "ru": "Обновление также подключается к {origins}. Обновите, чтобы согласиться."
+  },
+  "widgetInstallFailed": {
+    "en": "{name} could not be installed.",
+    "de": "{name} konnte nicht installiert werden.",
+    "es": "No se pudo instalar {name}.",
+    "zh": "无法安装 {name}。",
+    "pt": "Não foi possível instalar {name}.",
+    "it": "Impossibile installare {name}.",
+    "ru": "Не удалось установить «{name}»."
+  },
+  "widgetMissing": {
+    "en": "This widget is no longer installed.",
+    "de": "Dieses Widget ist nicht mehr installiert.",
+    "es": "Este widget ya no está instalado.",
+    "zh": "此小组件已不再安装。",
+    "pt": "Este widget não está mais instalado.",
+    "it": "Questo widget non è più installato.",
+    "ru": "Этот виджет больше не установлен."
+  },
+  "widgetLoading": {
+    "en": "Loading…",
+    "de": "Wird geladen …",
+    "es": "Cargando…",
+    "zh": "正在加载…",
+    "pt": "Carregando…",
+    "it": "Caricamento…",
+    "ru": "Загрузка…"
+  },
+  "widgetUnavailable": {
+    "en": "Can't load right now",
+    "de": "Gerade nicht verfügbar",
+    "es": "No se puede cargar ahora",
+    "zh": "目前无法加载",
+    "pt": "Não foi possível carregar agora",
+    "it": "Impossibile caricare ora",
+    "ru": "Сейчас не удаётся загрузить"
+  },
+  "widgetKeyRefused": {
+    "en": "{secret} was not accepted. Check it in the widget's settings.",
+    "de": "{secret} wurde nicht akzeptiert. Prüfe ihn in den Widget-Einstellungen.",
+    "es": "No se aceptó {secret}. Revísalo en los ajustes del widget.",
+    "zh": "{secret}未被接受。请在小组件设置中检查。",
+    "pt": "{secret} não foi aceita. Verifique nas configurações do widget.",
+    "it": "{secret} non è stata accettata. Controllala nelle impostazioni del widget.",
+    "ru": "{secret} не принят. Проверьте его в настройках виджета."
+  },
+  "widgetNoSource": {
+    "en": "Enter your {secret} in the widget's settings.",
+    "de": "Gib deinen {secret} in den Widget-Einstellungen ein.",
+    "es": "Introduce tu {secret} en los ajustes del widget.",
+    "zh": "请在小组件设置中输入你的{secret}。",
+    "pt": "Insira sua {secret} nas configurações do widget.",
+    "it": "Inserisci {secret} nelle impostazioni del widget.",
+    "ru": "Укажите {secret} в настройках виджета."
+  },
+  "widgetBroken": {
+    "en": "This widget stopped working",
+    "de": "Dieses Widget funktioniert nicht mehr",
+    "es": "Este widget dejó de funcionar",
+    "zh": "此小组件已停止工作",
+    "pt": "Este widget parou de funcionar",
+    "it": "Questo widget ha smesso di funzionare",
+    "ru": "Этот виджет перестал работать"
+  },
+  "widgetEmpty": {
+    "en": "Nothing to show",
+    "de": "Nichts anzuzeigen",
+    "es": "Nada que mostrar",
+    "zh": "暂无内容",
+    "pt": "Nada para mostrar",
+    "it": "Niente da mostrare",
+    "ru": "Пока нечего показать"
+  },
+  "widgetAsOf": {
+    "en": "Data as of {time}",
+    "de": "Stand: {time}",
+    "es": "Datos de las {time}",
+    "zh": "数据截至 {time}",
+    "pt": "Dados de {time}",
+    "it": "Dati delle {time}",
+    "ru": "Данные на {time}"
+  },
+  "widgetMinutes": {
+    "en": "{number} min",
+    "de": "{number} Min.",
+    "es": "{number} min",
+    "zh": "{number} 分钟",
+    "pt": "{number} min",
+    "it": "{number} min",
+    "ru": "{number} мин"
+  },
+  "widgetNotSet": {
+    "en": "Not set",
+    "de": "Nicht gesetzt",
+    "es": "Sin definir",
+    "zh": "未设置",
+    "pt": "Não definido",
+    "it": "Non impostato",
+    "ru": "Не задано"
+  },
+  "widgetSecretPhone": {
+    "en": "Enter from your phone",
+    "de": "Vom Handy eingeben",
+    "es": "Introducir desde el móvil",
+    "zh": "用手机输入",
+    "pt": "Inserir pelo celular",
+    "it": "Inserisci dal telefono",
+    "ru": "Ввести с телефона"
+  },
+  "widgetSecretForget": {
+    "en": "Forget the {secret}",
+    "de": "{secret} vergessen",
+    "es": "Olvidar {secret}",
+    "zh": "忘记{secret}",
+    "pt": "Esquecer {secret}",
+    "it": "Dimentica {secret}",
+    "ru": "Забыть: {secret}"
+  },
+  "widgetSecretInvalid": {
+    "en": "That doesn't look like a valid {secret}.",
+    "de": "Das sieht nicht nach einem gültigen {secret} aus.",
+    "es": "No parece un {secret} válido.",
+    "zh": "这看起来不是有效的{secret}。",
+    "pt": "Isso não parece uma {secret} válida.",
+    "it": "Non sembra una {secret} valida.",
+    "ru": "Похоже, это неверный {secret}."
+  },
+  "widgetSecretSaved": {
+    "en": "{secret} saved.",
+    "de": "{secret} gespeichert.",
+    "es": "{secret} guardado.",
+    "zh": "已保存{secret}。",
+    "pt": "{secret} salva.",
+    "it": "{secret} salvata.",
+    "ru": "{secret}: сохранено."
+  },
+  "widgetPhoneStep3": {
+    "en": "Copy your {secret}.",
+    "de": "Kopiere deinen {secret}.",
+    "es": "Copia tu {secret}.",
+    "zh": "复制你的{secret}。",
+    "pt": "Copie sua {secret}.",
+    "it": "Copia {secret}.",
+    "ru": "Скопируйте {secret}."
+  },
+  "widgetPhonePageTitle": {
+    "en": "{secret} for Luma",
+    "de": "{secret} für Luma",
+    "es": "{secret} para Luma",
+    "zh": "Luma 的{secret}",
+    "pt": "{secret} para o Luma",
+    "it": "{secret} per Luma",
+    "ru": "{secret} для Luma"
   }
 }
