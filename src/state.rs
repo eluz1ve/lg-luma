@@ -2190,6 +2190,8 @@ impl State {
             Target::StoreAction(index) => return self.store_action(index),
             Target::EsportsKey => self.open_keyboard(TextField::ApiKey),
             Target::EsportsPhone => {
+                // The page is for the esports key, not a store widget's secret.
+                self.widget_editing = None;
                 self.overlay = Some(Overlay::PhoneKey {
                     restore: Target::EsportsPhone,
                 });

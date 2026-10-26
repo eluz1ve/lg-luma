@@ -859,3 +859,20 @@ fn a_secret_given_at_run_time_is_used_but_never_saved() {
         "LUMA_WIDGET_SECRET_MY_WIDGET_API_KEY"
     );
 }
+
+#[test]
+fn the_esports_phone_page_is_not_mistaken_for_a_store_widgets() {
+    let mut state = installed(&scratch("phone-switch"));
+    state.open(2);
+    state.open_widget_settings(0);
+    state.focus = crate::state::Target::WidgetSetting(2);
+    state.activate();
+    state.back();
+    // Later, the built-in esports widget's phone page.
+    state.focus = crate::state::Target::EsportsPhone;
+    state.activate();
+    assert!(state.phone_widget_secret().is_none());
+    state.phone_key_received("esports-key".into());
+    assert_eq!(state.preferences.esports_key, "esports-key");
+    assert_eq!(state.widgets.store.secret("scores", "key"), None);
+}

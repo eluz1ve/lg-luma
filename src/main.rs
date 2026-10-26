@@ -956,7 +956,11 @@ fn run() -> Result<(), String> {
                 .filter_map(|key| luma_widgets::catalog::public_key(key).ok())
                 .collect(),
         },
-        exe: std::env::current_exe().map_err(|e| e.to_string())?,
+        // Never fatal: without it, transforms fail and say so, the launcher still starts.
+        exe: std::env::current_exe().unwrap_or_else(|error| {
+            eprintln!("Luma widgets: {error}; transforms use /proc/self/exe");
+            PathBuf::from("/proc/self/exe")
+        }),
         fixtures: options.widget_fixtures.clone(),
     });
     // The one-time phone page for a long key, while its dialog is open.
