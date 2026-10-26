@@ -250,8 +250,7 @@ fn scoreboard(
     let top = rect.y + if compact { 13. } else { 18. };
     let mut x = rect.x + pad;
     if found.live {
-        live_badge(out, language, Rect::new(x, top, 52., 22.), 13.);
-        x += 52. + 12.;
+        x += badge(out, assets, language, Rect::new(x, top, 0., 22.), 13.) + 12.;
     } else {
         let status = say(&found.status);
         if !status.is_empty() {
@@ -437,10 +436,11 @@ fn media(
         }
     }
     if found.live {
-        live_badge(
+        badge(
             out,
+            assets,
             language,
-            Rect::new(poster.x + 12., poster.y + 12., 52., 22.),
+            Rect::new(poster.x + 12., poster.y + 12., 0., 22.),
             13.,
         );
     }
@@ -765,8 +765,9 @@ pub(super) fn dialog(
             .map(|line| show(line, language, now, data_time))
             .collect();
         if hero.live {
-            live_badge(
+            badge(
                 out,
+                assets,
                 language,
                 Rect::new(middle.x, rect.y + 134., middle.w, 30.),
                 15.2,
@@ -1784,4 +1785,30 @@ pub(super) fn settings(out: &mut Scene, state: &State, assets: &Assets, slot: u8
             false,
         );
     }
+}
+
+/// The red LIVE badge, as wide as the word in the TV's language: centred in `rect` when it is
+/// wider, else at its left. Returns its width.
+fn badge(out: &mut Scene, assets: &Assets, language: Language, rect: Rect, size: f32) -> f32 {
+    let label = language.t("live");
+    let style = text(size, 650, 0.06);
+    let w = (assets.width(label, style) + size * 1.4)
+        .max(size * 4.)
+        .max(52.);
+    let h = size * 1.7;
+    let x = if rect.w > w {
+        rect.x + (rect.w - w) / 2.
+    } else {
+        rect.x
+    };
+    let badge = Rect::new(x, rect.y, w, h);
+    out.shape(badge, h * 0.28, c(0xe5484d, 1.));
+    out.text(
+        label,
+        Rect::new(badge.x, badge.y + (h - size * 1.25) / 2., w, size * 1.25),
+        style,
+        WHITE,
+        true,
+    );
+    w
 }
