@@ -8,12 +8,16 @@ license = "MIT"
 description = "Data-only Luma widgets: manifests, documents, the catalog and jq transforms"
 
 [dependencies]
-regex-lite = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+base64 = "0.22"
+ed25519-compact = { version = "2.6", default-features = false, features = ["std"] }
 jaq-core = "3.1"
 jaq-json = "2.0"
 jaq-std = "3.0"
+regex-lite = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

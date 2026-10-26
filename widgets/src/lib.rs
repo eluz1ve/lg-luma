@@ -1,8 +1,12 @@
 //! Luma's store widgets as data (docs/widgets.md): manifests, the documents their transforms
 //! give, the catalog's trust checks, request chains and the jq runner.
+pub mod catalog;
 pub mod document;
+pub mod fetch;
 pub mod jq;
 pub mod manifest;
+pub mod plan;
+pub mod refresh;
 pub mod sandbox;
 
 /// Why a manifest, document, catalog or transform was refused.

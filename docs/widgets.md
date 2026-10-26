@@ -215,8 +215,9 @@ that drops an option cannot break an instance.
 Every request is a `GET` over HTTPS with Luma's existing rules for network access (as for
 weather and today's feeds in `src/feeds.rs`): rustls, no proxy, no redirects, 10 s timeout,
 bounded replies, no cookies. The URL is checked against `origins` again after substitution. The
-reply must be JSON. A refresh makes at most 16 requests after fan-out (cached replies do not
-count); a source that would make more fails with "too many requests" rather than sending some.
+reply must be JSON. A refresh may make at most 32 requests: the sum of every step's fan-out,
+checked before anything is sent, so a source that could make more fails with "too many requests"
+rather than sending some. (Esports with all eight disciplines needs four steps × eight.)
 
 Failures map to what the row shows:
 
@@ -762,7 +763,7 @@ opened, or daily).
 | Origins per widget                    | 8                                                                  |
 | Settings / strings                    | 12 / 200                                                           |
 | Sources / steps per source            | 4 / 8                                                              |
-| Requests per refresh                  | 16 (cached replies excluded)                                       |
+| Requests per refresh                  | 32, counted as the steps' fan-out before sending                   |
 | Reply                                 | 1 MiB; 4 MiB in all into one transform                             |
 | Image                                 | 2 MiB, shrunk to 160 × 160 or 300 × 450                            |
 | Refresh                               | 30 s … 1 h; back-off up to 15 min, at least 5 min on 429           |

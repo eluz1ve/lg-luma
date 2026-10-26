@@ -2,7 +2,7 @@
 //! sources. Parsing is strict: an unknown field or a broken rule is an error, so a mistake is
 //! caught when the widget is checked rather than on a TV.
 use crate::Error;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -68,6 +68,12 @@ impl Localized {
     }
 }
 
+impl Serialize for Localized {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Localized {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Self::from_value(Value::deserialize(deserializer)?, 400, "text")
@@ -93,6 +99,12 @@ impl Version {
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+impl Serialize for Version {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -160,6 +172,12 @@ impl Origin {
     /// Whether `url` is on this origin.
     pub fn allows(&self, url: &str) -> bool {
         Self::of(url).as_ref() == Some(self)
+    }
+}
+
+impl Serialize for Origin {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
     }
 }
 
