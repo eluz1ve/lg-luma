@@ -6,8 +6,8 @@ use crate::{
     model::{App, BACKGROUNDS, CATEGORIES, Input, InputMode, UiSize},
     renderer::{Color, Draw, TextStyle, WHITE},
     state::{
-        APPS_COLUMNS, BACKGROUND_SECTION, Control, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS, Overlay,
-        Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField, WEATHER_SECTION,
+        APPS_COLUMNS, BACKGROUND_SECTION, Control, HOME_TILE_PITCH, HOME_TILE_WIDTH, KEYS,
+        Overlay, Page, Rect, SYSTEM_SECTION, State, Subpage, Target, TextField, WIDGETS_SECTION,
     },
     weather::{self, Unit},
 };
@@ -54,6 +54,18 @@ impl Assets {
         self.root.join(path).to_string_lossy().into_owned()
     }
 
+    fn background(&self, state: &State, id: &str) -> String {
+        if let Some(item) = state.wallpapers.iter().find(|item| item.id == id) {
+            return item.image();
+        }
+        let id = if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
+            id
+        } else {
+            "dunes"
+        };
+        self.path(format!("wallpapers/{id}.jpg"))
+    }
+
     fn width(&self, value: &str, style: TextStyle) -> f32 {
         let key = format!(
             "{}{}",
@@ -78,6 +90,21 @@ impl Assets {
                     * style.size
             })
             .sum()
+    }
+
+    fn fit_text(&self, value: &str, mut style: TextStyle, width: f32) -> TextStyle {
+        // Leave a pixel for floating-point differences from the renderer's
+        // font advances. Re-measure if shrinking crosses the display-font
+        // threshold at 32px, where a different optical font is selected.
+        let available = width - 1.;
+        for _ in 0..2 {
+            let measured = self.width(value, style);
+            if measured <= available {
+                break;
+            }
+            style.size *= available / measured;
+        }
+        style
     }
 
     fn lines(&self, value: &str, style: TextStyle, width: f32) -> usize {
@@ -247,6 +274,194 @@ impl Scene {
     }
 }
 
+/// The strings a companion dialog shows around its QR code, as message keys.
+struct Companion {
+    title: &'static str,
+    keep_open: &'static str,
+    private: &'static str,
+    error: &'static str,
+    starting: &'static str,
+}
+
+fn wallpaper_upload(out: &mut Scene, state: &State, assets: &Assets) {
+    companion(
+        out,
+        state,
+        assets,
+        state.wallpaper_upload.as_ref(),
+        Companion {
+            title: "uploadWallpaper",
+            keep_open: "wallpaperUploadKeepOpen",
+            private: "wallpaperUploadPrivate",
+            error: "wallpaperUploadError",
+            starting: "wallpaperUploadStarting",
+        },
+    );
+}
+
+fn tile_editor(out: &mut Scene, state: &State, assets: &Assets) {
+    companion(
+        out,
+        state,
+        assets,
+        state.tile_editor.as_ref(),
+        Companion {
+            title: "editTilesElsewhere",
+            keep_open: "tileEditorKeepOpen",
+            private: "tileEditorPrivate",
+            error: "tileEditorError",
+            starting: "tileEditorStarting",
+        },
+    );
+}
+
+/// A QR code and address for a page on the owner's phone or computer, with a Close button.
+fn companion(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    session: Option<&Result<crate::companion::Session, String>>,
+    strings: Companion,
+) {
+    let language = state.preferences.language;
+    let panel = Rect::new(520., 144., 880., 816.);
+    out.modal = Some(panel);
+    out.shadow(panel, 24., 40., 12., 0.3);
+    out.shape(panel, 24., c(0x1b2023, 1.));
+    out.border(panel, 24., 1., c(0xffffff, 0.09));
+    out.text(
+        language.t(strings.title),
+        Rect::new(584., 198., 752., 48.),
+        text(32., 550, -0.02),
+        WHITE,
+        true,
+    );
+    out.text(
+        language.t("wallpaperUploadHint"),
+        Rect::new(604., 264., 712., 32.),
+        text(19., 400, 0.).leading(1.5),
+        c(0xffffff, 0.65),
+        true,
+    );
+    match session {
+        Some(Ok(session)) => {
+            let scale = (336. / (session.qr_size + 8) as f32).floor();
+            let size = (session.qr_size + 8) as f32 * scale;
+            let x = (1920. - size) / 2.;
+            let y = 310.;
+            // Invert the normal QR polarity to blend into the dark modal, while
+            // retaining a high-contrast foreground and the full quiet zone.
+            let background = c(0x1b2023, 1.);
+            let modules = c(0xf5f4ef, 1.);
+            out.shape(Rect::new(x, y, size, size), 0., background);
+            for row in 0..session.qr_size {
+                // Merge contiguous modules so QR rendering stays a few hundred quads.
+                let mut column = 0;
+                while column < session.qr_size {
+                    let mark_start = (session.qr_size - 11) / 2;
+                    let in_mark = (mark_start..mark_start + 11).contains(&row)
+                        && (mark_start..mark_start + 11).contains(&column);
+                    if in_mark {
+                        column += 1;
+                        continue;
+                    }
+                    if !session.qr[(row * session.qr_size + column) as usize] {
+                        column += 1;
+                        continue;
+                    }
+                    let start = column;
+                    while column < session.qr_size {
+                        let in_mark = (mark_start..mark_start + 11).contains(&row)
+                            && (mark_start..mark_start + 11).contains(&column);
+                        if in_mark || !session.qr[(row * session.qr_size + column) as usize] {
+                            break;
+                        }
+                        column += 1;
+                    }
+                    out.shape(
+                        Rect::new(
+                            x + (start + 4) as f32 * scale,
+                            y + (row + 4) as f32 * scale,
+                            (column - start) as f32 * scale,
+                            scale,
+                        ),
+                        0.,
+                        modules,
+                    );
+                }
+            }
+            let mark_start = (session.qr_size - 11) / 2;
+            let mark_plate = Rect::new(
+                x + (mark_start + 4) as f32 * scale,
+                y + (mark_start + 4) as f32 * scale,
+                11. * scale,
+                11. * scale,
+            );
+            out.shape(mark_plate, 1.1 * scale, background);
+            let mark = Rect::new(
+                mark_plate.x + 1.25 * scale,
+                mark_plate.y + 1.25 * scale,
+                8.5 * scale,
+                8.5 * scale,
+            );
+            out.icon(assets, "luma-mark", mark, WHITE);
+            out.text(
+                language.t("wallpaperUploadBrowser"),
+                Rect::new(604., 670., 712., 32.),
+                text(19., 400, 0.).leading(1.5),
+                c(0xffffff, 0.65),
+                true,
+            );
+            let display_url = session.url.trim_end_matches('/');
+            out.text(
+                display_url,
+                Rect::new(568., 716., 784., 36.),
+                assets.fit_text(display_url, text(26., 600, 0.), 784.),
+                WHITE,
+                true,
+            );
+            out.text(
+                language.t(strings.keep_open),
+                Rect::new(604., 766., 712., 52.),
+                text(16., 400, 0.).leading(1.4),
+                c(0xffffff, 0.75),
+                true,
+            );
+            out.text(
+                language.t(strings.private),
+                Rect::new(604., 820., 712., 22.),
+                text(15., 400, 0.),
+                c(0xffffff, 0.5),
+                true,
+            );
+        }
+        result => {
+            let key = if result.is_some() {
+                strings.error
+            } else {
+                strings.starting
+            };
+            out.text(
+                language.t(key),
+                Rect::new(604., 470., 712., 90.),
+                text(22., 450, 0.).leading(1.5),
+                c(0xffffff, 0.75),
+                true,
+            );
+        }
+    }
+    let close = Rect::new(812., 862., 296., 56.);
+    out.pill(close, state.focus == Target::CloseDialog, false);
+    out.text(
+        language.t("close"),
+        Rect::new(close.x, close.y + 15., close.w, 28.),
+        text(20., 550, 0.),
+        c(0x171c20, 1.),
+        true,
+    );
+    out.control(Target::CloseDialog, close, false);
+}
+
 fn c(rgb: u32, alpha: f32) -> Color {
     [
         ((rgb >> 16) & 255) as f32 / 255.,
@@ -300,14 +515,14 @@ pub fn scene_with_pill(
     }
     if let Some((previous, start)) = &state.previous_background {
         out.image(
-            assets.path(format!("wallpapers/{previous}.jpg")),
+            assets.background(state, previous),
             Rect::new(0., 0., 1920., 1080.),
             0.,
             false,
         );
-        let alpha = (start.elapsed().as_secs_f32() / 0.4).min(1.);
+        let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
         out.draw.push(Draw::TintedImage(
-            assets.path(format!("wallpapers/{}.jpg", state.preferences.background)),
+            assets.background(state, &state.preferences.background),
             Rect::new(0., 0., 1920., 1080.),
             0.,
             false,
@@ -315,7 +530,7 @@ pub fn scene_with_pill(
         ));
     } else {
         out.image(
-            assets.path(format!("wallpapers/{}.jpg", state.preferences.background)),
+            assets.background(state, &state.preferences.background),
             Rect::new(0., 0., 1920., 1080.),
             0.,
             false,
@@ -338,12 +553,8 @@ pub fn scene_with_pill(
     let main_bottom = viewport.y + viewport.h;
     out.draw.push(Draw::Clip(Some(viewport)));
     if state.page == Page::Apps {
-        out.draw.push(Draw::EdgeFade(Some([
-            MAIN_TOP,
-            152.8,
-            main_bottom - 24.,
-            main_bottom,
-        ])));
+        out.draw
+            .push(Draw::EdgeFade(Some([MAIN_TOP, 152.8, 1080., 1104.])));
     }
     match state.page {
         Page::Home => home(&mut out, state, assets, now),
@@ -392,24 +603,70 @@ pub fn scene_with_pill(
     footer(&mut out, state, assets);
     if let Some(
         overlay @ (Overlay::Options { .. }
+        | Overlay::Delete { .. }
+        | Overlay::BackgroundOptions { .. }
+        | Overlay::BackgroundDelete { .. }
         | Overlay::Keyboard
+        | Overlay::WallpaperUpload
+        | Overlay::TileEditor
         | Overlay::Block { .. }
         | Overlay::AddBlock { .. }
         | Overlay::Poster { .. }
-        | Overlay::Match { .. }
         | Overlay::PhoneKey { .. }
         | Overlay::WidgetDialog { .. }
         | Overlay::Store { .. }
         | Overlay::StoreEntry { .. }),
     ) = &state.overlay
     {
+        let language = state.preferences.language;
+        let anchor = match overlay {
+            Overlay::BackgroundOptions { id, .. } => out.controls.iter()
+                .find(|control| matches!(control.target, Target::Background(index) if state.background_id(index) == Some(id.as_str())))
+                .map(|control| Rect::new(control.rect.x, control.rect.y, control.rect.w, 202.5)),
+            Overlay::Options { id, .. } => out
+                .controls
+                .iter()
+                .find(|control| control.target == Target::App(id.clone()))
+                .map(|control| {
+                    // Hit regions include captions, artwork does not. Reusing the
+                    // full hit region here stretches the lifted card vertically.
+                    let mut rect = control.rect;
+                    let names = if state.page == Page::Home {
+                        state.preferences.show_home_names
+                    } else {
+                        state.preferences.show_app_names
+                    };
+                    if names
+                        && let Some(app) = state.inventory.apps.iter().find(|app| &app.id == id)
+                    {
+                        rect.h -= 18.4 + caption_height(state, assets, app, rect.w);
+                    }
+                    rect
+                }),
+            _ => None,
+        };
         out.controls.clear();
         let start = out.draw.len();
         out.shape(Rect::new(0., 0., 1920., 1080.), 0., c(0x080b12, 0.70));
-        let language = state.preferences.language;
+        if matches!(
+            overlay,
+            Overlay::Options { .. } | Overlay::BackgroundOptions { .. }
+        ) && let Some(opened) = state.panel_started
+        {
+            // The lifted card stays opaque while the backdrop and popup fade.
+            // Fading it over its dimmed parent copy causes a brightness dip.
+            out.fade(start, (opened.elapsed().as_secs_f32() / 0.12).min(1.), 1.);
+        }
         match overlay {
-            Overlay::Options { id, .. } => options(&mut out, state, assets, id),
+            Overlay::Options { id, .. } | Overlay::BackgroundOptions { id, .. } => {
+                options(&mut out, state, assets, id, anchor)
+            }
+            Overlay::Delete { id, .. } | Overlay::BackgroundDelete { id, .. } => {
+                delete_confirmation(&mut out, state, assets, id)
+            }
             Overlay::Keyboard => keyboard(&mut out, state, assets),
+            Overlay::WallpaperUpload => wallpaper_upload(&mut out, state, assets),
+            Overlay::TileEditor => tile_editor(&mut out, state, assets),
             Overlay::Block { kind, restore } => {
                 let rows: Vec<String> = state
                     .block_actions(*kind, matches!(restore, Target::App(_)))
@@ -459,9 +716,6 @@ pub fn scene_with_pill(
                     Target::AddKind,
                 );
             }
-            Overlay::Match {
-                instance, index, ..
-            } => match_dialog(&mut out, state, assets, *instance, *index, now),
             Overlay::PhoneKey { .. } => phone_key_dialog(&mut out, state, assets),
             Overlay::WidgetDialog { slot, id, .. } => {
                 widget_view::dialog(&mut out, state, assets, *slot, id, now)
@@ -500,7 +754,11 @@ pub fn scene_with_pill(
             }
             Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
         }
-        if let Some(opened) = state.panel_started {
+        if !matches!(
+            overlay,
+            Overlay::Options { .. } | Overlay::BackgroundOptions { .. }
+        ) && let Some(opened) = state.panel_started
+        {
             out.fade(start, (opened.elapsed().as_secs_f32() / 0.12).min(1.), 1.);
         }
     }
@@ -889,6 +1147,7 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
                 "browser" => ("globe", language.t("browser")),
                 "moonlight" => ("moonlight", "Moonlight"),
                 "gaming" => ("gaming", app.title.as_str()),
+                "custom" => (app.mark, app.title.as_str()),
                 _ => ("generic", app.title.as_str()),
             };
             let font = if brand == "generic" {
@@ -974,9 +1233,6 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             BlockKind::Inputs => inputs_block(out, state, assets, theme, block, rect),
             BlockKind::Crypto => crypto_block(out, state, assets, theme, rect),
             BlockKind::Premieres => premieres_block(out, state, assets, theme, block, rect, now),
-            BlockKind::Esports(instance) => {
-                esports_block(out, state, assets, theme, instance, block, rect, now)
-            }
             BlockKind::Widget(slot) => {
                 widget_view::row(out, state, assets, theme, slot, block, rect, now)
             }
@@ -2134,6 +2390,14 @@ struct Row<'a> {
     selected: bool,
     chevron: bool,
 }
+fn rotation_value_width(assets: &Assets, language: Language) -> f32 {
+    ["stateOn", "stateOff"]
+        .into_iter()
+        .map(|key| assets.width(language.t(key), text(18.4, 450, 0.)))
+        .fold(0., f32::max)
+        .ceil()
+}
+
 fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
     let focused = state.focus == row.target;
     let bright = focused;
@@ -2174,7 +2438,18 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         } else {
             (row.rect.h - 29.12) / 2.
         };
-    let title_width = row.rect.w - (x - row.rect.x) - if row.value.is_some() { 210. } else { 64. };
+    let compact_value_width = (row.target == Target::WallpaperCycle)
+        .then(|| rotation_value_width(assets, state.preferences.language));
+    let right_inset = if let Some(width) = compact_value_width {
+        width + 24.2 + 24.
+    } else if row.value.is_some() {
+        210.
+    } else if matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle) {
+        24.2
+    } else {
+        64.
+    };
+    let title_width = row.rect.w - (x - row.rect.x) - right_inset;
     let title_height = if row.description.is_some() {
         assets.lines(row.title, text(20.8, 550, -0.02), title_width) as f32 * 29.12
     } else {
@@ -2206,12 +2481,13 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         );
     }
     if let Some(value) = row.value {
+        let value_width = compact_value_width.unwrap_or(170.);
         out.text(
             value,
             Rect::new(
-                row.rect.x + row.rect.w - 194.2 - if row.chevron { 34.4 } else { 0. },
+                row.rect.x + row.rect.w - value_width - 24.2 - if row.chevron { 34.4 } else { 0. },
                 row.rect.y + (row.rect.h - 23.) / 2.,
-                170.,
+                value_width,
                 24.,
             ),
             text(18.4, 450, 0.).right(),
@@ -2240,7 +2516,8 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
             },
         );
     }
-    out.control(row.target, row.rect, true);
+    let scrollable = !matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle);
+    out.control(row.target, row.rect, scrollable);
 }
 
 fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -2478,12 +2755,12 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
 fn settings(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
     let s = state.scroll;
-    for (index, key) in ["interface", "background", "weather", "inputs", "system"]
+    for (index, key) in ["interface", "background", "widgets", "system"]
         .into_iter()
         .enumerate()
     {
         let label = language.t(key);
-        let rect = Rect::new(160., 164.8 + index as f32 * 84. - s, 403.2, 72.);
+        let rect = Rect::new(160., 164.8 + index as f32 * 84., 403.2, 72.);
         let focused = state.focus == Target::Sidebar(index);
         out.pill(rect, focused, state.section == index);
         let color = if focused {
@@ -2494,7 +2771,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             c(0xeeeeee, 0.73)
         };
         if state.section == index && state.subpage.is_some() {
-            let clock_path = match state.subpage {
+            let nested_path = match &state.subpage {
                 Some(Subpage::ClockFormat) => Some(format!(
                     "{} › {}",
                     language.t("clock"),
@@ -2505,29 +2782,44 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     language.t("clock"),
                     language.t("timeFormat")
                 )),
+                Some(Subpage::WeatherLocation | Subpage::Temperature) => Some(format!(
+                    "{} › {}",
+                    language.t("weather"),
+                    language.t(if state.subpage == Some(Subpage::WeatherLocation) {
+                        "location"
+                    } else {
+                        "temperature"
+                    })
+                )),
+                Some(Subpage::Input(id)) => Some(format!(
+                    "{} › {}",
+                    language.t("inputs"),
+                    state
+                        .inventory
+                        .inputs
+                        .iter()
+                        .find(|input| &input.id == id)
+                        .map_or(language.t("inputs"), |input| state
+                            .preferences
+                            .input_title(input))
+                )),
                 _ => None,
             };
             let mut widget_title: Option<String> = None;
             let sub = match &state.subpage {
                 Some(Subpage::AppNames) => language.t("appNames"),
                 Some(Subpage::Greeting) => language.t("greeting"),
+                Some(Subpage::Weather) => language.t("weather"),
+                Some(Subpage::Shortcuts) => language.t("shortcuts"),
+                Some(Subpage::Inputs) => language.t("inputs"),
                 Some(Subpage::Clock) => language.t("clock"),
-                Some(Subpage::ClockFormat | Subpage::TimeFormat) => clock_path.as_deref().unwrap(),
-                Some(Subpage::Input(id)) => state
-                    .inventory
-                    .inputs
-                    .iter()
-                    .find(|input| &input.id == id)
-                    .map_or(language.t("inputs"), |input| {
-                        state.preferences.input_title(input)
-                    }),
-                Some(Subpage::WeatherLocation) => language.t("location"),
-                Some(Subpage::Temperature) => language.t("temperature"),
+                Some(Subpage::ClockFormat | Subpage::TimeFormat) => nested_path.as_deref().unwrap(),
+                Some(Subpage::WeatherLocation | Subpage::Temperature | Subpage::Input(_)) => {
+                    nested_path.as_deref().unwrap()
+                }
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::Appearance) => language.t("uiScale"),
                 Some(Subpage::Theme) => language.t("homeTheme"),
-                Some(Subpage::Esports(_)) => language.t("esportsWidget"),
-                Some(Subpage::EsportsGames(_)) => language.t("esportsGames"),
                 Some(Subpage::Widget(slot)) => widget_title
                     .get_or_insert(state.block_name(crate::home_grid::BlockKind::Widget(*slot))),
                 Some(Subpage::WidgetOptions(slot, setting)) => widget_title.get_or_insert(
@@ -2541,6 +2833,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                         .unwrap_or_default(),
                 ),
                 Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
+                Some(Subpage::TextRendering) => language.t("textRendering"),
                 None => "",
             };
             let parent_width = assets.width(label, text(20.8, 550, -0.02)) + 2.;
@@ -2559,7 +2852,9 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             );
             let sub_width = rect.w - 24.2 - parent_width - 28. - 24.2;
             let mut sub_style = text(20.8, 550, -0.02);
-            sub_style.size *= (sub_width / assets.width(sub, sub_style)).min(1.);
+            if nested_path.is_some() {
+                sub_style.size *= (sub_width / assets.width(sub, sub_style)).min(1.);
+            }
             out.text(
                 sub,
                 Rect::new(
@@ -2594,25 +2889,29 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 );
             }
         }
-        out.control(Target::Sidebar(index), rect, true);
+        out.control(Target::Sidebar(index), rect, false);
     }
     if let Some(subpage) = &state.subpage {
         let start = out.draw.len();
         if matches!(
             subpage,
             Subpage::WeatherLocation
+                | Subpage::Weather
+                | Subpage::Shortcuts
+                | Subpage::Inputs
                 | Subpage::Greeting
                 | Subpage::AppNames
                 | Subpage::Clock
-                | Subpage::Esports(_)
                 | Subpage::Widget(_)
         ) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
+                Subpage::Weather => weather_settings(out, state, assets),
+                Subpage::Shortcuts => shortcut_settings(out, state, assets),
+                Subpage::Inputs => inputs_settings(out, state, assets),
                 Subpage::Greeting => greeting_settings(out, state, assets),
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
-                Subpage::Esports(instance) => esports_settings(out, state, assets, *instance),
                 Subpage::Widget(slot) => widget_view::settings(out, state, assets, *slot),
                 _ => unreachable!(),
             }
@@ -2675,12 +2974,8 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     state.preferences.temperature_unit == Unit::Fahrenheit,
                 ),
             ],
-            Subpage::EsportsGames(instance) => {
-                let games = state.esports_widget(*instance).games;
-                crate::feeds::GAMES
-                    .iter()
-                    .map(|(path, name)| (*name, None, games.iter().any(|g| g == path)))
-                    .collect()
+            Subpage::Weather | Subpage::Shortcuts | Subpage::Inputs => {
+                unreachable!()
             }
             Subpage::Theme => crate::themes::THEMES
                 .iter()
@@ -2707,7 +3002,6 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             | Subpage::Greeting
             | Subpage::AppNames
             | Subpage::Clock
-            | Subpage::Esports(_)
             | Subpage::Widget(_) => unreachable!(),
             Subpage::Language => Language::ALL
                 .into_iter()
@@ -2725,6 +3019,16 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     !state.home_takeover,
                 ),
             ],
+            Subpage::TextRendering => crate::text_rendering::TextRendering::ALL
+                .into_iter()
+                .map(|mode| {
+                    (
+                        language.t(mode.label_key()),
+                        Some(language.t("textRenderingRestart")),
+                        mode == state.preferences.text_rendering,
+                    )
+                })
+                .collect(),
         };
         for (index, (title, description, selected)) in options.into_iter().enumerate() {
             let h = if description.is_some() { 90.7 } else { 72. };
@@ -2787,17 +3091,6 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 ),
                 (4, "language", "language", Some(language.name()), true),
                 (
-                    6,
-                    "greeting",
-                    "type",
-                    Some(if state.preferences.greeting_name.trim().is_empty() {
-                        language.t("stateOff")
-                    } else {
-                        state.preferences.greeting_name.as_str()
-                    }),
-                    true,
-                ),
-                (
                     7,
                     "uiScale",
                     "grid",
@@ -2833,22 +3126,82 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
             }
         }
         BACKGROUND_SECTION => {
-            for (index, (id, _title)) in BACKGROUNDS.iter().enumerate() {
+            let upload_label = language.t("uploadWallpaper");
+            let upload_width = (assets.width(upload_label, text(20.8, 550, -0.02)) + 88.)
+                .ceil()
+                .min(520.);
+            let cycle_label = language.t("wallpaperCycle");
+            let cycle_width = (assets.width(cycle_label, text(20.8, 550, -0.02))
+                + rotation_value_width(assets, language)
+                + 111.6)
+                .ceil()
+                .min(520.);
+            row(
+                out,
+                state,
+                assets,
+                Row {
+                    target: Target::WallpaperCycle,
+                    rect: Rect::new(
+                        1760. - upload_width - 20. - cycle_width,
+                        164.8,
+                        cycle_width,
+                        64.,
+                    ),
+                    title: cycle_label,
+                    icon: Some(if state.preferences.wallpaper_cycle {
+                        "refresh"
+                    } else {
+                        "refresh-off"
+                    }),
+                    value: Some(language.t(if state.preferences.wallpaper_cycle {
+                        "stateOn"
+                    } else {
+                        "stateOff"
+                    })),
+                    description: None,
+                    selected: false,
+                    chevron: false,
+                },
+            );
+            row(
+                out,
+                state,
+                assets,
+                Row {
+                    target: Target::UploadWallpaper,
+                    rect: Rect::new(1760. - upload_width, 164.8, upload_width, 64.),
+                    title: upload_label,
+                    icon: Some("upload"),
+                    value: None,
+                    description: None,
+                    selected: false,
+                    chevron: false,
+                },
+            );
+            out.draw
+                .push(Draw::Clip(Some(state.backgrounds_viewport())));
+            for index in 0..state.background_count() {
+                let id = state.background_id(index).unwrap();
+                let custom = state.wallpapers.iter().find(|item| item.id == id);
                 let rect = Rect::new(
                     640. + (index % 3) as f32 * 380.,
-                    164.8 + (index / 3) as f32 * 264.3 - s,
+                    252.8 + (index / 3) as f32 * 226.5 - s,
                     360.,
                     202.5,
                 );
                 out.shadow(rect, 16., 15., 3., 0.13);
                 out.image(
-                    assets.path(format!("thumbnails/{id}.jpg")),
+                    custom.map_or_else(
+                        || assets.path(format!("thumbnails/{id}.jpg")),
+                        |item| item.thumbnail(),
+                    ),
                     rect,
                     16.,
                     false,
                 );
                 out.border(rect, 16., 1., c(0xffffff, 0.086));
-                if state.preferences.background == *id {
+                if state.preferences.background == id {
                     out.border(rect.inset(-2.), 18., 2., c(0xdedede, 1.));
                     out.border(rect.inset(-7.), 23., 3., c(0xdedede, 0.10));
                     let check = Rect::new(rect.x + rect.w - 28., rect.y + rect.h - 28., 21.6, 21.6);
@@ -2858,23 +3211,48 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 if state.focus == Target::Background(index) {
                     out.ring(rect, 16.);
                 }
-                out.text(
-                    language.wallpaper(id),
-                    Rect::new(rect.x + 4., rect.y + rect.h + 12., 352., 26.),
-                    text(18.4, 500, -0.02).leading(1.4),
-                    c(0xf0f0f0, 0.87),
-                    false,
-                );
-                out.control(
-                    Target::Background(index),
-                    Rect::new(rect.x, rect.y, rect.w, rect.h + 37.8),
-                    true,
+                out.control(Target::Background(index), rect, true);
+            }
+            out.draw.push(Draw::Clip(Some(state.content_viewport())));
+        }
+        WIDGETS_SECTION => {
+            for (index, (key, icon)) in [
+                ("greeting", "type"),
+                ("weather", "weather-sun"),
+                ("shortcuts", "sparkles"),
+                ("inputs", "input-hdmi"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                row(
+                    out,
+                    state,
+                    assets,
+                    Row {
+                        target: Target::Widget(index),
+                        rect: Rect::new(640., 164.8 + index as f32 * 84. - s, 1120., 72.),
+                        title: language.t(key),
+                        icon: Some(icon),
+                        value: None,
+                        description: None,
+                        selected: false,
+                        chevron: true,
+                    },
                 );
             }
         }
-        WEATHER_SECTION => weather_settings(out, state, assets),
         SYSTEM_SECTION => {
-            for (position, (index, title, icon)) in [
+            let version_rect = Rect::new(640., 164.8 - s, 1120., 72.);
+            settings_surface(out, version_rect);
+            out.text(
+                format!("Luma v{}", assets.version.trim()),
+                Rect::new(664.2, version_rect.y + (72. - 29.12) / 2., 1031.8, 29.12),
+                text(20.8, 550, -0.02).leading(1.4),
+                c(0xeeeeee, 0.5),
+                false,
+            );
+            for (position, (index, title, icon, value, chevron)) in [
                 (
                     3,
                     language.t(if state.loading {
@@ -2883,105 +3261,120 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                         "refreshApps"
                     }),
                     "refresh",
+                    None,
+                    false,
                 ),
-                (5, language.t("quitApp"), "power"),
-                (8, language.t("homeTakeover"), "tv"),
+                (
+                    10,
+                    language.t("textRendering"),
+                    "type",
+                    Some(language.t(state.preferences.text_rendering.label_key())),
+                    true,
+                ),
+                (5, language.t("quitApp"), "power", None, false),
+                (
+                    8,
+                    language.t("homeTakeover"),
+                    "tv",
+                    Some(language.t(if state.home_takeover {
+                        "stateOn"
+                    } else {
+                        "stateOff"
+                    })),
+                    true,
+                ),
             ]
             .into_iter()
             .enumerate()
             {
-                // Luma as Home shows its state and opens its choice, like an input's visibility.
-                let takeover = index == 8;
                 row(
                     out,
                     state,
                     assets,
                     Row {
                         target: Target::Setting(index),
-                        rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
+                        rect: Rect::new(640., 248.8 + position as f32 * 84. - s, 1120., 72.),
                         title,
                         icon: Some(icon),
-                        value: takeover.then(|| {
-                            language.t(if state.home_takeover {
-                                "stateOn"
-                            } else {
-                                "stateOff"
-                            })
-                        }),
+                        value,
                         description: None,
                         selected: false,
-                        chevron: takeover,
+                        chevron,
                     },
                 );
             }
         }
-        _ => {
-            for (index, input) in state.inventory.inputs.iter().enumerate() {
-                let mode = state
-                    .preferences
-                    .input_modes
-                    .get(&input.id)
-                    .copied()
-                    .unwrap_or_default();
-                row(
-                    out,
-                    state,
-                    assets,
-                    Row {
-                        target: Target::InputMode(input.id.clone()),
-                        rect: Rect::new(640., 164.8 + index as f32 * 102.7 - s, 1120., 90.7),
-                        title: state.preferences.input_title(input),
-                        icon: Some(&format!(
-                            "input-{}",
-                            input_icon(input, state.preferences.input_name(input))
-                        )),
-                        value: Some(language.t(match mode {
-                            InputMode::On => "stateOn",
-                            InputMode::Off => "stateOff",
-                            InputMode::Auto => "stateAuto",
-                        })),
-                        description: Some(&input_status(
-                            input,
-                            state.preferences.input_name(input).is_some(),
-                            language,
-                        )),
-                        selected: false,
-                        chevron: true,
-                    },
-                );
-            }
-            let mut y = 164.8 + state.inventory.inputs.len() as f32 * 102.7 + 16. - s;
-            if state.inventory.inputs.is_empty() {
-                out.text(
-                    language.t("noInputs"),
-                    Rect::new(664., 165. - s, 1000., 26.),
-                    text(16.8, 400, 0.).leading(1.5),
-                    c(0xf5f5f5, 0.72),
-                    false,
-                );
-                y += 36.;
-            }
-            row(
-                out,
-                state,
-                assets,
-                Row {
-                    target: Target::Setting(3),
-                    rect: Rect::new(640., y, 1120., 72.),
-                    title: if state.loading {
-                        language.t("refreshNotice")
-                    } else {
-                        language.t("refreshInputs")
-                    },
-                    icon: Some("refresh"),
-                    value: None,
-                    description: None,
-                    selected: false,
-                    chevron: false,
-                },
-            );
-        }
+        _ => {}
     }
+}
+
+fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let s = state.scroll;
+    for (index, input) in state.inventory.inputs.iter().enumerate() {
+        let mode = state
+            .preferences
+            .input_modes
+            .get(&input.id)
+            .copied()
+            .unwrap_or_default();
+        row(
+            out,
+            state,
+            assets,
+            Row {
+                target: Target::InputMode(input.id.clone()),
+                rect: Rect::new(640., 164.8 + index as f32 * 102.7 - s, 1120., 90.7),
+                title: state.preferences.input_title(input),
+                icon: Some(&format!(
+                    "input-{}",
+                    input_icon(input, state.preferences.input_name(input))
+                )),
+                value: Some(language.t(match mode {
+                    InputMode::On => "stateOn",
+                    InputMode::Off => "stateOff",
+                    InputMode::Auto => "stateAuto",
+                })),
+                description: Some(&input_status(
+                    input,
+                    state.preferences.input_name(input).is_some(),
+                    language,
+                )),
+                selected: false,
+                chevron: true,
+            },
+        );
+    }
+    let mut y = 164.8 + state.inventory.inputs.len() as f32 * 102.7 + 16. - s;
+    if state.inventory.inputs.is_empty() {
+        out.text(
+            language.t("noInputs"),
+            Rect::new(664., 165. - s, 1000., 26.),
+            text(16.8, 400, 0.).leading(1.5),
+            c(0xf5f5f5, 0.72),
+            false,
+        );
+        y += 36.;
+    }
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::Setting(3),
+            rect: Rect::new(640., y, 1120., 72.),
+            title: if state.loading {
+                language.t("refreshNotice")
+            } else {
+                language.t("refreshInputs")
+            },
+            icon: Some("refresh"),
+            value: None,
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
 }
 
 fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -3146,6 +3539,92 @@ fn input_name_rows(out: &mut Scene, state: &State, assets: &Assets, id: &str, y:
                 chevron: false,
             },
         );
+    }
+}
+
+fn settings_surface(out: &mut Scene, rect: Rect) {
+    out.shape(rect, 48., c(0x171c20, 0.3));
+    out.border(rect, 48., 1., c(0xffffff, 0.045));
+}
+
+fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let tiles = &state.preferences.custom_tiles;
+    for (index, tile) in tiles.iter().enumerate() {
+        let description = format!("{} · {}", tile.method.label(), shorten(&tile.url));
+        let y = 248.8 + index as f32 * 102.7 - state.scroll;
+        let rect = Rect::new(640., y, 1036., 90.7);
+        settings_surface(out, rect);
+        out.icon(
+            assets,
+            tile.icon(),
+            Rect::new(664.2, y + 33.35, 24., 24.),
+            c(0xeeeeee, 0.5),
+        );
+        out.text(
+            &tile.title,
+            Rect::new(711., y + 18., 940., 29.12),
+            text(20.8, 550, -0.02).leading(1.4),
+            c(0xeeeeee, 0.5),
+            false,
+        );
+        out.text(
+            description,
+            Rect::new(711., y + 51., 940., 24.),
+            text(16.8, 400, 0.),
+            c(0xeeeeee, 0.5),
+            false,
+        );
+        let remove = Rect::new(1688., y + 13.35, 72., 64.);
+        let target = Target::TileRemove(tile.id.clone());
+        let focused = state.focus == target;
+        out.pill(remove, focused, false);
+        out.icon(
+            assets,
+            "close",
+            Rect::new(remove.x + 24., remove.y + 20., 24., 24.),
+            if focused {
+                c(0x2c2c2c, 1.)
+            } else {
+                c(0xeeeeee, 0.6)
+            },
+        );
+        out.control(target, remove, true);
+    }
+    if tiles.is_empty() {
+        out.text(
+            language.t("noTiles"),
+            Rect::new(664., 254. - state.scroll, 1000., 52.),
+            text(16.8, 400, 0.).leading(1.5),
+            c(0xf5f5f5, 0.72),
+            true,
+        );
+    }
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::TileEditor,
+            rect: Rect::new(640., 164.8 - state.scroll, 1120., 72.),
+            title: language.t("configure"),
+            icon: Some("settings"),
+            value: None,
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
+}
+
+/// URLs have no break opportunities, so long ones are cut to a single line.
+fn shorten(text: &str) -> String {
+    const MAX: usize = 96;
+    let count = text.chars().count();
+    if count <= MAX {
+        text.into()
+    } else {
+        format!("{}…", text.chars().take(MAX - 1).collect::<String>())
     }
 }
 
@@ -3401,15 +3880,58 @@ fn empty(out: &mut Scene, state: &State, assets: &Assets, content: EmptyState<'_
     }
 }
 
-fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str) {
+fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Option<Rect>) {
     let language = state.preferences.language;
+    let background = matches!(state.overlay, Some(Overlay::BackgroundOptions { .. }));
     let app = state.inventory.apps.iter().find(|app| app.id == id);
-    let title = app.map_or(id, |app| app.title.as_str());
-    let extra = assets
-        .lines(title, text(37.6, 500, -0.055).leading(1.1), 432.)
-        .saturating_sub(1) as f32
-        * 41.4;
-    let panel = Rect::new(680., 362.9 - extra / 2., 560., 354.2 + extra);
+    let favorite = state
+        .preferences
+        .favorites(&state.inventory.apps)
+        .iter()
+        .any(|item| item == id);
+    let deletable = if background {
+        state.can_delete_background(id) && state.deleting_wallpaper.is_none()
+    } else {
+        crate::platform::can_uninstall(id)
+    };
+    let height = if background {
+        if deletable { 176. } else { 99.2 }
+    } else if deletable {
+        329.6
+    } else {
+        252.8
+    };
+    let card = anchor.unwrap_or(Rect::new(460., 380., 256., 153.6));
+    let x = if card.x + card.w + 32. + 520. <= 1836. {
+        card.x + card.w + 32.
+    } else {
+        (card.x - 552.).max(84.)
+    };
+    let panel = Rect::new(x, card.y.clamp(164., 974. - height), 520., height);
+    // Lift the selected card out of the dimmed grid without moving its hit region.
+    if background {
+        let path = state
+            .wallpapers
+            .iter()
+            .find(|item| item.id == id)
+            .map_or_else(
+                || assets.path(format!("thumbnails/{id}.jpg")),
+                |item| item.thumbnail(),
+            );
+        out.image(path, card, 16., false);
+        out.border(card, 16., 1., c(0xffffff, 0.086));
+    } else if let Some(app) = app {
+        app_face(out, assets, app, card, language, 19.2);
+        if favorite {
+            out.icon(
+                assets,
+                "heart-filled",
+                Rect::new(card.x + card.w - 27.2, card.y + 11.2, 16., 16.),
+                c(0xffffff, 0.9),
+            );
+        }
+    }
+    let panel_start = out.draw.len();
     out.modal = Some(panel);
     out.shadow(panel, 27.2, 120., 25., 0.47);
     out.draw.push(Draw::RoundedGradient(
@@ -3419,82 +3941,219 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str) {
         c(0x24282d, 0.988),
     ));
     out.border(panel, 27.2, 1., c(0xffffff, 0.12));
-    out.text(
-        title,
-        Rect::new(717.8, panel.y + 36.2, 432., 42. + extra),
-        text(37.6, 500, -0.055).leading(1.1),
-        WHITE,
-        false,
-    );
-    out.text(
-        language.category(app.map_or("Utilities", |app| app.category.as_str())),
-        Rect::new(717.8, panel.y + 87.9 + extra, 440., 23.),
-        text(15.2, 400, 0.).leading(1.5),
-        c(0xf5f5f5, 0.56),
-        false,
-    );
-    let close = Rect::new(1168.6, panel.y + 39.4, 33.6, 33.6);
-    out.shape(close, 16.8, c(0xffffff, 0.035));
-    out.border(close, 16.8, 1., c(0xffffff, 0.07));
-    out.icon(assets, "close", close.inset(7.6), WHITE);
-    if state.focus == Target::CloseDialog {
-        out.border(close.inset(1.), 15.8, 2., WHITE);
-    }
-    out.control(Target::CloseDialog, close, false);
-    let favorite = state
-        .preferences
-        .favorites(&state.inventory.apps)
-        .iter()
-        .any(|item| item == id);
     let hidden = state.preferences.hidden.iter().any(|item| item == id);
-    for (index, label) in [
-        if favorite {
-            language.t("removeFavorite")
+    let actions = if background {
+        let mut actions = vec![(Target::UseBackground, language.t("useBackground"))];
+        if deletable {
+            actions.push((Target::DeleteBackground, language.t("deleteBackground")));
+        }
+        actions
+    } else {
+        vec![
+            (Target::OpenApp, language.t("open")),
+            (
+                Target::Option(0),
+                if favorite {
+                    language.t("removeFavorite")
+                } else {
+                    language.t("addFavorite")
+                },
+            ),
+            (
+                Target::Option(1),
+                language.t(if hidden { "showApp" } else { "hideApp" }),
+            ),
+            (Target::Option(2), language.t("deleteApp")),
+        ]
+        .into_iter()
+        .take(if deletable { 4 } else { 3 })
+        .collect()
+    };
+    for (row, (target, label)) in actions.into_iter().enumerate() {
+        let rect = Rect::new(
+            panel.x + 16.,
+            panel.y + 16. + row as f32 * 76.8,
+            panel.w - 32.,
+            67.2,
+        );
+        let focused = state.focus == target;
+        let destructive = matches!(target, Target::Option(2) | Target::DeleteBackground);
+        let label_style = text(20.8, 600, -0.02);
+        let label_height = label_style.size * label_style.line_height;
+        let label_color = if destructive || !focused {
+            WHITE
         } else {
-            language.t("addFavorite")
-        },
-        language.t(if hidden { "showApp" } else { "hideApp" }),
+            c(0x242424, 1.)
+        };
+        out.shape(
+            rect,
+            12.,
+            if destructive {
+                c(0xd63b35, if focused { 1. } else { 0.25 })
+            } else {
+                c(0xffffff, if focused { 0.96 } else { 0.10 })
+            },
+        );
+        out.text(
+            label,
+            Rect::new(
+                rect.x + 24.,
+                rect.y + (rect.h - label_height) / 2.,
+                rect.w - 88.,
+                label_height,
+            ),
+            label_style,
+            label_color,
+            false,
+        );
+        out.icon(
+            assets,
+            match &target {
+                Target::OpenApp => "arrow",
+                Target::UseBackground => "check",
+                Target::Option(0) => {
+                    if favorite {
+                        "heart-filled"
+                    } else {
+                        "heart"
+                    }
+                }
+                Target::Option(1) => {
+                    if hidden {
+                        "eye"
+                    } else {
+                        "eye-off"
+                    }
+                }
+                _ => "circle-minus",
+            },
+            Rect::new(rect.x + rect.w - 45.6, rect.y + 22.8, 21.6, 21.6),
+            label_color,
+        );
+        out.control(target, rect, false);
+    }
+    if let Some(opened) = state.panel_started {
+        out.fade(
+            panel_start,
+            (opened.elapsed().as_secs_f32() / 0.12).min(1.),
+            1.,
+        );
+    }
+}
+
+fn delete_confirmation(out: &mut Scene, state: &State, assets: &Assets, id: &str) {
+    let language = state.preferences.language;
+    let background = matches!(state.overlay, Some(Overlay::BackgroundDelete { .. }));
+    let deleting = if background {
+        state.deleting_wallpaper.as_deref() == Some(id)
+    } else {
+        state.uninstalling.as_deref() == Some(id)
+    };
+    let warning_key = if background {
+        "deleteBackgroundWarning"
+    } else {
+        "deleteAppWarning"
+    };
+    let deleting_key = if background {
+        "deletingBackground"
+    } else {
+        "deletingApp"
+    };
+    let delete_key = if background {
+        "deleteBackground"
+    } else {
+        "deleteApp"
+    };
+    let title = state
+        .inventory
+        .apps
+        .iter()
+        .find(|app| app.id == id)
+        .map_or(id, |app| app.title.as_str());
+    let body_style = text(20.8, 600, -0.02).leading(1.5);
+    let body = language.format(
+        if deleting { deleting_key } else { warning_key },
+        &[("app", title)],
+    );
+    // Status changes must not move the confirmation buttons under the pointer.
+    let warning = language.format(warning_key, &[("app", title)]);
+    let body_height = assets
+        .lines(&warning, body_style, 568.)
+        .max(assets.lines(language.t(deleting_key), body_style, 568.))
+        .max(1) as f32
+        * 31.2;
+    let height = 244. + body_height;
+    let panel = Rect::new(640., (1080. - height) / 2., 640., height);
+    out.modal = Some(panel);
+    out.shadow(panel, 28., 100., 24., 0.47);
+    out.draw.push(Draw::RoundedGradient(
+        panel,
+        28.,
+        c(0x34383b, 0.98),
+        c(0x24282d, 0.99),
+    ));
+    out.border(panel, 28., 1., c(0xffffff, 0.12));
+    out.text(
+        body,
+        Rect::new(panel.x + 36., panel.y + 36., 568., body_height),
+        body_style,
+        c(0xf5f5f5, 0.75),
+        true,
+    );
+    for (index, (target, label)) in [
+        (Target::ConfirmDelete, delete_key),
+        (Target::CancelDelete, "cancel"),
     ]
     .into_iter()
     .enumerate()
     {
         let rect = Rect::new(
-            717.8,
-            panel.y + 137.9 + extra + index as f32 * 76.8,
-            484.4,
-            67.2,
+            panel.x + 28.,
+            panel.y + panel.h - 184. + index as f32 * 80.,
+            panel.w - 56.,
+            68.,
         );
-        let focused = state.focus == Target::Option(index);
-        out.shape(rect, 12., c(0xffffff, if focused { 0.07 } else { 0.016 }));
-        out.border(
+        let focused = state.focus == target;
+        let disabled = target == Target::ConfirmDelete && deleting;
+        let label_style = text(20.8, 600, -0.02);
+        let label_height = label_style.size * label_style.line_height;
+        out.shape(
             rect,
-            12.,
-            if focused { 2. } else { 1. },
-            c(
-                if focused { 0xf0f0f0 } else { 0xffffff },
-                if focused { 0.95 } else { 0.05 },
-            ),
-        );
-        out.icon(
-            assets,
+            14.,
             if index == 0 {
-                if favorite { "heart-filled" } else { "heart" }
-            } else if hidden {
-                "eye"
+                c(
+                    0xd63b35,
+                    if disabled {
+                        0.15
+                    } else if focused {
+                        1.
+                    } else {
+                        0.25
+                    },
+                )
             } else {
-                "eye-off"
+                c(0xffffff, if focused { 0.96 } else { 0.10 })
             },
-            Rect::new(rect.x + 18.6, rect.y + 22.8, 21.6, 21.6),
-            if focused { WHITE } else { c(0xe4e4e4, 0.61) },
         );
         out.text(
-            label,
-            Rect::new(rect.x + 56.2, rect.y + 22., rect.w - 74., 25.),
-            text(17.6, 500, -0.015),
-            WHITE,
-            false,
+            language.t(label),
+            Rect::new(
+                rect.x + 20.,
+                rect.y + (rect.h - label_height) / 2.,
+                rect.w - 40.,
+                label_height,
+            ),
+            label_style,
+            if index == 1 && focused {
+                c(0x242424, 1.)
+            } else {
+                WHITE
+            },
+            true,
         );
-        out.control(Target::Option(index), rect, false);
+        if !disabled {
+            out.control(target, rect, false);
+        }
     }
     let line_y = panel.y + panel.h - 53.2;
     out.shape(Rect::new(717.8, line_y, 484.4, 1.), 0., c(0xffffff, 0.04));
@@ -3539,7 +4198,6 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             TextField::Location => language.t("cityPostcode"),
             TextField::Name => language.t("greetingName"),
             TextField::InputName => language.t("inputName"),
-            TextField::ApiKey => language.t("esportsKey"),
             TextField::Widget => keyboard_title.as_str(),
             TextField::Apps => language.t("findApp"),
         },
@@ -3602,33 +4260,28 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
 
 fn toast(out: &mut Scene, state: &State, assets: &Assets, notice: &str) {
     let start = out.draw.len();
-    let style = text(16., 400, 0.).leading(1.5);
-    let width = (assets.width(notice, style) + 118.).clamp(240., 1856.);
-    let height = 34. + assets.lines(notice, style, width - 100.) as f32 * 24.;
+    let notice = notice.trim_end_matches(['.', '。']);
+    let style = text(20.8, 550, -0.02);
+    let width = (assets.width(notice, style).ceil() + 42.).clamp(42., 1856.);
+    let text_height =
+        assets.lines(notice, style, width - 40.) as f32 * style.size * style.line_height;
+    let height = 20. + text_height;
     let rect = Rect::new(960. - width / 2., 1080. - 51.2 - height, width, height);
-    out.shadow(rect, 16., 40., 8., 0.33);
-    out.shape(rect, 16., c(0xededed, 0.96));
-    out.border(rect, 16., 1., c(0xffffff, 0.5));
-    out.icon(
-        assets,
-        "sparkles",
-        Rect::new(rect.x + 20., rect.y + (height - 20.8) / 2., 20.8, 20.8),
-        c(0x727272, 1.),
-    );
+    out.shadow(rect, 16., 18., 4., 0.06);
+    out.shape(rect, 16., c(0x171c20, 0.72));
+    out.border(rect, 16., 1., c(0xffffff, 0.07));
     out.text(
         notice,
-        Rect::new(rect.x + 53.6, rect.y + 17., width - 100., height - 34.),
-        text(16., 400, 0.).leading(1.5),
-        c(0x303030, 1.),
-        false,
+        Rect::new(rect.x + 20., rect.y + 10., width - 40., text_height),
+        style,
+        WHITE,
+        true,
     );
-    let close = Rect::new(rect.x + width - 33., rect.y + (height - 20.) / 2., 20., 20.);
-    out.icon(assets, "close", close.inset(1.2), c(0x6b6b6b, 1.));
     if state.focus == Target::DismissNotice {
-        out.border(close.inset(-2.), 5., 2., c(0x303030, 1.));
+        out.border(rect, 16., 2., WHITE);
     }
     if state.overlay.is_none() {
-        out.control(Target::DismissNotice, close, false);
+        out.control(Target::DismissNotice, rect, false);
     }
     if !state.preferences.reduced_motion
         && let Some((_, opened)) = &state.notice
@@ -3748,6 +4401,21 @@ fn match_time(begin_at: &str, now: OffsetDateTime, language: Language) -> String
         .map_or(String::new(), |start| local_time(start, now, language))
 }
 
+/// Whole minutes since an RFC 3339 instant.
+fn minutes_since(begin_at: &str, now: OffsetDateTime) -> Option<i64> {
+    let start =
+        OffsetDateTime::parse(begin_at, &time::format_description::well_known::Rfc3339).ok()?;
+    Some((now - start).whole_minutes()).filter(|minutes| *minutes >= 0)
+}
+
+/// A loaded image from the feeds' cache, by its URL.
+fn feed_image<'a>(
+    state: &'a State,
+    url: &Option<String>,
+) -> Option<&'a std::sync::Arc<crate::app_artwork::Artwork>> {
+    url.as_ref().and_then(|url| state.feeds.images.get(url))
+}
+
 /// An instant in the local time of `now`, with the day when it is not today.
 fn local_time(instant: OffsetDateTime, now: OffsetDateTime, language: Language) -> String {
     let local = instant.to_offset(now.offset());
@@ -3763,13 +4431,6 @@ fn local_time(instant: OffsetDateTime, now: OffsetDateTime, language: Language) 
     }
 }
 
-fn game_name(game: &str) -> &'static str {
-    crate::feeds::GAMES
-        .iter()
-        .find(|(path, _)| *path == game)
-        .map_or("", |(_, name)| name)
-}
-
 /// `value`, shortened with an ellipsis to fit `width`.
 fn fit(assets: &Assets, value: &str, style: TextStyle, width: f32) -> String {
     if assets.width(value, style) <= width {
@@ -3783,14 +4444,6 @@ fn fit(assets: &Assets, value: &str, style: TextStyle, width: f32) -> String {
         }
     }
     String::new()
-}
-
-/// A loaded image from the feeds' cache, by its URL.
-fn feed_image<'a>(
-    state: &'a State,
-    url: &Option<String>,
-) -> Option<&'a std::sync::Arc<crate::app_artwork::Artwork>> {
-    url.as_ref().and_then(|url| state.feeds.images.get(url))
 }
 
 /// An image, or the initials of `name` on a disc until it arrives (or when there is none),
@@ -3847,43 +4500,6 @@ fn emblem(
     );
 }
 
-fn team_logo(out: &mut Scene, state: &State, team: &Option<crate::feeds::Team>, rect: Rect) {
-    match team {
-        Some(team) => emblem(
-            out,
-            state,
-            &team.image,
-            &team.short,
-            rect,
-            Some(name_tint(&team.short)),
-        ),
-        None => emblem(out, state, &None, "?", rect, None),
-    }
-}
-
-/// "1000000 United States Dollar" as "$1 000 000"; other currencies keep their name.
-pub(crate) fn prize(prizepool: &str) -> String {
-    let (amount, currency) = prizepool.split_once(' ').unwrap_or((prizepool, ""));
-    // PandaScore writes some amounts with thousands separators, e.g. "2,500".
-    let amount = amount.replace(',', "");
-    if amount.is_empty() || !amount.chars().all(|c| c.is_ascii_digit()) {
-        return prizepool.to_owned();
-    }
-    let mut grouped = String::new();
-    for (index, digit) in amount.chars().enumerate() {
-        if index > 0 && (amount.len() - index) % 3 == 0 {
-            grouped.push(' ');
-        }
-        grouped.push(digit);
-    }
-    match currency {
-        "United States Dollar" => format!("${grouped}"),
-        "Euro" => format!("€{grouped}"),
-        "" => grouped,
-        other => format!("{grouped} {other}"),
-    }
-}
-
 /// A small label on a rounded fill; returns where the next one starts.
 fn chip(
     out: &mut Scene,
@@ -3907,353 +4523,6 @@ fn chip(
     x + w + 10.
 }
 
-/// The red LIVE badge centred in `rect`'s width at its top.
-fn live_badge(out: &mut Scene, language: Language, rect: Rect, size: f32) {
-    let w = (size * 4.).max(52.);
-    let h = size * 1.7;
-    let badge = Rect::new(rect.x + (rect.w - w) / 2., rect.y, w, h);
-    out.shape(badge, h * 0.28, c(0xe5484d, 1.));
-    out.text(
-        language.t("live"),
-        Rect::new(badge.x, badge.y + (h - size * 1.25) / 2., w, size * 1.25),
-        text(size, 650, 0.06),
-        WHITE,
-        true,
-    );
-}
-
-/// "Data as of 17:46" when a widget shows the shared feed, which may lag behind.
-fn as_of(state: &State, instance: u8, now: OffsetDateTime) -> Option<String> {
-    let updated = OffsetDateTime::from_unix_timestamp(state.esports_updated(instance)?).ok()?;
-    let language = state.preferences.language;
-    Some(language.format(
-        "esportsAsOf",
-        &[("time", &local_time(updated, now, language))],
-    ))
-}
-
-/// Whole minutes since an RFC 3339 instant.
-fn minutes_since(begin_at: &str, now: OffsetDateTime) -> Option<i64> {
-    let start =
-        OffsetDateTime::parse(begin_at, &time::format_description::well_known::Rfc3339).ok()?;
-    Some((now - start).whole_minutes()).filter(|minutes| *minutes >= 0)
-}
-
-/// An esports widget: its disciplines' live and upcoming matches as a row of scoreboard cards.
-#[allow(clippy::too_many_arguments)]
-fn esports_block(
-    out: &mut Scene,
-    state: &State,
-    assets: &Assets,
-    theme: &crate::themes::Theme,
-    instance: u8,
-    block: &crate::home_grid::Block,
-    rect: Rect,
-    now: OffsetDateTime,
-) {
-    let language = state.preferences.language;
-    let widget = state.esports_widget(instance);
-    let names: Vec<&str> = widget.games.iter().map(|game| game_name(game)).collect();
-    let matches = state.esports_matches(instance);
-    let track = design::track(block, rect, design::WIDE_W);
-    let first = track.first(
-        state.row_scroll.get(&block.kind).copied().unwrap_or(0),
-        matches.len(),
-    );
-    let meta: Vec<String> = row_position(&track, first, matches.len())
-        .into_iter()
-        .chain(as_of(state, instance, now))
-        .collect();
-    row_header(
-        out,
-        assets,
-        rect,
-        &format!("{} · {}", language.t("esportsWidget"), names.join(", ")),
-        &meta,
-    );
-    let message = if state.feeds.matches_error == Some(crate::feeds::MatchesError::Key) {
-        Some("esportsBadKey")
-    } else if matches.is_empty() {
-        let loaded = widget
-            .games
-            .iter()
-            .all(|game| state.feeds.matches.contains_key(game));
-        Some(if !loaded && state.feeds.matches_error.is_some() {
-            "esportsUnavailable"
-        } else if !loaded {
-            "esportsLoading"
-        } else {
-            "esportsNone"
-        })
-    } else {
-        None
-    };
-    if let Some(key) = message {
-        ghost(
-            out,
-            assets,
-            Rect::new(track.x, track.y, rect.w, track.height),
-            language.t(key),
-        );
-        return;
-    }
-    let several = widget.games.len() > 1;
-    track_cards(
-        out,
-        state,
-        track,
-        block.kind,
-        matches.len(),
-        |out, index, card| {
-            let target = Target::Match(instance, index);
-            let focused = state.focus == target && !state.pointer;
-            match_card(
-                out,
-                state,
-                assets,
-                theme,
-                matches[index],
-                card,
-                several,
-                focused,
-                now,
-            );
-            target
-        },
-    );
-}
-
-/// One match on Home: event and status, both teams with their maps won, then the live map or
-/// the series length and stage.
-#[allow(clippy::too_many_arguments)]
-fn match_card(
-    out: &mut Scene,
-    state: &State,
-    assets: &Assets,
-    theme: &crate::themes::Theme,
-    found: &crate::feeds::CsMatch,
-    rect: Rect,
-    several: bool,
-    focused: bool,
-    now: OffsetDateTime,
-) {
-    use crate::feeds::GameState;
-    let language = state.preferences.language;
-    let dim = design::ink;
-    let compact = rect.h < 200.;
-    card(
-        out,
-        theme,
-        rect,
-        focused,
-        found
-            .running
-            .then(|| design::color(design::LIVE, if focused { 0.7 } else { 0.38 })),
-    );
-    let card = rect;
-    let pad = design::PAD;
-    let right = card.x + card.w - pad;
-
-    // Top: LIVE or the start, then the league's logo and event in what is left.
-    let top = card.y + if compact { 13. } else { 18. };
-    let mut x = card.x + pad;
-    if found.running {
-        live_badge(out, language, Rect::new(x, top, 52., 22.), 13.);
-        x += 52. + 12.;
-    } else {
-        let style = text(16., 600, 0.);
-        let start = match_time(&found.begin_at, now, language);
-        let w = assets.width(&start, style) + 4.;
-        out.text(&start, Rect::new(x, top + 1., w, 22.), style, WHITE, false);
-        x += w + 12.;
-    }
-    if let Some(image) = feed_image(state, &found.league_image) {
-        out.draw.push(Draw::AppImage(
-            image.clone(),
-            Rect::new(x, top - 1., 24., 24.),
-            [1.; 4],
-        ));
-        x += 32.;
-    }
-    let event = if several {
-        format!("{} · {}", game_name(&found.game), found.event)
-    } else {
-        found.event.clone()
-    };
-    let event_style = text(15.2, 500, 0.);
-    let event_w = right - x;
-    if event_w > 24. {
-        out.text(
-            fit(assets, &event, event_style, event_w),
-            Rect::new(x, top + 2., event_w, 20.),
-            event_style,
-            dim(0.6),
-            false,
-        );
-    }
-
-    // Teams, the side ahead in white.
-    let (row_h, logo, name_size, score_size) = if compact {
-        (38., 32., 21., 26.)
-    } else {
-        (66., 54., 26., 40.)
-    };
-    let teams_y = if compact {
-        card.y + 40.
-    } else {
-        card.y + 56. + ((card.h - 56. - 50.) - 2. * row_h) / 2.
-    };
-    let scored = found.running || found.score != [0, 0];
-    let score_w = if scored { score_size * 1.5 } else { 0. };
-    for (side, team) in found.teams.iter().enumerate() {
-        let y = teams_y + side as f32 * row_h;
-        team_logo(
-            out,
-            state,
-            team,
-            Rect::new(card.x + pad, y + (row_h - logo) / 2., logo, logo),
-        );
-        let name_x = card.x + pad + logo + 14.;
-        let name_w = right - score_w - 10. - name_x;
-        let style = text(name_size, 600, -0.01);
-        let name = match team {
-            Some(team) if assets.width(&team.name, style) <= name_w => team.name.as_str(),
-            Some(team) => team.short.as_str(),
-            None => "TBD",
-        };
-        out.text(
-            fit(assets, name, style, name_w),
-            Rect::new(
-                name_x,
-                y + (row_h - name_size * 1.3) / 2.,
-                name_w,
-                name_size * 1.3,
-            ),
-            style,
-            if team.is_some() { WHITE } else { dim(0.5) },
-            false,
-        );
-        if scored {
-            let ahead = found.score[side] >= found.score[1 - side];
-            out.text(
-                found.score[side].to_string(),
-                Rect::new(
-                    right - score_w,
-                    y + (row_h - score_size * 1.3) / 2.,
-                    score_w,
-                    score_size * 1.3,
-                ),
-                design::figure(score_size).right(),
-                if ahead { WHITE } else { dim(0.42) },
-                false,
-            );
-        }
-    }
-
-    // Bottom: the live map with its rounds and a dot per map, or the series and stage.
-    let bottom = card.y + card.h - if compact { 29. } else { 38. };
-    if !compact {
-        out.shape(
-            Rect::new(card.x + pad, bottom - 12., card.w - 2. * pad, 1.),
-            0.,
-            c(0xffffff, 0.08),
-        );
-    }
-    let style = text(15.2, 500, 0.);
-    if !found.running {
-        let parts: Vec<String> = [format!("BO{}", found.best_of), found.stage.clone()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect();
-        out.text(
-            fit(assets, &parts.join(" · "), style, card.w - 2. * pad),
-            Rect::new(card.x + pad, bottom, card.w - 2. * pad, 20.),
-            style,
-            dim(0.55),
-            false,
-        );
-        return;
-    }
-    let count = found.best_of.clamp(1, 7) as usize;
-    let dots_x = right - (count as f32 * 14. - 6.);
-    for position in 1..=count {
-        let dot = Rect::new(dots_x + (position - 1) as f32 * 14., bottom + 6., 8., 8.);
-        match found
-            .games
-            .iter()
-            .find(|game| game.position == position as u64)
-            .map(|game| game.state)
-        {
-            Some(GameState::Running) => out.shape(dot, 4., c(0xff5a5f, 1.)),
-            Some(GameState::Finished) => out.shape(dot, 4., dim(0.75)),
-            _ => out.border(dot, 4., 1.5, dim(0.3)),
-        }
-    }
-    let live = found
-        .games
-        .iter()
-        .find(|game| game.state == GameState::Running);
-    let number = live.map_or_else(
-        || {
-            found
-                .games
-                .iter()
-                .filter(|game| game.state == GameState::Finished)
-                .count() as u64
-                + 1
-        },
-        |game| game.position,
-    );
-    let mut label = language.format("esportsMap", &[("number", &number.to_string())]);
-    if let Some(game) = live.filter(|game| !game.map.is_empty()) {
-        label = format!("{label} · {}", game.map);
-    }
-    let mut label_w = dots_x - 14. - (card.x + pad);
-    if let Some(score) = live.and_then(|game| game.score) {
-        let rounds = map_score(score);
-        let rounds_style = text(15.2, 650, 0.);
-        let w = assets.width(&rounds, rounds_style) + 4.;
-        out.text(
-            &rounds,
-            Rect::new(dots_x - 14. - w, bottom, w, 20.),
-            rounds_style,
-            WHITE,
-            false,
-        );
-        label_w -= w + 10.;
-    }
-    out.text(
-        fit(assets, &label, style, label_w),
-        Rect::new(card.x + pad, bottom, label_w, 20.),
-        style,
-        dim(0.8),
-        false,
-    );
-}
-
-/// "13:11"; Overwatch's Push distances keep one decimal.
-fn map_score(score: [f64; 2]) -> String {
-    let points = |value: f64| {
-        if value.fract() == 0. {
-            format!("{}", value as i64)
-        } else {
-            format!("{value:.1}")
-        }
-    };
-    format!("{}:{}", points(score[0]), points(score[1]))
-}
-
-/// A team's colour: its logo's accent once loaded, else a steady one from its name.
-fn team_tint(state: &State, team: &crate::feeds::Team) -> Color {
-    feed_image(state, &team.image)
-        .map(|image| image.backdrop[0])
-        .filter(|rgb| *rgb != crate::feeds::NO_ACCENT)
-        .map_or_else(
-            || name_tint(&team.short),
-            |[r, g, b]| [r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.],
-        )
-}
-
 /// One of a few calm colours, always the same for the same name.
 fn name_tint(name: &str) -> Color {
     const TINTS: [u32; 8] = [
@@ -4267,748 +4536,6 @@ fn name_tint(name: &str) -> Color {
 
 fn alpha(color: Color, alpha: f32) -> Color {
     [color[0], color[1], color[2], alpha]
-}
-
-/// A match's details: event, scoreboard with logos, each map, lineups and where it streams.
-fn match_dialog(
-    out: &mut Scene,
-    state: &State,
-    assets: &Assets,
-    instance: u8,
-    index: usize,
-    now: OffsetDateTime,
-) {
-    use crate::feeds::GameState;
-    let language = state.preferences.language;
-    let matches = state.esports_matches(instance);
-    let Some(found) = matches.get(index) else {
-        return;
-    };
-    let as_of = as_of(state, instance, now);
-    // Shared data counts a live map's minutes up to when it was built.
-    let data_time = state
-        .esports_updated(instance)
-        .and_then(|updated| OffsetDateTime::from_unix_timestamp(updated).ok())
-        .map_or(now, |updated| updated.min(now));
-    let panel = Rect::new(296., 52., 1328., 976.);
-    out.modal = Some(panel);
-    out.shadow(panel, 28., 120., 25., 0.5);
-    out.draw.push(Draw::RoundedGradient(
-        panel,
-        28.,
-        c(0x2f3337, 0.98),
-        c(0x1a1d21, 0.99),
-    ));
-    out.border(panel, 28., 1., c(0xffffff, 0.11));
-    let close = Rect::new(panel.x + panel.w - 82., panel.y + 40., 33.6, 33.6);
-    out.shape(close, 16.8, c(0xffffff, 0.035));
-    out.border(close, 16.8, 1., c(0xffffff, 0.07));
-    out.icon(assets, "close", close.inset(7.6), WHITE);
-    if state.focus == Target::CloseDialog {
-        out.border(close.inset(1.), 15.8, 2., WHITE);
-    }
-    out.control(Target::CloseDialog, close, false);
-    let left = panel.x + 48.;
-    let width = panel.w - 96.;
-    let dim = |alpha| c(0xf5f5f5, alpha);
-    let caps = |out: &mut Scene, label: &str, rect: Rect| {
-        out.text(label.to_uppercase(), rect, design::caps(), dim(0.5), false);
-    };
-
-    // Header: league logo, event, discipline and stage, then the series' facts.
-    let mut x = left;
-    if let Some(image) = feed_image(state, &found.league_image) {
-        out.draw.push(Draw::AppImage(
-            image.clone(),
-            Rect::new(left, panel.y + 38., 58., 58.),
-            [1.; 4],
-        ));
-        x += 76.;
-    }
-    let header_w = close.x - 24. - x;
-    let title = text(28., 650, -0.02);
-    out.text(
-        fit(assets, &found.event, title, header_w),
-        Rect::new(x, panel.y + 36., header_w, 34.),
-        title,
-        WHITE,
-        false,
-    );
-    let subtitle: Vec<&str> = [game_name(&found.game), found.stage.as_str()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect();
-    out.text(
-        subtitle.join(" · "),
-        Rect::new(x, panel.y + 76., header_w, 22.),
-        text(17.6, 450, 0.),
-        dim(0.6),
-        false,
-    );
-    let neutral = (c(0xffffff, 0.07), WHITE);
-    let chips_y = panel.y + 116.;
-    let mut cx = chip(
-        out,
-        assets,
-        &format!("BO{}", found.best_of),
-        left,
-        chips_y,
-        neutral,
-    );
-    if !found.tier.is_empty() {
-        let tier = format!("Tier {}", found.tier.to_uppercase());
-        cx = chip(out, assets, &tier, cx, chips_y, neutral);
-    }
-    match found.online {
-        Some(true) => {
-            cx = chip(
-                out,
-                assets,
-                language.t("esportsOnline"),
-                cx,
-                chips_y,
-                neutral,
-            )
-        }
-        Some(false) => cx = chip(out, assets, "LAN", cx, chips_y, neutral),
-        None => {}
-    }
-    if !found.prizepool.is_empty() {
-        let gold = (design::color(design::GOLD, 0.16), c(0xf7d88a, 1.));
-        chip(out, assets, &prize(&found.prizepool), cx, chips_y, gold);
-    }
-
-    // Scoreboard: each team in its own colour around the series score.
-    let hero = Rect::new(left, panel.y + 168., width, 226.);
-    out.draw.push(Draw::RoundedGradient(
-        hero,
-        22.,
-        if found.running {
-            c(0x5c262b, 0.55)
-        } else {
-            c(0xffffff, 0.06)
-        },
-        c(0xffffff, 0.02),
-    ));
-    out.border(
-        hero,
-        22.,
-        1.,
-        if found.running {
-            c(0xe5484d, 0.3)
-        } else {
-            c(0xffffff, 0.07)
-        },
-    );
-    let column = 420.;
-    for (side, team) in found.teams.iter().enumerate() {
-        let x = if side == 0 {
-            hero.x
-        } else {
-            hero.x + hero.w - column
-        };
-        let logo = Rect::new(x + (column - 112.) / 2., hero.y + 24., 112., 112.);
-        if let Some(team) = team {
-            out.draw.push(Draw::Shadow(
-                logo.inset(10.),
-                46.,
-                64.,
-                alpha(team_tint(state, team), 0.3),
-            ));
-        }
-        team_logo(out, state, team, logo);
-        let style = text(28., 650, -0.02);
-        let name = team.as_ref().map_or("TBD", |team| team.name.as_str());
-        out.text(
-            fit(assets, name, style, column - 32.),
-            Rect::new(x, hero.y + 150., column, 34.),
-            style,
-            WHITE,
-            true,
-        );
-        if let Some(team) = team.as_ref().filter(|team| !team.location.is_empty()) {
-            out.text(
-                &team.location,
-                Rect::new(x, hero.y + 188., column, 20.),
-                text(15.2, 600, 0.1),
-                dim(0.5),
-                true,
-            );
-        }
-    }
-    let middle = Rect::new(hero.x + column, hero.y, hero.w - 2. * column, hero.h);
-    let centre = middle.x + middle.w / 2.;
-    if found.running || found.score != [0, 0] {
-        let style = text(84., 800, -0.03);
-        let tone = |mine: u64, theirs: u64| if mine >= theirs { WHITE } else { dim(0.42) };
-        out.text(
-            found.score[0].to_string(),
-            Rect::new(middle.x, hero.y + 24., centre - 34. - middle.x, 104.),
-            style.right(),
-            tone(found.score[0], found.score[1]),
-            false,
-        );
-        out.text(
-            ":",
-            Rect::new(centre - 34., hero.y + 18., 68., 104.),
-            style,
-            dim(0.35),
-            true,
-        );
-        out.text(
-            found.score[1].to_string(),
-            Rect::new(centre + 34., hero.y + 24., middle.w / 2. - 34., 104.),
-            style,
-            tone(found.score[1], found.score[0]),
-            false,
-        );
-    } else {
-        out.text(
-            "VS",
-            Rect::new(middle.x, hero.y + 44., middle.w, 56.),
-            text(44., 650, 0.08),
-            dim(0.3),
-            true,
-        );
-    }
-    if found.running {
-        live_badge(
-            out,
-            language,
-            Rect::new(middle.x, hero.y + 134., middle.w, 30.),
-            15.2,
-        );
-        // The map being played, with its rounds when known.
-        let live = found.games.iter().find(|g| g.state == GameState::Running);
-        let number = live.map_or_else(
-            || {
-                found
-                    .games
-                    .iter()
-                    .filter(|g| g.state == GameState::Finished)
-                    .count() as u64
-                    + 1
-            },
-            |g| g.position,
-        );
-        let mut parts = vec![language.format("esportsMap", &[("number", &number.to_string())])];
-        parts.extend(live.filter(|g| !g.map.is_empty()).map(|g| g.map.clone()));
-        parts.extend(live.and_then(|g| g.score).map(map_score));
-        let style = text(16., 600, 0.);
-        out.text(
-            fit(assets, &parts.join(" · "), style, middle.w),
-            Rect::new(middle.x, hero.y + 172., middle.w, 22.),
-            style,
-            dim(0.85),
-            true,
-        );
-        if let Some(as_of) = &as_of {
-            out.text(
-                as_of,
-                Rect::new(middle.x, hero.y + 198., middle.w, 20.),
-                text(14.4, 500, 0.),
-                dim(0.48),
-                true,
-            );
-        }
-    } else {
-        out.text(
-            match_time(&found.begin_at, now, language),
-            Rect::new(middle.x, hero.y + 142., middle.w, 30.),
-            text(24., 650, 0.),
-            dim(0.85),
-            true,
-        );
-    }
-
-    // Maps: a tile per map with its name, who picked it, its winner and rounds.
-    let maps_y = hero.y + hero.h + 26.;
-    caps(
-        out,
-        language.t("esportsMaps"),
-        Rect::new(left, maps_y, 400., 20.),
-    );
-    let count = found.best_of.clamp(1, 7) as usize;
-    let gap = 14.;
-    let tile_w = ((width - gap * (count - 1) as f32) / count as f32).min(400.);
-    let minutes =
-        |minutes: i64| language.format("esportsMinutes", &[("number", &minutes.to_string())]);
-    for position in 1..=count {
-        let game = found.games.iter().find(|g| g.position == position as u64);
-        let tile = Rect::new(
-            left + (position - 1) as f32 * (tile_w + gap),
-            maps_y + 30.,
-            tile_w,
-            136.,
-        );
-        let running = game.is_some_and(|g| g.state == GameState::Running);
-        if running {
-            out.draw.push(Draw::RoundedGradient(
-                tile,
-                18.,
-                c(0xe5484d, 0.3),
-                c(0xe5484d, 0.08),
-            ));
-            out.border(tile, 18., 1.5, c(0xe5484d, 0.75));
-        } else if game.is_some_and(|g| g.state == GameState::Finished) {
-            out.draw.push(Draw::RoundedGradient(
-                tile,
-                18.,
-                c(0xffffff, 0.08),
-                c(0xffffff, 0.035),
-            ));
-            out.border(tile, 18., 1., c(0xffffff, 0.08));
-        } else {
-            out.shape(tile, 18., c(0xffffff, 0.03));
-            out.border(tile, 18., 1., c(0xffffff, 0.06));
-        }
-        let inner_x = tile.x + 20.;
-        let mut inner_w = tile.w - 40.;
-        // The map's number, large and faint, where a wide tile has room for it.
-        if tile.w >= 260. {
-            out.text(
-                format!("{position:02}"),
-                Rect::new(tile.x + tile.w - 104., tile.y + 6., 88., 70.),
-                text(56., 800, -0.02).right(),
-                c(0xffffff, if running { 0.1 } else { 0.06 }),
-                false,
-            );
-            inner_w -= 64.;
-        }
-        match game.filter(|g| !g.map.is_empty()) {
-            Some(game) => {
-                let style = text(23., 650, -0.01);
-                out.text(
-                    fit(assets, &game.map, style, inner_w),
-                    Rect::new(inner_x, tile.y + 16., inner_w, 30.),
-                    style,
-                    WHITE,
-                    false,
-                );
-            }
-            None => out.text(
-                language.format("esportsMap", &[("number", &position.to_string())]),
-                Rect::new(inner_x, tile.y + 18., inner_w, 26.),
-                text(19.2, 600, 0.),
-                dim(0.62),
-                false,
-            ),
-        }
-        let pick = game.and_then(|g| {
-            if g.decider {
-                return Some(language.t("esportsDecider").to_owned());
-            }
-            let team = found
-                .teams
-                .iter()
-                .flatten()
-                .find(|team| Some(team.id) == g.picked_by)?;
-            Some(language.format("esportsPick", &[("team", &team.short)]))
-        });
-        if let Some(pick) = pick {
-            let style = text(14.4, 550, 0.02);
-            out.text(
-                fit(assets, &pick, style, inner_w),
-                Rect::new(inner_x, tile.y + 50., inner_w, 20.),
-                style,
-                dim(0.55),
-                false,
-            );
-        }
-        // The result row: rounds on the right, the winner or LIVE on the left.
-        let row_y = tile.y + tile.h - 48.;
-        let inner_w = tile.w - 40.;
-        let mut result_w = inner_w;
-        if let Some(score) = game.and_then(|g| g.score) {
-            let rounds = map_score(score);
-            let style = text(23., 650, 0.);
-            let w = assets.width(&rounds, style) + 4.;
-            out.text(
-                &rounds,
-                Rect::new(inner_x + inner_w - w, row_y - 2., w, 30.),
-                style,
-                WHITE,
-                false,
-            );
-            result_w -= w + 10.;
-        }
-        let winner = game
-            .and_then(|g| g.winner)
-            .and_then(|id| found.teams.iter().flatten().find(|team| team.id == id));
-        match (game, winner) {
-            (Some(game), _) if running => {
-                let style = text(17.6, 650, 0.06);
-                let live = language.t("live");
-                out.text(
-                    live,
-                    Rect::new(inner_x, row_y + 2., result_w, 24.),
-                    style,
-                    design::color(design::LIVE_TEXT, 1.),
-                    false,
-                );
-                if let Some(elapsed) = minutes_since(&game.begin_at, data_time) {
-                    let x = inner_x + assets.width(live, style) + 10.;
-                    out.text(
-                        minutes(elapsed),
-                        Rect::new(x, row_y + 4., inner_x + result_w - x, 20.),
-                        text(15.2, 500, 0.),
-                        dim(0.65),
-                        false,
-                    );
-                }
-            }
-            (Some(game), Some(team)) => {
-                emblem(
-                    out,
-                    state,
-                    &team.image,
-                    &team.short,
-                    Rect::new(inner_x, row_y, 26., 26.),
-                    Some(team_tint(state, team)),
-                );
-                let style = text(17.6, 650, 0.);
-                let mut label = team.short.clone();
-                if let Some(length) = game.length {
-                    label = format!("{label} · {}", minutes((length / 60) as i64));
-                }
-                out.text(
-                    fit(assets, &label, style, result_w - 36.),
-                    Rect::new(inner_x + 36., row_y + 2., result_w - 36., 24.),
-                    style,
-                    WHITE,
-                    false,
-                );
-            }
-            _ => out.text(
-                "—",
-                Rect::new(inner_x, row_y, result_w, 26.),
-                text(19.2, 500, 0.),
-                dim(0.3),
-                false,
-            ),
-        }
-    }
-
-    // Lineups side by side: photo, nickname, real name, then country and role; the bench and
-    // coach Liquipedia marks share a dimmer line below.
-    let footer_y = panel.y + panel.h - 86.;
-    let lineup_y = maps_y + 30. + 136. + 24.;
-    let column_w = (width - 24.) / 2.;
-    for (side, team) in found.teams.iter().enumerate() {
-        let card = Rect::new(
-            left + side as f32 * (column_w + 24.),
-            lineup_y,
-            column_w,
-            footer_y - 16. - lineup_y,
-        );
-        out.draw.push(Draw::RoundedGradient(
-            card,
-            18.,
-            c(0xffffff, 0.05),
-            c(0xffffff, 0.02),
-        ));
-        out.border(card, 18., 1., c(0xffffff, 0.06));
-        let x = card.x + 20.;
-        let inner_w = card.w - 40.;
-        let name = team.as_ref().map_or("TBD", |team| team.short.as_str());
-        team_logo(out, state, team, Rect::new(x, card.y + 16., 28., 28.));
-        out.text(
-            language.format("esportsLineup", &[("team", name)]),
-            Rect::new(x + 40., card.y + 19., inner_w - 40., 24.),
-            text(17.6, 650, 0.),
-            dim(0.88),
-            false,
-        );
-        let players = team
-            .as_ref()
-            .and_then(|team| state.feeds.rosters.get(&team.id));
-        let tint = team.as_ref().map(|team| alpha(team_tint(state, team), 0.8));
-        let rows_y = card.y + 58.;
-        match players {
-            Some(players) if !players.is_empty() => {
-                let (bench, starters): (Vec<_>, Vec<_>) =
-                    players.iter().partition(|player| player.substitute);
-                let bench_y = card.y + card.h - 10. - if bench.is_empty() { 0. } else { 40. };
-                let row_h = ((bench_y - rows_y) / starters.len().max(1) as f32).min(40.);
-                let avatar = (row_h - 6.).min(32.);
-                for (row, player) in starters.into_iter().enumerate() {
-                    let y = rows_y + row as f32 * row_h;
-                    emblem(
-                        out,
-                        state,
-                        &player.image,
-                        &player.name,
-                        Rect::new(x, y, avatar, avatar),
-                        tint,
-                    );
-                    let meta: Vec<String> =
-                        [player.nationality.clone(), player.role.to_uppercase()]
-                            .into_iter()
-                            .filter(|part| !part.is_empty())
-                            .collect();
-                    let meta = meta.join(" · ");
-                    let meta_style = text(14.4, 600, 0.08);
-                    let meta_w = assets.width(&meta, meta_style);
-                    out.text(
-                        &meta,
-                        Rect::new(
-                            x + inner_w - meta_w - 4.,
-                            y + (avatar - 18.) / 2.,
-                            meta_w + 4.,
-                            18.,
-                        ),
-                        meta_style,
-                        dim(0.5),
-                        false,
-                    );
-                    let nick = text(19.2, 650, -0.01);
-                    let text_y = y + (avatar - 24.) / 2.;
-                    let nick_x = x + avatar + 14.;
-                    out.text(
-                        &player.name,
-                        Rect::new(nick_x, text_y, inner_w, 24.),
-                        nick,
-                        WHITE,
-                        false,
-                    );
-                    let real_x = nick_x + assets.width(&player.name, nick) + 12.;
-                    let real_w = x + inner_w - meta_w - 20. - real_x;
-                    if !player.real_name.is_empty() && real_w > 40. {
-                        let style = text(16., 450, 0.);
-                        out.text(
-                            fit(assets, &player.real_name, style, real_w),
-                            Rect::new(real_x, text_y + 3., real_w, 20.),
-                            style,
-                            dim(0.5),
-                            false,
-                        );
-                    }
-                }
-                if !bench.is_empty() {
-                    let line_y = bench_y + 4.;
-                    out.shape(Rect::new(x, line_y, inner_w, 1.), 0., c(0xffffff, 0.08));
-                    let (coaches, subs): (Vec<_>, Vec<_>) = bench
-                        .into_iter()
-                        .partition(|player| player.role.eq_ignore_ascii_case("coach"));
-                    let mut part_x = x;
-                    for (key, people) in [("esportsBench", subs), ("esportsCoach", coaches)] {
-                        let end = x + inner_w;
-                        if people.is_empty() || part_x > end - 80. {
-                            continue;
-                        }
-                        let label = language.t(key).to_uppercase();
-                        let label_style = text(13.6, 650, 0.1);
-                        let label_w = assets.width(&label, label_style);
-                        out.text(
-                            &label,
-                            Rect::new(part_x, line_y + 14.5, label_w + 4., 17.),
-                            label_style,
-                            dim(0.42),
-                            false,
-                        );
-                        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
-                        let style = text(16., 550, 0.);
-                        let names_x = part_x + label_w + 10.;
-                        let names = fit(assets, &names.join(" · "), style, end - names_x);
-                        let names_w = assets.width(&names, style);
-                        out.text(
-                            &names,
-                            Rect::new(names_x, line_y + 12., names_w + 4., 20.),
-                            style,
-                            dim(0.6),
-                            false,
-                        );
-                        part_x = names_x + names_w + 28.;
-                    }
-                }
-            }
-            _ => out.text(
-                // Without a key the shared feed is the only source of lineups.
-                language.t(
-                    if players.is_some()
-                        || team.is_none()
-                        || state.preferences.esports_key.trim().is_empty()
-                    {
-                        "esportsNoLineup"
-                    } else {
-                        "esportsLineupLoading"
-                    },
-                ),
-                Rect::new(x, rows_y + 4., inner_w, 26.),
-                text(17.6, 450, 0.),
-                dim(0.5),
-                false,
-            ),
-        }
-    }
-
-    // Footer: where it streams, official ones first, the maps' credit, then the data note.
-    let mut streams: Vec<&crate::feeds::Stream> = found.streams.iter().collect();
-    streams.sort_by_key(|s| (!s.official, !s.main));
-    let mut seen = Vec::new();
-    let streams: Vec<String> = streams
-        .into_iter()
-        .filter(|s| !s.platform.is_empty())
-        .filter(|s| {
-            let key = (s.language.clone(), s.platform.clone());
-            !seen.contains(&key) && {
-                seen.push(key);
-                true
-            }
-        })
-        .take(4)
-        .map(|s| {
-            let name = format!("{} {}", s.language.to_uppercase(), s.platform);
-            if s.official {
-                format!("{} ({})", name.trim(), language.t("esportsOfficial"))
-            } else {
-                name.trim().to_owned()
-            }
-        })
-        .collect();
-    // Whatever came from Liquipedia is credited: map names, a marked bench or both.
-    let benched = found.teams.iter().flatten().any(|team| {
-        state
-            .feeds
-            .rosters
-            .get(&team.id)
-            .is_some_and(|players| players.iter().any(|player| player.substitute))
-    });
-    let credit = match (!found.maps_source.is_empty(), benched) {
-        (true, true) => Some("esportsMapsLineupsCredit"),
-        (true, false) => Some("esportsMapsCredit"),
-        (false, true) => Some("esportsLineupsCredit"),
-        (false, false) => None,
-    };
-    let mut streams_w = width;
-    if let Some(credit) = credit {
-        let credit = language.t(credit);
-        let style = text(14.4, 500, 0.);
-        let w = assets.width(credit, style) + 4.;
-        out.text(
-            credit,
-            Rect::new(left + width - w, footer_y + 8., w, 20.),
-            style,
-            dim(0.5),
-            false,
-        );
-        streams_w -= w + 24.;
-    }
-    if !streams.is_empty() {
-        let label = format!("{}:", language.t("esportsStreams"));
-        let label_style = text(16., 650, 0.);
-        let label_w = assets.width(&label, label_style);
-        out.text(
-            &label,
-            Rect::new(left, footer_y + 6., label_w + 4., 22.),
-            label_style,
-            dim(0.8),
-            false,
-        );
-        let style = text(16., 450, 0.);
-        out.text(
-            fit(
-                assets,
-                &streams.join(" · "),
-                style,
-                streams_w - label_w - 12.,
-            ),
-            Rect::new(
-                left + label_w + 10.,
-                footer_y + 6.,
-                streams_w - label_w - 10.,
-                22.,
-            ),
-            style,
-            dim(0.7),
-            false,
-        );
-    }
-    out.text(
-        language.t(if state.preferences.esports_key.trim().is_empty() {
-            "esportsSharedNote"
-        } else {
-            "esportsFreeNote"
-        }),
-        // Up to two lines: the shared feed's note is long in some languages.
-        Rect::new(left, footer_y + 38., width, 44.),
-        text(14.4, 400, 0.).leading(1.4),
-        dim(0.42),
-        false,
-    );
-}
-
-/// An esports widget's settings: the shared key, its disciplines and the major-events filter.
-fn esports_settings(out: &mut Scene, state: &State, assets: &Assets, instance: u8) {
-    let language = state.preferences.language;
-    let s = state.scroll;
-    let widget = state.esports_widget(instance);
-    let key = state.preferences.esports_key.trim();
-    let masked = if key.is_empty() {
-        language.t("esportsKeyMissing").to_owned()
-    } else {
-        let tail: String = key
-            .chars()
-            .rev()
-            .take(4)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        format!("•••• {tail}")
-    };
-    let names: Vec<&str> = widget.games.iter().map(|game| game_name(game)).collect();
-    let rows = [
-        (Target::EsportsKey, language.t("esportsKey"), "type", masked),
-        (
-            Target::EsportsPhone,
-            language.t("esportsPhone"),
-            "sparkles",
-            String::new(),
-        ),
-        (
-            Target::EsportsGames,
-            language.t("esportsGames"),
-            "grid",
-            names.join(", "),
-        ),
-        (
-            Target::EsportsMajor,
-            language.t("esportsMajorOnly"),
-            "sparkles",
-            language
-                .t(if widget.major_only {
-                    "stateOn"
-                } else {
-                    "stateOff"
-                })
-                .to_owned(),
-        ),
-    ];
-    for (position, (target, title, icon, value)) in rows.into_iter().enumerate() {
-        row(
-            out,
-            state,
-            assets,
-            Row {
-                target,
-                rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
-                title,
-                icon: Some(icon),
-                value: (!value.is_empty()).then_some(value.as_str()),
-                description: None,
-                selected: false,
-                chevron: position < 3,
-            },
-        );
-    }
-    out.text(
-        language.t("esportsKeyHint"),
-        Rect::new(660., 164.8 + 4. * 84. + 8. - s, 1080., 60.),
-        text(16., 400, 0.).leading(1.5),
-        c(0xf5f5f5, 0.55),
-        false,
-    );
 }
 
 /// Sending the key from a phone: the QR code, numbered steps and the address to type instead.
@@ -5091,4 +4618,139 @@ fn phone_key_dialog(out: &mut Scene, state: &State, assets: &Assets) {
         WHITE,
         false,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Preferences;
+
+    fn assets() -> Assets {
+        Assets {
+            root: PathBuf::new(),
+            version: "test".into(),
+            metrics: BTreeMap::from([
+                ("display-500".into(), BTreeMap::from([('W', 1.)])),
+                ("500".into(), BTreeMap::from([('W', 1.2)])),
+                (
+                    "fallback-500".into(),
+                    BTreeMap::from([('界', 1.), ('한', 1.)]),
+                ),
+            ]),
+            artwork: crate::app_artwork::Service::new(false),
+        }
+    }
+
+    #[test]
+    fn upload_button_padding_tracks_the_label_in_every_language() {
+        let assets = assets();
+        let mut state = State::new(Preferences::default());
+        state.open(2);
+        state.section = 1;
+        for language in Language::ALL {
+            state.preferences.language = language;
+            let label = language.t("uploadWallpaper");
+            let label_width = assets.width(label, text(20.8, 550, -0.02));
+            let mut scene = Scene::new();
+            settings(&mut scene, &state, &assets);
+            let button = scene
+                .controls
+                .iter()
+                .find(|control| control.target == Target::UploadWallpaper)
+                .unwrap()
+                .rect;
+            let title = scene
+                .draw
+                .iter()
+                .find_map(|draw| match draw {
+                    Draw::Text(value, rect, ..) if value == label => Some(rect),
+                    _ => None,
+                })
+                .unwrap();
+            let right_padding = button.x + button.w - title.x - label_width;
+            assert!((24.2..25.6).contains(&right_padding));
+        }
+    }
+
+    #[test]
+    fn auto_rotation_keeps_a_compact_gap_and_right_aligned_state() {
+        let assets = assets();
+        let mut state = State::new(Preferences::default());
+        state.open(2);
+        state.section = 1;
+        let label = state.preferences.language.t("wallpaperCycle");
+        let label_width = assets.width(label, text(20.8, 550, -0.02));
+        for enabled in [false, true] {
+            state.preferences.wallpaper_cycle = enabled;
+            let mut scene = Scene::new();
+            settings(&mut scene, &state, &assets);
+            let button = scene
+                .controls
+                .iter()
+                .find(|control| control.target == Target::WallpaperCycle)
+                .unwrap()
+                .rect;
+            let title = scene
+                .draw
+                .iter()
+                .find_map(|draw| match draw {
+                    Draw::Text(value, rect, ..) if value == label => Some(rect),
+                    _ => None,
+                })
+                .unwrap();
+            let state_label =
+                state
+                    .preferences
+                    .language
+                    .t(if enabled { "stateOn" } else { "stateOff" });
+            let (value, style) = scene
+                .draw
+                .iter()
+                .find_map(|draw| match draw {
+                    Draw::Text(label, rect, style, ..) if label == state_label => {
+                        Some((rect, style))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert!(style.align_right);
+            assert!((button.x + button.w - value.x - value.w - 24.2).abs() < 0.001);
+            assert!((24. ..25.).contains(&(value.x - title.x - label_width)));
+            assert!(button.w < 320.);
+        }
+    }
+
+    #[test]
+    fn long_localized_greetings_fit_on_one_line_without_changing_the_name() {
+        let assets = assets();
+        let base = text(90.4, 500, -0.065).leading(1.05);
+        for language in Language::ALL {
+            for hour in [2, 9, 15, 20] {
+                for name in [
+                    "W".repeat(40),
+                    "界".repeat(40),
+                    "한".repeat(40),
+                    "Alexandra Catherine Elizabeth Montgomery".into(),
+                ] {
+                    let greeting = language.greeting(hour, &name);
+                    let fitted = assets.fit_text(&greeting, base, 1500.);
+                    assert!(fitted.size > 0. && fitted.size < base.size);
+                    assert!(assets.width(&greeting, fitted) < 1500.);
+                    assert_eq!(assets.lines(&greeting, fitted, 1500.), 1);
+                    assert!(greeting.contains(&name));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fitting_remeasures_when_shrinking_changes_the_optical_font() {
+        let assets = assets();
+        let greeting = "W".repeat(100);
+        let fitted = assets.fit_text(&greeting, text(90.4, 500, -0.065), 1500.);
+        assert!(fitted.size < 32.);
+        assert!(assets.width(&greeting, fitted) < 1500.);
+        assert_eq!(assets.lines(&greeting, fitted, 1500.), 1);
+    }
+
 }

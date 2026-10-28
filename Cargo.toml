@@ -1,6 +1,6 @@
 [package]
 name = "luma"
-version = "2.8.4"
+version = "2.13.0"
 edition = "2024"
 rust-version = "1.88"
 publish = false
@@ -17,13 +17,15 @@ default = []
 webos = ["dep:libc"]
 
 [dependencies]
+getrandom = "0.2"
 gl = "0.14"
+if-addrs = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 libc = { version = "0.2", optional = true }
 luma-vector-geometry = { path = "vector-geometry" }
 luma-widgets = { path = "widgets" }
 owned_ttf_parser = "0.25"
-qrcode = { version = "0.14", default-features = false }
+qrcodegen = "1.8"
 sdl2 = { version = "0.38", features = ["use-pkgconfig"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

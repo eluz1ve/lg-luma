@@ -2,9 +2,7 @@
 
 A native launcher for rooted LG webOS TVs, inspired by Apple TV.
 
-https://github.com/user-attachments/assets/0c3061bf-c158-417e-85a4-da3eb84ecf08
-
-[Demo video](docs/luma-preview.mp4)
+https://github.com/user-attachments/assets/3d3564d9-5942-4aef-a726-0323f5e86a07
 
 <details>
 <summary>Screenshots</summary>
@@ -32,23 +30,81 @@ https://github.com/user-attachments/assets/0c3061bf-c158-417e-85a4-da3eb84ecf08
 
 ## Compatibility
 
-The following TV configurations have been reported working with Luma:
-
-| TV        | Model identifier | webOS | Takeover Support |
-| --------- | ---------------- | ----- | ---------------- |
-| LG UN7100 | `49UN71006LB`    | 5     | ✅               |
-| LG C1     | `OLED48C1KNB`    | 6     | ✅               |
-| LG C2     | `OLED42C2PSA`    | 25    | ✅               |
-| LG C2     | `OLED65C2PSA`    | 26    | ✅               |
-| LG C3     | `OLED65C31LA`    | 26    | ✅               |
-| LG C3     | `OLED65C36LC`    | 26    | ✅               |
-| LG C4     | `OLED42C4*`      | 25    | —                |
-| LG C5     | `OLED55C57LA`    | 26    | ✅               |
-| LG G3     | `OLED??G3*`      | 25    | —                |
-
 > [!NOTE]
-> Model identifiers containing wildcards are inferred: `??` is an unknown screen size and `*` is an
-> unconfirmed regional suffix. `—` indicates information that has not been reported.
+> Luma should start on any TV running webOS 4 or newer. The following configurations have been
+> confirmed to work by the community. Home takeover support varies, as noted below:
+
+<details>
+<summary>webOS 4</summary>
+
+| TV        | Model identifier | Takeover Support |
+| --------- | ---------------- | ---------------- |
+| LG C8     | `OLED??C8*`      | ❌               |
+| LG C9     | `OLED65C97LA`    | Unknown          |
+| LG UM7450 | `UM74507LA`      | ❌               |
+
+</details>
+
+<details>
+<summary>webOS 5</summary>
+
+| TV        | Model identifier | Takeover Support |
+| --------- | ---------------- | ---------------- |
+| LG UN7100 | `49UN71006LB`    | ✅               |
+
+</details>
+
+<details>
+<summary>webOS 6</summary>
+
+| TV        | Model identifier | Takeover Support |
+| --------- | ---------------- | ---------------- |
+| LG C1     | `OLED48C1KNB`    | ✅               |
+| LG UP8000 | `86UP80009LA`    | Unknown          |
+
+</details>
+
+<details>
+<summary>webOS 24</summary>
+
+| TV    | Model identifier | Takeover Support |
+| ----- | ---------------- | ---------------- |
+| LG B2 | `OLED65B29LA`    | ✅               |
+
+</details>
+
+<details>
+<summary>webOS 25</summary>
+
+| TV        | Model identifier | Takeover Support |
+| --------- | ---------------- | ---------------- |
+| LG B5     | `OLED77B5PUA`    | ✅               |
+| LG C2     | `OLED42C2PSA`    | ✅               |
+| LG C2     | `OLED65C2*`      | Unknown          |
+| LG C2     | `OLED77C2*`      | Unknown          |
+| LG C4     | `OLED42C4*`      | ✅               |
+| LG G3     | `OLED??G3*`      | Unknown          |
+| LG NANO77 | `55NANO776RA`    | ✅               |
+| LG QNED86 | `55QNED86T6A`    | ✅               |
+| LG UT8050 | `50UT8050*`      | Unknown          |
+
+</details>
+
+<details>
+<summary>webOS 26</summary>
+
+| TV    | Model identifier      | Takeover Support |
+| ----- | --------------------- | ---------------- |
+| LG C2 | `OLED65C2PSA`         | ✅               |
+| LG C3 | `OLED65C31LA`         | ✅               |
+| LG C3 | `OLED65C36LC`         | ✅               |
+| LG C5 | `OLED55C57LA`         | ✅               |
+| LG C5 | `OLED55C5PSA`         | Unknown          |
+| LG C6 | `OLED65C6*`           | Unknown          |
+| LG C6 | `OLED77C6*`           | ✅               |
+| LG G5 | `OLED83G5WUA.BUSYDJR` | ✅               |
+
+</details>
 
 ## Installation
 
@@ -63,7 +119,7 @@ https://github.com/ecklf/lg-luma/releases/latest/download/repo.json
 On your computer, replace `TV_IP`:
 
 ```sh
-scp -O dist/com.ecklf.luma_2.8.4_arm.ipk root@TV_IP:/tmp/luma.ipk
+scp -O dist/com.ecklf.luma_2.13.0_arm.ipk root@TV_IP:/tmp/luma.ipk
 ssh root@TV_IP
 ```
 
@@ -80,11 +136,14 @@ luna-send -i luna://com.webos.appInstallService/dev/install \
 
 > [!NOTE]
 > Takeover is supported on **webOS 5, 6, 25 and 26**.\
-> Disable takeover before uninstalling Luma.
+> The takeover does not delete LG Home: it remains underneath a temporary mount, which is cleared by
+> a reboot. If Luma is uninstalled first, LG Home returns on reboot, but the separate takeover boot
+> hook remains and logs an error because it can no longer find Luma. No TV reset is needed. For
+> clean removal, disable takeover before uninstalling.
 
-Install Luma and verify that it opens normally. Disable any Home mapping e.g.
-[LG Input Hook](https://repo.webosbrew.org/apps/org.webosbrew.inputhook/) and any other Home
-replacement, then run in the TV's root SSH shell:
+Install Luma and verify that it opens normally. Disable any Home-button mapping in
+[LG Input Hook](https://github.com/Simon34545/lginputhook) (remove its Home-key action) and any
+other Home replacement, then run in the TV's root SSH shell:
 
 If you enabled Lumas autostart method earlier, disable it first:
 
@@ -161,6 +220,31 @@ You can use [LG Input Hook](https://repo.webosbrew.org/apps/org.webosbrew.inputh
 
 Test on a spare button first. Disable the mapping in Input Hook to restore normal Home behavior.
 
+## Features
+
+### Backgrounds
+
+Open **Settings → Background → Upload**, then scan the QR code or open the shown
+address on a phone or computer on the same network. Choose a JPEG, PNG or WebP and adjust
+its 16:9 crop before choosing **Save to TV**.
+
+The upload link works only while its TV dialog is open and focused.
+
+Enable **Rotation** beside **Upload** to cycle through backgrounds on each Luma restart and every
+15 minutes with a slow cross-fade. Rotation is off by default and leaves your manually chosen
+LG splash unchanged.
+
+### Recent app switching
+
+Press **Back** on Home, or hold **Back** for 0.6 seconds from any page, to open Recent apps.
+
+- **Left / Right**, the pointer, or the scroll wheel browses recent apps and inputs.
+- **OK** or a pointer click opens the selected app or input.
+- **Up** closes the selected app and removes its card.
+- **Back** dismisses the switcher and restores the previous page and focus.
+
+These shortcuts work while Luma is focused. From another app, return to Luma first.
+
 ## Development
 
 ### Setup & Building
@@ -181,7 +265,7 @@ checksum-pinned SDL-webOS library; both downloads are cached under `.build/`.
 Output:
 
 ```text
-dist/com.ecklf.luma_2.8.4_arm.ipk
+dist/com.ecklf.luma_2.13.0_arm.ipk
 dist/sha256sums
 dist/repo.json
 dist/app-icon-large.png
@@ -223,6 +307,16 @@ For release-worthy changes, include a file generated by `pnpm changeset` in your
 Version Packages PR synchronizes app versions and publishes after merging and passing CI.
 See [Releases](development.md#releases) for the workflow and repository setup.
 
+## Shortcut tiles
+
+Shortcut tiles sit on Home like apps but send a web request when selected, for example to a Home
+Assistant webhook. Open **Settings → Widgets → Shortcuts → Configure** and scan
+the QR code. Creation and editing happen on that page, which also tests and removes shortcuts.
+On the TV, use the remove button beside a saved shortcut in Settings to remove it. Changes appear
+on the TV as soon as they are saved. Like the wallpaper upload, its link works only while the TV
+dialog is open and focused,
+for at most ten minutes, over unencrypted HTTP on your local network.
+
 ## Privacy and scope
 
 App/input discovery uses fixed inventory commands through Homebrew Channel's elevated service.
@@ -232,10 +326,11 @@ fallback on the TV. Native caller permissions and lifecycle behavior can differ 
 Favorites, hidden apps, settings, weather location and cached readings stay in local JSON files
 in an app-owned persistent directory outside the installed payload.
 Weather search/forecast requests go to Open-Meteo, with embedded TLS roots and bounded responses.
+Shortcut tiles send one bodiless GET or POST to the URL configured through the companion page, only
+when selected, with no proxy or redirects; the response is not read.
 There is no browser geolocation, IP-based location lookup, telemetry or runtime font download.
 
 ## License
 
-Luma is licensed under MIT.
-
+Luma is licensed under MIT.\
 Luma is not affiliated with LG, Apple, or any other brands shown in its UI.

@@ -272,9 +272,9 @@ Cache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
 
 /// The QR code of `text`, 8 pixels per module with a 4-module white border.
 pub fn qr_image(text: &str) -> Result<image::RgbaImage, String> {
-    let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
-    let width = code.width() as u32;
-    let colors = code.to_colors();
+    let code = qrcodegen::QrCode::encode_text(text, qrcodegen::QrCodeEcc::High)
+        .map_err(|e| e.to_string())?;
+    let width = code.size() as u32;
     let (scale, border) = (8u32, 4u32);
     let size = (width + 2 * border) * scale;
     Ok(image::RgbaImage::from_fn(size, size, |x, y| {
@@ -283,7 +283,7 @@ pub fn qr_image(text: &str) -> Result<image::RgbaImage, String> {
             && my >= border
             && mx < width + border
             && my < width + border
-            && colors[((my - border) * width + (mx - border)) as usize] == qrcode::Color::Dark;
+            && code.get_module((mx - border) as i32, (my - border) as i32);
         if dark {
             image::Rgba([0, 0, 0, 255])
         } else {

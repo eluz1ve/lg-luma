@@ -1,17 +1,18 @@
 use crate::i18n::Language;
 use crate::model::{
-    App, BACKGROUNDS, CATEGORIES, INPUT_NAME_LIMIT, Input, InputMode, Inventory, Preferences,
-    UiSize, clean_input_name,
+    App, BACKGROUNDS, CATEGORIES, CUSTOM_TILE_PREFIX, CustomTile, INPUT_NAME_LIMIT, Input,
+    InputMode, Inventory, Preferences, UiSize, clean_input_name,
 };
+use crate::text_rendering::TextRendering;
 use crate::weather::{self, Unit};
 use serde::Serialize;
 use std::time::{Duration, Instant};
 
 pub const BACKGROUND_SECTION: usize = 1;
-pub const WEATHER_SECTION: usize = 2;
-pub const INPUTS_SECTION: usize = 3;
-pub const SYSTEM_SECTION: usize = 4;
-pub const SECTION_COUNT: usize = 5;
+pub const WIDGETS_SECTION: usize = 2;
+pub const SYSTEM_SECTION: usize = 3;
+pub const SECTION_COUNT: usize = 4;
+pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const APPS_COLUMNS: usize = 6;
 /// Automatic inventory retries before the error shows: with the 6.5 s Luna timeout about 50 s.
 pub const INVENTORY_RETRIES: u32 = 5;
@@ -24,6 +25,15 @@ pub const HOME_TILE_WIDTH: f32 = 256.;
 pub const HOME_TILE_PITCH: f32 = 281.6;
 pub const HOME_FADE_LEFT: f32 = 8.;
 pub const HOME_FADE_RIGHT: f32 = 1910.;
+pub const BACKGROUND_FADE: f32 = 0.4;
+pub const CYCLE_FADE: f32 = 1.6;
+
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Page {
@@ -48,6 +58,7 @@ pub enum Target {
     ClearSearch,
     Sidebar(usize),
     Setting(usize),
+    Widget(usize),
     GreetingName,
     GreetingNameClear,
     AppNamesHome,
@@ -67,8 +78,6 @@ pub enum Target {
     Poster(usize),
     /// An app in a poster's dialog, in `State::poster_apps` order; past the end is Close.
     PosterApp(usize),
-    /// A match in an esports widget: the widget's instance and the match's index in its list.
-    Match(u8, usize),
     /// A card of a store widget: its slot and the item's index in its document.
     WidgetItem(u8, usize),
     /// A widget in the store's list, by its index in the catalog.
@@ -77,12 +86,10 @@ pub enum Target {
     StoreAction(usize),
     /// A row of a store widget's settings page, in `State::widget_setting_rows` order.
     WidgetSetting(usize),
-    /// An esports widget's settings: the shared PandaScore key, its disciplines, major events.
-    EsportsKey,
-    /// Enter the key from a phone: a QR code to a one-time page on the home network.
-    EsportsPhone,
-    EsportsGames,
-    EsportsMajor,
+    UploadWallpaper,
+    WallpaperCycle,
+    UseBackground,
+    DeleteBackground,
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -91,6 +98,9 @@ pub enum Target {
     Retry,
     DismissNotice,
     Option(usize),
+    OpenApp,
+    ConfirmDelete,
+    CancelDelete,
     Key(usize),
     WeatherConfigure,
     WeatherToggle,
@@ -100,6 +110,8 @@ pub enum Target {
     WeatherSearch,
     WeatherClear,
     WeatherResult(usize),
+    TileRemove(String),
+    TileEditor,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -193,12 +205,6 @@ pub enum Overlay {
         index: usize,
         restore: Target,
     },
-    /// A match's details: series score, maps and lineups.
-    Match {
-        instance: u8,
-        index: usize,
-        restore: Target,
-    },
     /// The QR code and steps for sending the key from a phone.
     PhoneKey {
         restore: Target,
@@ -221,14 +227,25 @@ pub enum Overlay {
     Recents {
         restore: Target,
     },
+    Delete {
+        id: String,
+        restore: Target,
+    },
     Keyboard,
     SystemKeyboard,
+    WallpaperUpload,
+    TileEditor,
+    BackgroundOptions { id: String, restore: Target },
+    BackgroundDelete { id: String, restore: Target },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Subpage {
     AppNames,
     Greeting,
+    Weather,
+    Shortcuts,
+    Inputs,
     Clock,
     ClockFormat,
     TimeFormat,
@@ -240,14 +257,12 @@ pub enum Subpage {
     Appearance,
     /// General › Home theme: a layout with its wallpaper and look.
     Theme,
-    /// An esports widget's settings, and its list of disciplines.
-    Esports(u8),
-    EsportsGames(u8),
     /// A store widget's settings, by slot, and the options of one of its settings.
     Widget(u8),
     WidgetOptions(u8, usize),
     /// System › Luma as Home: on (replace LG Home) or off.
     HomeTakeover,
+    TextRendering,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -256,7 +271,6 @@ pub enum TextField {
     Location,
     Name,
     InputName,
-    ApiKey,
     /// A store widget's text or secret setting, as `State::widget_editing` names it.
     Widget,
 }
@@ -277,18 +291,20 @@ pub enum Effect {
     /// Refresh apps: read the inventory and every app icon again.
     Reload,
     Launch(String),
+    Uninstall(String),
+    DeleteWallpaper(String),
     Recent {
         generation: u64,
         command: crate::recents::Command,
     },
+    /// Fire-and-forget HTTP request for a custom tile, off the SDL thread.
+    FireWebhook(CustomTile),
     Quit,
     Weather(weather::Command),
     /// Replace LG Home with Luma (true) or restore it (false), through Homebrew's root service.
     HomeTakeover(bool),
     /// A notice after the effects before it, e.g. a title to look for once an app opens.
     Notify(String),
-    /// Fetch the lineups of these teams of a discipline.
-    Rosters(String, Vec<u64>),
     /// Start the one-time phone page for the key.
     PhoneKeyStart,
 }
@@ -318,6 +334,7 @@ pub struct State {
     /// Set by Refresh apps: the next inventory also reloads every app icon.
     pub reload_artwork: bool,
     pub launching: bool,
+    pub uninstalling: Option<String>,
     pub notice: Option<(String, Instant)>,
     pub error: Option<String>,
     /// Inventory loads that failed in a row while no apps were shown yet.
@@ -326,11 +343,15 @@ pub struct State {
     pub pointer: bool,
     pub pressed: Option<Target>,
     pub previous_background: Option<(String, Instant)>,
+    pub background_fade: f32,
+    pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
+    pub deleting_wallpaper: Option<String>,
+    pub wallpaper_upload: Option<Result<crate::wallpapers::Session, String>>,
+    pub tile_editor: Option<Result<crate::companion::Session, String>>,
     pub panel_started: Option<Instant>,
     pub weather: weather::Weather,
     pub keyboard_field: TextField,
     pub greeting_name_draft: String,
-    pub api_key_draft: String,
     pub input_name: String,
     pub recents: crate::recents::Recents,
     /// Whether this instance runs as the TV's Home (the takeover is enabled).
@@ -377,6 +398,7 @@ impl State {
             loading: false,
             reload_artwork: false,
             launching: false,
+            uninstalling: None,
             notice: None,
             error: None,
             inventory_failures: 0,
@@ -384,11 +406,15 @@ impl State {
             pointer: false,
             pressed: None,
             previous_background: None,
+            background_fade: BACKGROUND_FADE,
+            wallpapers: vec![],
+            deleting_wallpaper: None,
+            wallpaper_upload: None,
+            tile_editor: None,
             panel_started: None,
             weather: weather::Weather::default(),
             keyboard_field: TextField::Apps,
             greeting_name_draft: String::new(),
-            api_key_draft: String::new(),
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
             home_takeover: false,
@@ -435,7 +461,9 @@ impl State {
         }
         if let Some((_, start)) = &self.previous_background {
             self.dirty = true;
-            if self.preferences.reduced_motion || start.elapsed() >= Duration::from_millis(400) {
+            if self.preferences.reduced_motion
+                || start.elapsed().as_secs_f32() >= self.background_fade
+            {
                 self.previous_background = None;
             }
         }
@@ -468,6 +496,20 @@ impl State {
                     .notice
                     .as_ref()
                     .is_some_and(|(_, start)| start.elapsed() < Duration::from_millis(120)))
+    }
+
+    /// Home's lifecycle relaunch returns directly to Home, even from an overlay.
+    pub fn return_home(&mut self) -> Vec<Effect> {
+        // Commit keyboard drafts before open() clears their settings subpage.
+        let pending = self.finish_text_input();
+        self.recents.pending = None;
+        self.recents.visibility = 0.;
+        self.recents.closing_focus = None;
+        self.wallpaper_upload = None;
+        self.pointer = false;
+        self.pressed = None;
+        self.open(0);
+        pending
     }
 
     pub fn open(&mut self, index: usize) {
@@ -527,12 +569,17 @@ impl State {
     }
 
     pub fn content_viewport(&self) -> Rect {
-        let bottom = if self.page == Page::Home && self.moving.is_none() {
-            1053.6
-        } else {
-            994.4
-        };
-        Rect::new(64., 108.8, 1792., bottom - 108.8)
+        Rect::new(64., 108.8, 1792., 1080. - 108.8)
+    }
+
+    fn scroll_bottom(&self) -> f32 {
+        let viewport = self.content_viewport();
+        viewport.y + viewport.h
+            - if self.page == Page::Settings {
+                SETTINGS_BOTTOM_PADDING
+            } else {
+                12.
+            }
     }
 
     /// Home's blocks as drawn: the saved layout repaired for the current content.
@@ -599,10 +646,7 @@ impl State {
         if from_app && kind == crate::home_grid::BlockKind::Favorites {
             actions.push(BlockAction::Reorder);
         }
-        if matches!(
-            kind,
-            crate::home_grid::BlockKind::Esports(_) | crate::home_grid::BlockKind::Widget(_)
-        ) {
+        if matches!(kind, crate::home_grid::BlockKind::Widget(_)) {
             actions.push(BlockAction::Settings);
         }
         actions.extend([BlockAction::Move, BlockAction::Resize]);
@@ -612,30 +656,16 @@ impl State {
         actions
     }
 
-    /// Kinds that can still be added to Home, in their usual order, then a new esports widget.
+    /// Kinds that can still be added to Home, in their usual order.
     pub fn missing_blocks(&self) -> Vec<crate::home_grid::BlockKind> {
         use crate::home_grid::BlockKind;
         let blocks = self.home_blocks();
-        let mut kinds: Vec<_> = BlockKind::ALL
+        BlockKind::ALL
             .into_iter()
             .filter(|kind| !blocks.iter().any(|b| b.kind == *kind))
-            .collect();
-        let next = (0..BlockKind::ESPORTS)
-            .find(|n| !blocks.iter().any(|b| b.kind == BlockKind::Esports(*n)));
-        kinds.extend(next.map(BlockKind::Esports));
-        kinds
+            .collect()
     }
 
-    /// An esports widget's settings; one without saved settings shows Counter-Strike.
-    pub fn esports_widget(&self, instance: u8) -> crate::model::EsportsWidget {
-        self.preferences
-            .esports
-            .get(&instance)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// The matches an esports widget shows: its disciplines and filter, live first, then by start.
     /// The visible inputs, in Home's order.
     pub fn home_inputs(&self) -> Vec<&Input> {
         self.inventory
@@ -650,11 +680,6 @@ impl State {
     pub fn row_of(&self, target: &Target) -> Option<(crate::home_grid::Block, usize, usize)> {
         use crate::home_grid::BlockKind;
         let (kind, index, count) = match target {
-            Target::Match(instance, index) => (
-                BlockKind::Esports(*instance),
-                *index,
-                self.esports_matches(*instance).len(),
-            ),
             Target::Poster(index) => (BlockKind::Premieres, *index, self.feeds.premieres.len()),
             Target::WidgetItem(slot, index) => (
                 BlockKind::Widget(*slot),
@@ -678,7 +703,6 @@ impl State {
     /// The card at `index` of the row `target` is in.
     fn row_target(&self, target: &Target, index: usize) -> Option<Target> {
         Some(match target {
-            Target::Match(instance, _) => Target::Match(*instance, index),
             Target::Poster(_) => Target::Poster(index),
             Target::WidgetItem(slot, _) => Target::WidgetItem(*slot, index),
             Target::Input(_) => Target::Input(self.home_inputs().get(index)?.id.clone()),
@@ -691,130 +715,6 @@ impl State {
         crate::design::track(block, crate::home_grid::rect(block), crate::design::WIDE_W)
     }
 
-    pub fn esports_matches(&self, instance: u8) -> Vec<&crate::feeds::CsMatch> {
-        let widget = self.esports_widget(instance);
-        let mut matches: Vec<_> = widget
-            .games
-            .iter()
-            .filter_map(|game| self.feeds.matches.get(game))
-            .flatten()
-            .filter(|m| !widget.major_only || matches!(m.tier.as_str(), "s" | "a"))
-            .collect();
-        matches.sort_by(|a, b| b.running.cmp(&a.running).then(a.begin_at.cmp(&b.begin_at)));
-        matches.truncate(12);
-        matches
-    }
-
-    /// Team logos the esports widgets on Home show, then the open match's league logo and
-    /// player photos.
-    pub fn wanted_images(&self) -> Vec<String> {
-        let mut urls: Vec<String> = Vec::new();
-        let mut add = |url: &Option<String>| {
-            if let Some(url) = url
-                && !urls.contains(url)
-            {
-                urls.push(url.clone());
-            }
-        };
-        for block in self.home_blocks() {
-            if let crate::home_grid::BlockKind::Esports(n) = block.kind {
-                for found in self.esports_matches(n) {
-                    found
-                        .teams
-                        .iter()
-                        .flatten()
-                        .for_each(|team| add(&team.image));
-                }
-            }
-        }
-        if let Some(Overlay::Match {
-            instance, index, ..
-        }) = self.overlay
-            && let Some(found) = self.esports_matches(instance).get(index)
-        {
-            add(&found.league_image);
-            for team in found.teams.iter().flatten() {
-                for player in self.feeds.rosters.get(&team.id).into_iter().flatten() {
-                    add(&player.image);
-                }
-            }
-        }
-        urls
-    }
-
-    /// When the oldest shared feed an esports widget shows was built, in Unix seconds.
-    pub fn esports_updated(&self, instance: u8) -> Option<i64> {
-        self.esports_widget(instance)
-            .games
-            .iter()
-            .filter_map(|game| self.feeds.updated.get(game))
-            .min()
-            .copied()
-    }
-
-    /// A personal key's live matches of a discipline, named from the shared feed fetched last.
-    pub fn esports_received(&mut self, game: String, mut matches: Vec<crate::feeds::CsMatch>) {
-        if let Some(shared) = self.feeds.maps.get(&game) {
-            crate::feeds::merge_maps(&mut matches, shared);
-        }
-        self.feeds.matches.insert(game, matches);
-        self.feeds.matches_error = None;
-        self.feeds.images_due = true;
-    }
-
-    /// Lineups a personal key asked PandaScore for, with the shared feed's substitutes.
-    pub fn rosters_received(&mut self, rosters: Vec<crate::feeds::Roster>) {
-        for (id, mut players) in rosters {
-            if let Some(shared) = self.feeds.lineups.get(&id) {
-                crate::feeds::merge_substitutes(&mut players, shared);
-            }
-            self.feeds.rosters.insert(id, players);
-        }
-        self.feeds.images_due = true;
-    }
-
-    /// A discipline of the shared feed: the matches themselves without a key, their map names
-    /// and substitutes with one.
-    pub fn shared_received(&mut self, game: String, feed: crate::feeds::SharedFeed) {
-        if !self.preferences.esports_key.trim().is_empty() {
-            if let Some(live) = self.feeds.matches.get_mut(&game) {
-                crate::feeds::merge_maps(live, &feed.matches);
-            }
-            for (id, players) in feed.rosters {
-                if let Some(roster) = self.feeds.rosters.get_mut(&id) {
-                    crate::feeds::merge_substitutes(roster, &players);
-                }
-                self.feeds.lineups.insert(id, players);
-            }
-            self.feeds.maps.insert(game, feed.matches);
-            return;
-        }
-        match feed.updated {
-            Some(updated) => self.feeds.updated.insert(game.clone(), updated),
-            None => self.feeds.updated.remove(&game),
-        };
-        self.feeds.matches.insert(game, feed.matches);
-        self.feeds.rosters.extend(feed.rosters);
-        self.feeds.matches_error = None;
-        self.feeds.images_due = true;
-    }
-
-    /// Every discipline some esports widget on Home shows.
-    pub fn esports_games(&self) -> Vec<String> {
-        let mut games: Vec<String> = self
-            .home_blocks()
-            .iter()
-            .filter_map(|b| match b.kind {
-                crate::home_grid::BlockKind::Esports(n) => Some(self.esports_widget(n).games),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        games.sort();
-        games.dedup();
-        games
-    }
-
     /// The Home block a focus target belongs to.
     fn home_block_of(&self, target: &Target) -> Option<crate::home_grid::BlockKind> {
         use crate::home_grid::BlockKind;
@@ -824,7 +724,6 @@ impl State {
             Target::WeatherConfigure => Some(BlockKind::Weather),
             Target::Block(kind) => Some(*kind),
             Target::Poster(_) => Some(BlockKind::Premieres),
-            Target::Match(instance, _) => Some(BlockKind::Esports(*instance)),
             Target::WidgetItem(slot, _) => Some(BlockKind::Widget(*slot)),
             _ => None,
         }
@@ -891,6 +790,11 @@ impl State {
         self.dirty = true;
     }
 
+    pub fn backgrounds_viewport(&self) -> Rect {
+        let content = self.content_viewport();
+        Rect::new(620., 244.8, 1160., content.y + content.h - 244.8)
+    }
+
     pub fn hit_test(&self, controls: &[Control], x: f32, y: f32) -> Option<Target> {
         controls
             .iter()
@@ -899,6 +803,8 @@ impl State {
                 let viewport =
                     if self.page == Page::Home && matches!(control.target, Target::App(_)) {
                         self.favorites_viewport()
+                    } else if matches!(control.target, Target::Background(_)) {
+                        self.backgrounds_viewport()
                     } else {
                         self.content_viewport()
                     };
@@ -915,6 +821,12 @@ impl State {
         x: i32,
         y: i32,
     ) -> bool {
+        let backgrounds =
+            self.page == Page::Settings && self.section == 1 && self.subpage.is_none();
+        if backgrounds && position.is_some_and(|(x, y)| !self.backgrounds_viewport().contains(x, y))
+        {
+            return false;
+        }
         let over_favorites = self.page == Page::Home
             && position.is_some_and(|(x, y)| {
                 self.favorites_viewport().contains(x, y)
@@ -926,10 +838,12 @@ impl State {
         if favorites {
             self.scroll_favorites((if x != 0 { x } else { -y }) as f32 * HOME_TILE_PITCH);
         } else {
-            let bottom = self.content_viewport().y + self.content_viewport().h - 12.;
+            let bottom = self.scroll_bottom();
             let max = controls
                 .iter()
-                .filter(|c| c.scrollable)
+                .filter(|c| {
+                    c.scrollable && (!backgrounds || matches!(c.target, Target::Background(_)))
+                })
                 .map(|c| c.rect.y + c.rect.h + self.scroll - bottom)
                 .fold(0., f32::max);
             self.scroll = (self.scroll - y as f32 * 90.).clamp(0., max.max(0.));
@@ -965,6 +879,7 @@ impl State {
 
     pub fn set_inventory(&mut self, next: Inventory, warning: Option<String>) {
         self.inventory.apps = next.apps;
+        self.sync_custom_tiles();
         if let Some(warning) = warning {
             self.notify(warning);
         } else {
@@ -981,9 +896,15 @@ impl State {
     /// Homebrew service that reads the inventory can take longer than one request allows. While
     /// no apps are shown yet, the screen keeps loading and the caller retries after the returned
     /// delay; the error and its Retry button only appear once those retries are used up.
+    /// Custom tiles come from preferences, not the TV, so they don't count as loaded apps.
     pub fn inventory_failed(&mut self, error: String) -> Option<Duration> {
         self.dirty = true;
-        if self.inventory.apps.is_empty() && self.inventory_failures < INVENTORY_RETRIES {
+        let no_tv_apps = self
+            .inventory
+            .apps
+            .iter()
+            .all(|app| app.id.starts_with(CUSTOM_TILE_PREFIX));
+        if no_tv_apps && self.inventory_failures < INVENTORY_RETRIES {
             self.inventory_failures += 1;
             return Some(INVENTORY_RETRY_DELAY);
         }
@@ -991,6 +912,17 @@ impl State {
         self.loading = false;
         self.error = Some(error);
         None
+    }
+
+    /// Custom webhook tiles are never read from the TV. They are merged into
+    /// the inventory on every refresh and edit, so favoriting, hiding and
+    /// search treat them like any other app.
+    pub fn sync_custom_tiles(&mut self) {
+        self.inventory
+            .apps
+            .retain(|app| !app.id.starts_with(CUSTOM_TILE_PREFIX));
+        self.inventory.apps.extend(self.preferences.custom_apps());
+        self.dirty = true;
     }
 
     pub fn reconcile_focus(&mut self) {
@@ -1072,7 +1004,9 @@ impl State {
             ) {
                 self.scroll = 0.;
             } else if control.scrollable {
-                let top = if self.page == Page::Apps {
+                let top = if matches!(self.focus, Target::Background(_)) {
+                    self.backgrounds_viewport().y + 8.
+                } else if self.page == Page::Apps {
                     164.8
                 } else {
                     120.8
@@ -1080,11 +1014,7 @@ impl State {
                 if control.rect.y < top {
                     self.scroll = (self.scroll + control.rect.y - top).max(0.);
                 }
-                let bottom = if self.page == Page::Home && self.moving.is_none() {
-                    1041.6
-                } else {
-                    982.4
-                };
+                let bottom = self.scroll_bottom();
                 if control.rect.y + control.rect.h > bottom {
                     self.scroll += control.rect.y + control.rect.h - bottom;
                 }
@@ -1126,6 +1056,9 @@ impl State {
             if self.subpage == Some(Subpage::WeatherLocation) {
                 self.weather.cancel_search();
             }
+            if self.section != section || self.subpage.is_some() {
+                self.scroll = 0.;
+            }
             self.section = section;
             self.subpage = None;
         }
@@ -1141,22 +1074,148 @@ impl State {
             .count()
     }
 
+    pub fn background_count(&self) -> usize {
+        self.background_ids().count()
+    }
+
+    pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
+        let ids: Vec<_> = self
+            .background_ids()
+            .filter(|id| self.deleting_wallpaper.as_deref() != Some(*id))
+            .map(str::to_owned)
+            .collect();
+        let next = crate::wallpaper_cycle::next(&ids, &self.preferences.background);
+        self.preferences.wallpaper_changed = now;
+        let Some(id) = next else {
+            return false;
+        };
+        self.preferences.splash_background = Some(self.preferences.splash_background().to_owned());
+        if self.preferences.reduced_motion {
+            self.previous_background = None;
+        } else {
+            self.previous_background = Some((self.preferences.background.clone(), Instant::now()));
+            self.background_fade = CYCLE_FADE;
+        }
+        self.preferences.background = id;
+        self.dirty = true;
+        true
+    }
+
+    pub fn background_id(&self, index: usize) -> Option<&str> {
+        self.background_ids().nth(index)
+    }
+
+    fn background_ids(&self) -> impl Iterator<Item = &str> {
+        BACKGROUNDS
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| {
+                *id == self.preferences.background
+                    || !self
+                        .preferences
+                        .deleted_backgrounds
+                        .iter()
+                        .any(|deleted| deleted == id)
+            })
+            .chain(self.wallpapers.iter().map(|item| item.id.as_str()))
+    }
+
+    pub fn can_delete_background(&self, id: &str) -> bool {
+        id != self.preferences.background && self.background_ids().any(|known| known == id)
+    }
+
+    fn background_target(&self, id: &str) -> Target {
+        Target::Background(
+            self.background_ids()
+                .position(|known| known == id)
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn wallpaper_deleted(&mut self, id: String, result: Result<(), String>) {
+        if self.deleting_wallpaper.as_deref() != Some(&id) {
+            return;
+        }
+        self.deleting_wallpaper = None;
+        if let Err(error) = result {
+            eprintln!("Luma background deletion: {error}");
+            self.notify(self.preferences.language.t("deleteBackgroundError"));
+            return;
+        }
+        self.finish_background_delete(&id);
+    }
+
+    fn finish_background_delete(&mut self, id: &str) {
+        let index = self
+            .background_ids()
+            .position(|known| known == id)
+            .unwrap_or(0);
+        let focused = match self.focus {
+            Target::Background(index) => self.background_id(index).map(str::to_owned),
+            _ => None,
+        };
+        self.wallpapers.retain(|item| item.id != id);
+        if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
+            self.preferences.deleted_backgrounds.push(id.to_owned());
+        }
+        if matches!(&self.overlay, Some(Overlay::BackgroundOptions { id: current, .. } | Overlay::BackgroundDelete { id: current, .. }) if current == id)
+        {
+            self.overlay = None;
+            self.panel_started = None;
+            self.focus = Target::Background(index.min(self.background_count().saturating_sub(1)));
+            self.pointer = false;
+        } else if let Some(focused) = focused {
+            self.focus = self.background_target(&focused);
+        }
+        self.pressed = None;
+        self.notify(self.preferences.language.t("backgroundDeleted"));
+    }
+
+    pub fn set_wallpapers(&mut self, wallpapers: Vec<crate::wallpapers::Wallpaper>) {
+        // A newly uploaded ID can sort before existing entries. Keep the focused
+        // image, rather than moving the pointer's target to a different photograph.
+        let focused_id = if let Target::Background(index) = self.focus {
+            self.background_id(index).map(str::to_owned)
+        } else {
+            None
+        };
+        self.wallpapers = wallpapers;
+        if let Some(
+            Overlay::BackgroundOptions { id, restore } | Overlay::BackgroundDelete { id, restore },
+        ) = &self.overlay
+            && !self.background_ids().any(|known| known == id)
+        {
+            let index = if let Target::Background(index) = restore {
+                *index
+            } else {
+                0
+            };
+            self.focus = Target::Background(index.min(self.background_count().saturating_sub(1)));
+            self.overlay = None;
+            self.panel_started = None;
+            self.pressed = None;
+            self.pointer = false;
+        }
+        if let Some(id) = focused_id {
+            let index = (0..self.background_count())
+                .find(|&i| self.background_id(i) == Some(id.as_str()))
+                .unwrap_or(0);
+            self.focus = Target::Background(index);
+        }
+        self.dirty = true;
+    }
+
     fn section_entry(&self) -> Target {
         match self.section {
             BACKGROUND_SECTION => Target::Background(
-                BACKGROUNDS
-                    .iter()
-                    .position(|(id, _)| *id == self.preferences.background)
-                    .unwrap_or(3),
+                (0..self.background_count())
+                    .position(|index| {
+                        self.background_id(index) == Some(self.preferences.background.as_str())
+                    })
+                    .unwrap_or(0),
             ),
-            WEATHER_SECTION => Target::WeatherToggle,
+            WIDGETS_SECTION => Target::Widget(0),
             SYSTEM_SECTION => Target::Setting(3),
-            INPUTS_SECTION => self
-                .inventory
-                .inputs
-                .first()
-                .map(|input| Target::InputMode(input.id.clone()))
-                .unwrap_or(Target::Setting(3)),
             _ => Target::Setting(0),
         }
     }
@@ -1169,7 +1228,10 @@ impl State {
         self.pointer = false;
         self.focus = match self.subpage.take() {
             Some(Subpage::AppNames) => Target::Setting(0),
-            Some(Subpage::Greeting) => Target::Setting(6),
+            Some(Subpage::Greeting) => Target::Widget(0),
+            Some(Subpage::Weather) => Target::Widget(1),
+            Some(Subpage::Shortcuts) => Target::Widget(2),
+            Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Clock) => Target::Setting(1),
             Some(Subpage::ClockFormat) => {
                 self.subpage = Some(Subpage::Clock);
@@ -1179,23 +1241,28 @@ impl State {
                 self.subpage = Some(Subpage::Clock);
                 Target::ClockTimeFormat
             }
-            Some(Subpage::Input(id)) => Target::InputMode(id),
-            Some(Subpage::WeatherLocation) => Target::WeatherLocation,
-            Some(Subpage::Temperature) => Target::WeatherTemperature,
+            Some(Subpage::Input(id)) => {
+                self.subpage = Some(Subpage::Inputs);
+                Target::InputMode(id)
+            }
+            Some(Subpage::WeatherLocation) => {
+                self.subpage = Some(Subpage::Weather);
+                Target::WeatherLocation
+            }
+            Some(Subpage::Temperature) => {
+                self.subpage = Some(Subpage::Weather);
+                Target::WeatherTemperature
+            }
             Some(Subpage::Language) => Target::Setting(4),
             Some(Subpage::Appearance) => Target::Setting(7),
             Some(Subpage::Theme) => Target::Setting(9),
-            Some(Subpage::Esports(_)) => Target::Sidebar(0),
-            Some(Subpage::EsportsGames(instance)) => {
-                self.subpage = Some(Subpage::Esports(instance));
-                Target::EsportsGames
-            }
             Some(Subpage::Widget(_)) => Target::Sidebar(0),
             Some(Subpage::WidgetOptions(slot, setting)) => {
                 self.subpage = Some(Subpage::Widget(slot));
                 Target::WidgetSetting(self.widget_row_of(slot, setting))
             }
             Some(Subpage::HomeTakeover) => Target::Setting(8),
+            Some(Subpage::TextRendering) => Target::Setting(10),
             None => Target::Sidebar(self.section),
         };
         self.scroll = 0.;
@@ -1210,6 +1277,12 @@ impl State {
         }
         if matches!(self.overlay, Some(Overlay::SystemKeyboard)) {
             // The TV keyboard owns its arrows until Done/Back dismisses it.
+            return vec![];
+        }
+        if matches!(
+            self.overlay,
+            Some(Overlay::WallpaperUpload | Overlay::TileEditor)
+        ) {
             return vec![];
         }
         if let Some(edit) = self.home_edit.clone() {
@@ -1300,12 +1373,12 @@ impl State {
                         Subpage::ClockFormat
                         | Subpage::TimeFormat
                         | Subpage::Temperature
-                        | Subpage::HomeTakeover,
+                        | Subpage::HomeTakeover
+                        | Subpage::TextRendering,
                     ) => 2,
                     Some(Subpage::Language) => Language::ALL.len(),
                     Some(Subpage::Appearance) => UiSize::ALL.len(),
                     Some(Subpage::Theme) => crate::themes::THEMES.len(),
-                    Some(Subpage::EsportsGames(_)) => crate::feeds::GAMES.len(),
                     Some(Subpage::WidgetOptions(slot, setting)) => {
                         self.widget_options(slot, setting).len().max(1)
                     }
@@ -1356,7 +1429,11 @@ impl State {
             if let Target::Sidebar(index) = self.focus {
                 match direction {
                     Direction::Right => {
-                        let entry = self.section_entry();
+                        let entry = if self.section == 1 {
+                            Target::WallpaperCycle
+                        } else {
+                            self.section_entry()
+                        };
                         self.focus(entry, controls);
                     }
                     Direction::Up => self.focus(
@@ -1374,14 +1451,26 @@ impl State {
                 }
                 return vec![];
             }
+            if (matches!(
+                self.focus,
+                Target::TileEditor
+                    | Target::TileRemove(_)
+                    | Target::InputMode(_)
+                    | Target::WeatherToggle
+                    | Target::WeatherLocation
+                    | Target::WeatherTemperature
+                    | Target::Widget(_)
+            ) || (self.focus == Target::Setting(3) && self.subpage == Some(Subpage::Inputs)))
+                && matches!(direction, Direction::Left)
+            {
+                self.close_subpage();
+                return vec![];
+            }
             if matches!(
                 self.focus,
-                Target::Setting(0 | 1 | 4 | 6 | 7 | 8 | 9)
-                    | Target::EsportsKey
-                    | Target::EsportsPhone
-                    | Target::EsportsGames
-                    | Target::EsportsMajor
+                Target::Setting(0 | 1 | 4 | 6 | 7 | 8 | 9 | 10)
                     | Target::WidgetSetting(_)
+                    | Target::Widget(_)
                     | Target::InputMode(_)
                     | Target::WeatherLocation
                     | Target::WeatherTemperature
@@ -1402,7 +1491,7 @@ impl State {
                     .first()
                     .is_some_and(|input| &input.id == id)
             {
-                self.focus(Target::Sidebar(INPUTS_SECTION), controls);
+                self.focus(Target::Nav(2), controls);
                 return vec![];
             }
             if self.focus == Target::Setting(0) && matches!(direction, Direction::Up) {
@@ -1527,16 +1616,58 @@ impl State {
             }
             if let Target::Background(index) = self.focus {
                 match direction {
-                    Direction::Right if index + 1 < BACKGROUNDS.len() => {
+                    Direction::Right if index + 1 < self.background_count() => {
                         self.focus(Target::Background(index + 1), controls);
                         return vec![];
                     }
+                    Direction::Right => return vec![],
                     Direction::Left if index % 3 != 0 => {
                         self.focus(Target::Background(index - 1), controls);
                         return vec![];
                     }
+                    Direction::Up => {
+                        self.focus(
+                            if index < 3 {
+                                Target::UploadWallpaper
+                            } else {
+                                Target::Background(index - 3)
+                            },
+                            controls,
+                        );
+                        return vec![];
+                    }
+                    Direction::Down => {
+                        if (index / 3 + 1) * 3 < self.background_count() {
+                            self.focus(
+                                Target::Background((index + 3).min(self.background_count() - 1)),
+                                controls,
+                            );
+                        }
+                        return vec![];
+                    }
                     _ => {}
                 }
+            }
+            if self.focus == Target::UploadWallpaper {
+                match direction {
+                    Direction::Down => self.focus(
+                        Target::Background(2.min(self.background_count().saturating_sub(1))),
+                        controls,
+                    ),
+                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Left => self.focus(Target::WallpaperCycle, controls),
+                    Direction::Right => {}
+                }
+                return vec![];
+            }
+            if self.focus == Target::WallpaperCycle {
+                match direction {
+                    Direction::Right => self.focus(Target::UploadWallpaper, controls),
+                    Direction::Left => self.focus(Target::Sidebar(1), controls),
+                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Down => self.focus(Target::Background(0), controls),
+                }
+                return vec![];
             }
             // Rows of cards scroll: Left and Right step a card, past the row's edge too.
             if matches!(direction, Direction::Left | Direction::Right)
@@ -1650,17 +1781,81 @@ impl State {
         if self.overlay.is_some() || self.moving.is_some() {
             return;
         }
-        if let Target::App(id) = &self.focus {
+        if let Target::Background(index) = self.focus {
+            if let Some(id) = self.background_id(index).map(str::to_owned) {
+                self.overlay = Some(Overlay::BackgroundOptions {
+                    id,
+                    restore: self.focus.clone(),
+                });
+                self.focus = Target::UseBackground;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+                self.dirty = true;
+            }
+        } else if let Target::App(id) = &self.focus {
             self.overlay = Some(Overlay::Options {
                 id: id.clone(),
                 restore: self.focus.clone(),
             });
-            self.focus = Target::Option(0);
+            self.focus = Target::OpenApp;
             if !self.preferences.reduced_motion {
                 self.panel_started = Some(Instant::now());
             }
             self.dirty = true;
         }
+    }
+
+    pub fn uninstall_response(&mut self, id: String, result: Result<(), String>) -> Vec<Effect> {
+        if self.uninstalling.as_ref() != Some(&id) {
+            return vec![];
+        }
+        self.uninstalling = None;
+        self.dirty = true;
+        if let Err(error) = result {
+            eprintln!("Luma uninstall: {error}");
+            self.notify(self.preferences.language.t("deleteAppError"));
+            if matches!(&self.overlay, Some(Overlay::Delete { id: current, .. } | Overlay::Options { id: current, .. }) if current == &id)
+            {
+                if let Some(Overlay::Delete { restore, .. } | Overlay::Options { restore, .. }) =
+                    self.overlay.take()
+                {
+                    self.focus = restore;
+                }
+                self.panel_started = None;
+                self.pressed = None;
+                self.reconcile_focus();
+            }
+            // Even an uncertain/failed mutation may have changed TV inventory.
+            // Refresh is read-only, and also clears a stale card after late removal.
+            return vec![Effect::Refresh];
+        }
+        let old_ids: Vec<_> = self.apps().iter().map(|app| app.id.clone()).collect();
+        let index = old_ids.iter().position(|item| item == &id).unwrap_or(0);
+        let mut favorites = self.preferences.favorites(&self.inventory.apps);
+        favorites.retain(|item| item != &id);
+        self.preferences.favorites = Some(favorites);
+        self.preferences.hidden.retain(|item| item != &id);
+        self.inventory.apps.retain(|app| app.id != id);
+        if self.filter == 5 && self.hidden_count() == 0 {
+            self.filter = 0;
+        }
+        if matches!(&self.overlay, Some(Overlay::Delete { id: current, .. } | Overlay::Options { id: current, .. }) if current == &id)
+        {
+            self.overlay = None;
+            self.panel_started = None;
+            self.focus = Target::App(id.clone());
+        }
+        if self.focus == Target::App(id) {
+            self.focus = self
+                .apps()
+                .get(index.min(self.apps().len().saturating_sub(1)))
+                .map(|app| Target::App(app.id.clone()))
+                .unwrap_or_else(|| self.first_content());
+        }
+        self.reconcile_focus();
+        self.notify(self.preferences.language.t("appDeleted"));
+        vec![Effect::Save, Effect::Refresh]
     }
 
     pub fn hold(&mut self) {
@@ -1720,16 +1915,6 @@ impl State {
                 self.dirty = true;
                 return;
             }
-            if self.keyboard_field == TextField::ApiKey {
-                let key = &mut self.api_key_draft;
-                key.extend(
-                    text.chars()
-                        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-                        .take(128usize.saturating_sub(key.len())),
-                );
-                self.dirty = true;
-                return;
-            }
             if self.keyboard_field == TextField::InputName {
                 let length = self.input_name.chars().count();
                 self.input_name.extend(
@@ -1760,8 +1945,6 @@ impl State {
                 self.greeting_name_draft.pop();
             } else if self.keyboard_field == TextField::InputName {
                 self.input_name.pop();
-            } else if self.keyboard_field == TextField::ApiKey {
-                self.api_key_draft.pop();
             } else if self.keyboard_field == TextField::Widget {
                 self.widget_text_draft.pop();
             } else {
@@ -1804,16 +1987,6 @@ impl State {
         if self.keyboard_field == TextField::Widget {
             return self.commit_widget_text();
         }
-        if self.keyboard_field == TextField::ApiKey {
-            let key = std::mem::take(&mut self.api_key_draft);
-            let key = key.trim();
-            // An empty dismissal keeps the saved key.
-            if !key.is_empty() && self.preferences.esports_key != key {
-                self.preferences.esports_key = key.into();
-                return vec![Effect::Save];
-            }
-            return vec![];
-        }
         self.commit_input_name()
     }
 
@@ -1832,6 +2005,53 @@ impl State {
         } else {
             vec![]
         }
+    }
+
+    /// Applies the tile list edited on a phone or computer. New tiles join
+    /// the end of the Home favorites and removed ones leave favorites and hidden apps.
+    pub fn replace_tiles(&mut self, tiles: Vec<CustomTile>) -> Vec<Effect> {
+        let removed: Vec<_> = self
+            .preferences
+            .custom_tiles
+            .iter()
+            .filter(|old| !tiles.iter().any(|tile| tile.id == old.id))
+            .map(|old| old.id.clone())
+            .collect();
+        for id in &removed {
+            self.preferences.remove_tile(id);
+        }
+        let added: Vec<_> = tiles
+            .iter()
+            .filter(|tile| self.preferences.custom_tile(&tile.id).is_none())
+            .map(|tile| tile.id.clone())
+            .collect();
+        self.preferences.custom_tiles = tiles;
+        self.preferences.sanitize();
+        self.sync_custom_tiles();
+        if let Target::TileRemove(id) = &self.focus
+            && self.preferences.custom_tile(id).is_none()
+        {
+            self.focus = Target::TileEditor;
+        }
+        if !added.is_empty() {
+            let mut favorites = self.preferences.favorites(&self.inventory.apps);
+            for id in added {
+                if self.preferences.custom_tile(&id).is_some() && !favorites.contains(&id) {
+                    favorites.push(id);
+                }
+            }
+            self.preferences.favorites = Some(favorites);
+        }
+        vec![Effect::Save]
+    }
+
+    fn send_tile(&mut self, tile: CustomTile) -> Vec<Effect> {
+        self.notify(
+            self.preferences
+                .language
+                .format("tileSending", &[("tile", &tile.title)]),
+        );
+        vec![Effect::FireWebhook(tile)]
     }
 
     pub fn delete_surrounding_text(&mut self, offset: i32, length: i32) {
@@ -1857,8 +2077,6 @@ impl State {
             self.greeting_name_draft = query;
         } else if self.keyboard_field == TextField::InputName {
             self.input_name = query;
-        } else if self.keyboard_field == TextField::ApiKey {
-            self.api_key_draft = query;
         } else if self.keyboard_field == TextField::Widget {
             self.widget_text_draft = query;
         } else {
@@ -1873,7 +2091,6 @@ impl State {
             TextField::Location => &self.weather.query,
             TextField::Name => &self.greeting_name_draft,
             TextField::InputName => &self.input_name,
-            TextField::ApiKey => &self.api_key_draft,
             TextField::Widget => &self.widget_text_draft,
             TextField::Apps => &self.query,
         }
@@ -1882,36 +2099,18 @@ impl State {
     /// A key sent from the phone page: saved, and the dialog closes.
     pub fn phone_key_received(&mut self, key: String) -> Vec<Effect> {
         self.phone_key = None;
-        let mut for_widget = false;
         if let Some(Overlay::PhoneKey { restore }) = self.overlay.take() {
-            for_widget = matches!(restore, Target::WidgetSetting(_));
             self.focus = restore;
             self.panel_started = None;
         }
-        if for_widget {
-            let language = self.preferences.language;
-            let label = self.widget_editing_label();
-            if self.widget_secret_from_phone(key) {
-                self.notify(language.format("widgetSecretSaved", &[("secret", &label)]));
-            }
-            return vec![];
+        let language = self.preferences.language;
+        let label = self.widget_editing_label();
+        if self.widget_secret_from_phone(key) {
+            self.notify(language.format("widgetSecretSaved", &[("secret", &label)]));
         }
-        self.preferences.esports_key = key;
-        self.notify(self.preferences.language.t("phoneKeySaved"));
-        vec![Effect::Save]
+        vec![]
     }
 
-    /// An esports widget's settings page, focused on the key.
-    fn open_esports_settings(&mut self, instance: u8) {
-        self.section = 0;
-        self.subpage = Some(Subpage::Esports(instance));
-        self.focus = Target::EsportsKey;
-        self.scroll = 0.;
-        if !self.preferences.reduced_motion {
-            self.panel_started = Some(Instant::now());
-        }
-        self.dirty = true;
-    }
     pub fn open_keyboard(&mut self, field: TextField) {
         self.keyboard_field = field;
         if field == TextField::Name {
@@ -1921,9 +2120,6 @@ impl State {
         if field == TextField::InputName {
             // The TV keyboard starts empty, so a new name replaces the old one.
             self.input_name.clear();
-        }
-        if field == TextField::ApiKey {
-            self.api_key_draft.clear();
         }
         if field == TextField::Widget {
             self.widget_text_draft.clear();
@@ -1938,7 +2134,6 @@ impl State {
                 TextField::Location => Target::WeatherQuery,
                 TextField::Name => Target::GreetingName,
                 TextField::InputName => Target::InputRename,
-                TextField::ApiKey => Target::EsportsKey,
                 TextField::Widget => self.keyboard_return(),
                 TextField::Apps => Target::Search,
             };
@@ -1968,7 +2163,6 @@ impl State {
             TextField::Location => Target::WeatherSearch,
             TextField::Name => Target::GreetingName,
             TextField::InputName => Target::InputRename,
-            TextField::ApiKey => Target::EsportsKey,
             TextField::Widget => self.widget_editing_target(),
             TextField::Apps => Target::Search,
         }
@@ -1994,15 +2188,46 @@ impl State {
             return vec![];
         }
         self.dirty = true;
+        if self.page != Page::Apps
+            && let Target::App(id) = &self.focus
+            && let Some(tile) = self.preferences.custom_tile(id).cloned()
+        {
+            return self.send_tile(tile);
+        }
         match self.focus.clone() {
             Target::Nav(index) => self.open(index),
             Target::Browse => self.open(1),
             Target::Retry => return vec![Effect::Reload],
             Target::DismissNotice => self.notice = None,
             Target::CloseDialog => return self.back(),
+            Target::UploadWallpaper => {
+                self.wallpaper_upload = None;
+                self.overlay = Some(Overlay::WallpaperUpload);
+                self.focus = Target::CloseDialog;
+                self.pressed = None;
+            }
+            Target::TileEditor => {
+                self.tile_editor = None;
+                self.overlay = Some(Overlay::TileEditor);
+                self.focus = Target::CloseDialog;
+                self.pressed = None;
+            }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::App(_) if self.page == Page::Apps && !self.launching => self.options(),
             Target::App(id) | Target::Input(id) if !self.launching => {
                 return vec![Effect::Launch(id)];
+            }
+            Target::OpenApp if !self.launching => {
+                if let Some(Overlay::Options { id, .. }) = &self.overlay
+                    && self.inventory.apps.iter().any(|app| &app.id == id)
+                {
+                    let id = id.clone();
+                    self.back();
+                    if let Some(tile) = self.preferences.custom_tile(&id).cloned() {
+                        return self.send_tile(tile);
+                    }
+                    return vec![Effect::Launch(id)];
+                }
             }
             Target::Filter(index) => {
                 self.filter = if self.filter == index { 0 } else { index };
@@ -2023,7 +2248,7 @@ impl State {
             }
             Target::WeatherConfigure => {
                 self.open(2);
-                self.section = WEATHER_SECTION;
+                self.section = WIDGETS_SECTION;
                 self.open_location();
                 self.open_keyboard(TextField::Location);
             }
@@ -2075,6 +2300,44 @@ impl State {
                 }
             }
             Target::InputRename => self.open_keyboard(TextField::InputName),
+            Target::Widget(index) => {
+                let (subpage, focus) = match index {
+                    0 => (Subpage::Greeting, Target::GreetingName),
+                    1 => (Subpage::Weather, Target::WeatherToggle),
+                    2 => (Subpage::Shortcuts, Target::TileEditor),
+                    3 => (
+                        Subpage::Inputs,
+                        self.inventory
+                            .inputs
+                            .first()
+                            .map(|input| Target::InputMode(input.id.clone()))
+                            .unwrap_or(Target::Setting(3)),
+                    ),
+                    _ => return vec![],
+                };
+                self.section = WIDGETS_SECTION;
+                self.subpage = Some(subpage);
+                self.focus = focus;
+                self.scroll = 0.;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+            }
+            Target::TileRemove(id) => {
+                if let Some(tile) = self.preferences.remove_tile(&id) {
+                    self.notify(
+                        self.preferences
+                            .language
+                            .format("tileRemoved", &[("tile", &tile.title)]),
+                    );
+                    self.subpage = Some(Subpage::Shortcuts);
+                    self.panel_started = None;
+                    self.scroll = 0.;
+                    self.sync_custom_tiles();
+                    self.focus = Target::TileEditor;
+                    return vec![Effect::Save];
+                }
+            }
             Target::InputNameReset => {
                 if let Some(Subpage::Input(id)) = &self.subpage
                     && self.preferences.input_names.remove(id).is_some()
@@ -2128,10 +2391,6 @@ impl State {
                         });
                     }
                     Some(BlockAction::Settings) => {
-                        if let crate::home_grid::BlockKind::Esports(instance) = kind {
-                            self.open(2);
-                            self.open_esports_settings(instance);
-                        }
                         if let crate::home_grid::BlockKind::Widget(slot) = kind {
                             self.open(2);
                             self.open_widget_settings(slot);
@@ -2140,9 +2399,6 @@ impl State {
                     }
                     Some(BlockAction::Remove) => {
                         self.preferences.home_layout.retain(|b| b.kind != kind);
-                        if let crate::home_grid::BlockKind::Esports(n) = kind {
-                            self.preferences.esports.remove(&n);
-                        }
                         if let crate::home_grid::BlockKind::Widget(slot) = kind {
                             self.remove_widget_block(slot);
                         }
@@ -2153,71 +2409,10 @@ impl State {
                 }
                 return vec![];
             }
-            Target::Match(instance, index) => {
-                let list = self.esports_matches(instance);
-                let Some(found) = list.get(index) else {
-                    return vec![];
-                };
-                let game = found.game.clone();
-                let missing: Vec<u64> = found
-                    .teams
-                    .iter()
-                    .flatten()
-                    .map(|team| team.id)
-                    .filter(|id| !self.feeds.rosters.contains_key(id))
-                    // The shared feed brings lineups; a personal key fetches missing ones.
-                    .filter(|_| !self.preferences.esports_key.trim().is_empty())
-                    .collect();
-                self.overlay = Some(Overlay::Match {
-                    instance,
-                    index,
-                    restore: Target::Match(instance, index),
-                });
-                self.focus = Target::CloseDialog;
-                self.feeds.images_due = true;
-                if !self.preferences.reduced_motion {
-                    self.panel_started = Some(Instant::now());
-                }
-                return if missing.is_empty() {
-                    vec![]
-                } else {
-                    vec![Effect::Rosters(game, missing)]
-                };
-            }
             Target::WidgetItem(slot, index) => return self.open_widget_dialog(slot, index),
             Target::WidgetSetting(row) => return self.activate_widget_setting(row),
             Target::StoreEntry(index) => return self.open_store_entry(index),
             Target::StoreAction(index) => return self.store_action(index),
-            Target::EsportsKey => self.open_keyboard(TextField::ApiKey),
-            Target::EsportsPhone => {
-                // The page is for the esports key, not a store widget's secret.
-                self.widget_editing = None;
-                self.overlay = Some(Overlay::PhoneKey {
-                    restore: Target::EsportsPhone,
-                });
-                self.focus = Target::CloseDialog;
-                self.phone_key = None;
-                if !self.preferences.reduced_motion {
-                    self.panel_started = Some(Instant::now());
-                }
-                return vec![Effect::PhoneKeyStart];
-            }
-            Target::EsportsGames => {
-                if let Some(Subpage::Esports(instance)) = self.subpage {
-                    self.subpage = Some(Subpage::EsportsGames(instance));
-                    self.focus = Target::Choice(0);
-                    self.scroll = 0.;
-                }
-                return vec![];
-            }
-            Target::EsportsMajor => {
-                if let Some(Subpage::Esports(instance)) = self.subpage {
-                    let widget = self.preferences.esports.entry(instance).or_default();
-                    widget.major_only = !widget.major_only;
-                    return vec![Effect::Save];
-                }
-                return vec![];
-            }
             Target::Poster(index) => {
                 if index < self.feeds.premieres.len() {
                     self.overlay = Some(Overlay::Poster {
@@ -2297,9 +2492,6 @@ impl State {
                 let (x, y) = crate::home_grid::first_free(&blocks, w, h);
                 blocks.push(crate::home_grid::Block { kind, x, y, w, h });
                 self.preferences.home_layout = blocks;
-                if let crate::home_grid::BlockKind::Esports(n) = kind {
-                    self.preferences.esports.entry(n).or_default();
-                }
                 self.focus = Target::Block(kind);
                 return vec![Effect::Save];
             }
@@ -2371,9 +2563,9 @@ impl State {
                         }
                         return vec![];
                     }
-                    6 => {
-                        self.subpage = Some(Subpage::Greeting);
-                        self.focus = Target::GreetingName;
+                    10 => {
+                        self.subpage = Some(Subpage::TextRendering);
+                        self.focus = Target::Choice(self.preferences.text_rendering.index());
                         self.scroll = 0.;
                         if !self.preferences.reduced_motion {
                             self.panel_started = Some(Instant::now());
@@ -2384,15 +2576,50 @@ impl State {
                 }
                 return vec![Effect::Save];
             }
-            Target::Background(index) => {
-                if !self.preferences.reduced_motion
-                    && self.preferences.background != BACKGROUNDS[index].0
-                {
+            Target::Background(_) => {
+                self.options();
+            }
+            Target::WallpaperCycle => {
+                self.preferences.wallpaper_cycle = !self.preferences.wallpaper_cycle;
+                self.preferences.wallpaper_changed = unix_now();
+                return vec![Effect::Save];
+            }
+            Target::UseBackground => {
+                let Some(Overlay::BackgroundOptions { id, .. }) = self.overlay.clone() else {
+                    return vec![];
+                };
+                if self.deleting_wallpaper.as_deref() == Some(&id) {
+                    return vec![];
+                }
+                if !self.background_ids().any(|known| known == id) {
+                    return self.back();
+                }
+                if !self.preferences.reduced_motion && self.preferences.background != id {
                     self.previous_background =
                         Some((self.preferences.background.clone(), Instant::now()));
+                    self.background_fade = BACKGROUND_FADE;
                 }
-                self.preferences.background = BACKGROUNDS[index].0.into();
+                self.preferences.splash_background = Some(if crate::wallpapers::valid_id(&id) {
+                    self.preferences.splash_background().to_owned()
+                } else {
+                    id.clone()
+                });
+                self.preferences.background = id;
+                self.preferences.wallpaper_changed = unix_now();
+                self.back();
                 return vec![Effect::Save];
+            }
+            Target::DeleteBackground => {
+                if let Some(Overlay::BackgroundOptions { id, restore }) = self.overlay.clone()
+                    && self.can_delete_background(&id)
+                    && self.deleting_wallpaper.is_none()
+                {
+                    self.overlay = Some(Overlay::BackgroundDelete { id, restore });
+                    self.focus = Target::CancelDelete;
+                    self.pointer = false;
+                    self.pressed = None;
+                    self.panel_started = None;
+                }
             }
             Target::InputMode(id) => {
                 let mode = self
@@ -2427,22 +2654,6 @@ impl State {
                         } else {
                             Unit::Celsius
                         }
-                    }
-                    // Disciplines toggle and the list stays open; one always remains.
-                    Some(Subpage::EsportsGames(instance)) => {
-                        let Some((game, _)) = crate::feeds::GAMES.get(index) else {
-                            return vec![];
-                        };
-                        let widget = self.preferences.esports.entry(instance).or_default();
-                        if let Some(at) = widget.games.iter().position(|g| g == game) {
-                            if widget.games.len() == 1 {
-                                return vec![];
-                            }
-                            widget.games.remove(at);
-                        } else {
-                            widget.games.push((*game).into());
-                        }
-                        return vec![Effect::Save];
                     }
                     // A store widget's options: a checklist stays open, a choice closes.
                     Some(Subpage::WidgetOptions(slot, setting)) => {
@@ -2481,13 +2692,22 @@ impl State {
                             Language::ALL[index.min(Language::ALL.len() - 1)];
                         self.weather.cancel_search();
                     }
+                    Some(Subpage::TextRendering) => {
+                        let mode = TextRendering::ALL[index.min(TextRendering::ALL.len() - 1)];
+                        if mode != self.preferences.text_rendering {
+                            self.preferences.text_rendering = mode;
+                            self.notify(self.preferences.language.t("textRenderingRestart"));
+                        }
+                    }
                     Some(
                         Subpage::WeatherLocation
                         | Subpage::Greeting
                         | Subpage::AppNames
                         | Subpage::Clock
-                        | Subpage::Esports(_)
-                        | Subpage::Widget(_),
+                        | Subpage::Widget(_)
+                        | Subpage::Weather
+                        | Subpage::Shortcuts
+                        | Subpage::Inputs,
                     ) => {
                         return vec![];
                     }
@@ -2497,6 +2717,23 @@ impl State {
                 return vec![Effect::Save];
             }
             Target::Option(index) => {
+                if index == 2 {
+                    if let Some(Overlay::Options { id, restore }) = &self.overlay
+                        && crate::platform::can_uninstall(id)
+                        && self.uninstalling.is_none()
+                        && self.inventory.apps.iter().any(|app| &app.id == id)
+                    {
+                        self.overlay = Some(Overlay::Delete {
+                            id: id.clone(),
+                            restore: restore.clone(),
+                        });
+                        self.focus = Target::CancelDelete;
+                        self.pointer = false;
+                        self.pressed = None;
+                        self.panel_started = None;
+                    }
+                    return vec![];
+                }
                 let Some(Overlay::Options { id, restore }) = self.overlay.take() else {
                     return vec![];
                 };
@@ -2565,6 +2802,31 @@ impl State {
                     vec![]
                 };
             }
+            Target::CancelDelete => return self.back(),
+            Target::ConfirmDelete => {
+                if let Some(Overlay::BackgroundDelete { id, .. }) = self.overlay.clone() {
+                    if self.can_delete_background(&id) && self.deleting_wallpaper.is_none() {
+                        if crate::wallpapers::valid_id(&id) {
+                            self.deleting_wallpaper = Some(id.clone());
+                            self.focus = Target::CancelDelete;
+                            return vec![Effect::DeleteWallpaper(id)];
+                        }
+                        // Packaged assets remain intact; persist removal from the gallery.
+                        self.finish_background_delete(&id);
+                        return vec![Effect::Save];
+                    }
+                    return vec![];
+                }
+                if let Some(Overlay::Delete { id, .. }) = &self.overlay
+                    && self.uninstalling.is_none()
+                    && crate::platform::can_uninstall(id)
+                    && self.inventory.apps.iter().any(|app| &app.id == id)
+                {
+                    self.uninstalling = Some(id.clone());
+                    self.focus = Target::CancelDelete;
+                    return vec![Effect::Uninstall(id.clone())];
+                }
+            }
             Target::Key(index) => match KEYS[index] {
                 "Space" => self.text(" "),
                 "Delete" => self.delete(),
@@ -2572,7 +2834,6 @@ impl State {
                     TextField::Location => self.weather.edit(String::new()),
                     TextField::Name => self.greeting_name_draft.clear(),
                     TextField::InputName => self.input_name.clear(),
-                    TextField::ApiKey => self.api_key_draft.clear(),
                     TextField::Widget => self.widget_text_draft.clear(),
                     TextField::Apps => self.query.clear(),
                 },
@@ -2601,6 +2862,35 @@ impl State {
         }
         if let Some(overlay) = self.overlay.take() {
             self.panel_started = None;
+            if let Overlay::BackgroundDelete { id, restore } = overlay {
+                self.overlay = Some(Overlay::BackgroundOptions { id, restore });
+                self.focus = Target::DeleteBackground;
+                self.pressed = None;
+                return vec![];
+            }
+            if let Overlay::BackgroundOptions { id, .. } = overlay {
+                self.focus = self.background_target(&id);
+                self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::WallpaperUpload) {
+                self.wallpaper_upload = None;
+                self.focus = Target::UploadWallpaper;
+                self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::TileEditor) {
+                self.tile_editor = None;
+                self.focus = Target::TileEditor;
+                self.pressed = None;
+                return vec![];
+            }
+            if let Overlay::Delete { id, restore } = overlay {
+                self.overlay = Some(Overlay::Options { id, restore });
+                self.focus = Target::Option(2);
+                self.pressed = None;
+                return vec![];
+            }
             if matches!(overlay, Overlay::Recents { .. }) {
                 self.recents.closing_focus = Some(self.focus.clone());
                 self.recents.updated = Instant::now();
@@ -2619,7 +2909,6 @@ impl State {
             | Overlay::Block { restore, .. }
             | Overlay::AddBlock { restore }
             | Overlay::Poster { restore, .. }
-            | Overlay::Match { restore, .. }
             | Overlay::PhoneKey { restore }
             | Overlay::WidgetDialog { restore, .. }
             | Overlay::Store { restore } = overlay

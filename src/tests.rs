@@ -10,10 +10,136 @@ use std::{collections::BTreeMap, path::PathBuf};
 #[path = "recents-tests.rs"]
 mod recent_tests;
 
+#[path = "wallpapers-ui-tests.rs"]
+mod wallpaper_tests;
+
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
     state.set_inventory(demo_inventory(), None);
     state
+}
+
+#[test]
+fn home_relaunch_returns_from_apps_and_settings() {
+    for page in [1, 2] {
+        let mut state = ready();
+        state.open(page);
+        state.query = "YouTube".into();
+        state.filter = 1;
+        state.scroll = 400.;
+        state.subpage = Some(crate::state::Subpage::Clock);
+        state.pointer = true;
+        state.pressed = Some(Target::Nav(page));
+        state.dirty = false;
+
+        assert!(state.return_home().is_empty());
+        assert_eq!(state.page, Page::Home);
+        assert_eq!(state.focus, Target::Nav(0));
+        assert!(state.query.is_empty());
+        assert_eq!(state.filter, 0);
+        assert_eq!(state.scroll, 0.);
+        assert!(state.subpage.is_none());
+        assert!(!state.pointer);
+        assert!(state.pressed.is_none());
+        assert!(state.dirty);
+        assert!(state.return_home().is_empty());
+        assert!(state.overlay.is_none(), "Home again must not open Recents");
+    }
+}
+
+#[test]
+fn home_relaunch_dismisses_overlays_without_cancelling_mutations() {
+    for overlay in [
+        Overlay::Options {
+            id: "test.app".into(),
+            restore: Target::Nav(1),
+        },
+        Overlay::Delete {
+            id: "test.app".into(),
+            restore: Target::Nav(1),
+        },
+        Overlay::WallpaperUpload,
+        Overlay::BackgroundOptions {
+            id: "dunes".into(),
+            restore: Target::Sidebar(1),
+        },
+        Overlay::BackgroundDelete {
+            id: "dunes".into(),
+            restore: Target::Sidebar(1),
+        },
+    ] {
+        let mut state = ready();
+        state.open(2);
+        state.overlay = Some(overlay);
+        state.panel_started = Some(std::time::Instant::now());
+        state.wallpaper_upload = Some(Err("test".into()));
+        state.uninstalling = Some("test.app".into());
+        state.deleting_wallpaper = Some("dunes".into());
+        state.moving = Some("test.app".into());
+
+        assert!(state.return_home().is_empty());
+        assert_eq!(state.page, Page::Home);
+        assert!(state.overlay.is_none());
+        assert!(state.panel_started.is_none());
+        assert!(state.wallpaper_upload.is_none());
+        assert!(state.moving.is_none());
+        assert_eq!(state.uninstalling.as_deref(), Some("test.app"));
+        assert_eq!(state.deleting_wallpaper.as_deref(), Some("dunes"));
+    }
+}
+
+#[test]
+fn home_relaunch_commits_keyboard_edits_before_clearing_the_subpage() {
+    for system in [false, true] {
+        let mut state = ready();
+        state.open(2);
+        state.subpage = Some(crate::state::Subpage::Input("HDMI_1".into()));
+        state.open_keyboard(crate::state::TextField::InputName);
+        if system {
+            state.overlay = Some(Overlay::SystemKeyboard);
+        }
+        state.text("Console");
+
+        assert_eq!(state.return_home(), vec![Effect::Save]);
+        assert_eq!(
+            state
+                .preferences
+                .input_names
+                .get("HDMI_1")
+                .map(String::as_str),
+            Some("Console")
+        );
+        assert_eq!(state.page, Page::Home);
+        assert_eq!(state.focus, Target::Nav(0));
+        assert!(!state.text_input_active());
+        assert!(state.subpage.is_none());
+    }
+}
+
+#[test]
+fn home_relaunch_dismisses_recents_and_ignores_its_pending_reply() {
+    let mut state = ready();
+    state.open(1);
+    state.open_recents();
+    state.recents.visibility = 1.;
+    state.recents.closing_focus = Some(Target::RecentEmpty);
+    assert!(state.recents.pending.is_some());
+    let generation = state.recents.generation;
+    let command = state.recents.pending.clone().unwrap();
+
+    assert!(state.return_home().is_empty());
+    assert_eq!(state.page, Page::Home);
+    assert!(state.overlay.is_none());
+    assert!(state.recents.pending.is_none());
+    assert_eq!(state.recents.visibility, 0.);
+    assert!(state.recents.closing_focus.is_none());
+    assert!(
+        state
+            .recent_response(generation, command, Ok(Some(vec![])))
+            .is_empty()
+    );
+    assert_eq!(state.focus, Target::Nav(0));
+    assert!(state.overlay.is_none());
 }
 
 fn scene(state: &State) -> view::Scene {
@@ -85,14 +211,20 @@ fn widening_favorites_does_not_widen_apps_or_unclip_offscreen_rows() {
     let controls = [control];
     assert!(state.hit_test(&controls, 40., 600.).is_none());
     assert!(state.hit_test(&controls, 1860., 600.).is_none());
-    assert!(state.hit_test(&controls, 100., 1000.).is_none());
+    assert_eq!(
+        state.hit_test(&controls, 100., 1000.),
+        Some(Target::App("sample".into()))
+    );
+    assert!(state.hit_test(&controls, 100., 1080.).is_none());
     assert_eq!(
         state.hit_test(&controls, 100., 600.),
         Some(Target::App("sample".into()))
     );
     assert!(!state.wheel_scroll(&controls, Some((1860., 600.)), 0, -1));
     assert_eq!(state.home_scroll, 0.);
-    assert_eq!(state.scroll, 90.);
+    let viewport = state.content_viewport();
+    let scroll_limit = controls[0].rect.y + controls[0].rect.h - (viewport.y + viewport.h - 12.);
+    assert_eq!(state.scroll, 90_f32.min(scroll_limit));
 }
 
 #[test]
@@ -334,6 +466,10 @@ fn preferences_round_trip_and_corrupt_data_is_not_silently_overwritten() {
 #[test]
 fn gallery_and_grid_navigation_scroll_to_keep_focus_visible() {
     let mut state = ready();
+    state.set_wallpapers(vec![crate::wallpapers::Wallpaper {
+        id: "custom-00000000000000000000000000000001".into(),
+        directory: PathBuf::from("/preview/wallpapers/custom-00000000000000000000000000000001"),
+    }]);
     state.open(2);
     state.section = crate::state::BACKGROUND_SECTION;
     state.focus = Target::Background(0);
@@ -341,10 +477,17 @@ fn gallery_and_grid_navigation_scroll_to_keep_focus_visible() {
     assert_eq!(state.focus, Target::Background(3));
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Background(6));
-    assert_eq!(
-        state.scroll, 0.,
-        "the web-sized gallery fits all three rows"
-    );
+    assert_eq!(state.scroll, 0., "the first three gallery rows fit");
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Background(9));
+    assert!(state.scroll > 0., "the fourth gallery row must scroll");
+    let control = controls(&state)
+        .into_iter()
+        .find(|c| c.target == state.focus)
+        .unwrap();
+    let viewport = state.backgrounds_viewport();
+    assert!(control.rect.y >= viewport.y);
+    assert!(control.rect.y + control.rect.h <= viewport.y + viewport.h);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(
         state.focus,
@@ -428,7 +571,7 @@ fn focused_navigation_tabs_switch_pages_immediately() {
 fn greeting_subpage_opens_the_keyboard_and_back_restores_its_parent() {
     let mut state = ready();
     state.open(2);
-    state.focus = Target::Setting(6);
+    state.focus = Target::Widget(0);
     assert!(
         state
             .direction(Direction::Right, &controls(&state))
@@ -452,7 +595,7 @@ fn greeting_subpage_opens_the_keyboard_and_back_restores_its_parent() {
     assert_eq!(state.subpage, Some(crate::state::Subpage::Greeting));
     assert!(state.back().is_empty());
     assert!(state.subpage.is_none());
-    assert_eq!(state.focus, Target::Setting(6));
+    assert_eq!(state.focus, Target::Widget(0));
 }
 
 #[test]
@@ -461,7 +604,7 @@ fn greeting_name_replacement_commits_on_every_keyboard_completion_route() {
         let mut state = ready();
         state.preferences.greeting_name = "Ana".into();
         state.open(2);
-        state.focus = Target::Setting(6);
+        state.focus = Target::Widget(0);
         state.activate();
         state.activate();
         assert!(state.editing_text().is_empty());
@@ -497,7 +640,7 @@ fn remote_can_clear_a_saved_greeting_name_without_moving_the_controls() {
     let mut state = ready();
     state.preferences.greeting_name = "Ana".into();
     state.open(2);
-    state.focus = Target::Setting(6);
+    state.focus = Target::Widget(0);
     state.activate();
     let before: Vec<_> = controls(&state)
         .iter()
@@ -514,7 +657,7 @@ fn remote_can_clear_a_saved_greeting_name_without_moving_the_controls() {
         .collect();
     assert_eq!(before, after);
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::Setting(6));
+    assert_eq!(state.focus, Target::Widget(0));
     assert!(state.subpage.is_none());
 }
 
@@ -588,7 +731,8 @@ fn input_name_actions_only_highlight_the_focused_row_and_keep_the_saved_mode() {
         .preferences
         .set_input_name("com.webos.app.hdmi1", "Console");
     state.open(2);
-    state.section = crate::state::INPUTS_SECTION;
+    state.focus = Target::Widget(3);
+    state.activate();
     state.focus = Target::InputMode("com.webos.app.hdmi1".into());
     state.activate();
     for target in [Target::InputRename, Target::InputNameReset] {
@@ -741,6 +885,29 @@ fn time_format_selects_seconds_without_changing_the_hour_format() {
 }
 
 #[test]
+fn system_version_uses_a_settings_surface_without_an_interactive_target() {
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::SYSTEM_SECTION;
+    state.panel_started = None;
+    let system = scene(&state);
+    assert!(system.draw.iter().any(|draw| matches!(
+        draw,
+        crate::renderer::Draw::Shape(rect, _, _, color)
+            if rect.x == 640. && rect.y == 164.8 && rect.w == 1120. && rect.h == 72. && color[3] == 0.3
+    )));
+    assert!(system.draw.iter().any(|draw| matches!(
+        draw,
+        crate::renderer::Draw::Text(label, _, style, color, _)
+            if label == "Luma vtest" && style.size == 20.8 && style.weight == 550 && color[3] == 0.5
+    )));
+    assert_eq!(state.hit_test(&system.controls, 900., 200.), None);
+    state.focus = Target::Sidebar(crate::state::SYSTEM_SECTION);
+    state.direction(Direction::Right, &system.controls);
+    assert_eq!(state.focus, Target::Setting(3));
+}
+
+#[test]
 fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     let mut state = ready();
     state.open(2);
@@ -762,6 +929,8 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
     assert_eq!(state.focus, Target::Setting(3));
     assert_eq!(state.activate(), vec![Effect::Reload]);
     state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Setting(10));
+    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Setting(5));
     assert_eq!(state.activate(), vec![Effect::Quit]);
     state.back();
@@ -772,10 +941,67 @@ fn system_category_owns_refresh_and_quit_and_restores_sidebar_focus() {
 }
 
 #[test]
+fn text_rendering_preferences_default_to_msaa_and_recover_invalid_values() {
+    use crate::text_rendering::TextRendering;
+    for value in [
+        json!({}),
+        json!({"text_rendering": "unknown"}),
+        json!({"text_rendering": null}),
+        json!({"text_rendering": 4}),
+    ] {
+        let mut value = value;
+        value["greeting_name"] = json!("Ana");
+        let preferences: Preferences = serde_json::from_value(value).unwrap();
+        assert_eq!(preferences.text_rendering, TextRendering::Msaa);
+        assert_eq!(preferences.greeting_name, "Ana");
+    }
+}
+
+#[test]
+fn text_rendering_choices_persist_and_back_restores_the_system_row() {
+    use crate::{state::Subpage, text_rendering::TextRendering};
+    let mut state = ready();
+    state.open(2);
+    state.section = crate::state::SYSTEM_SECTION;
+    state.focus = Target::Setting(10);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.subpage, Some(Subpage::TextRendering));
+    assert_eq!(state.focus, Target::Choice(0));
+    assert!(scene(&state).draw.iter().any(|draw| matches!(
+        draw,
+        crate::renderer::Draw::Text(label, ..) if label == "Restart Luma to apply changes."
+    )));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Choice(1));
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.text_rendering, TextRendering::Analytic);
+    assert_eq!(state.focus, Target::Setting(10));
+    assert!(state.subpage.is_none());
+    let saved = serde_json::to_value(&state.preferences).unwrap();
+    assert_eq!(saved["text_rendering"], "analytic");
+    let mut restored = State::new(serde_json::from_value(saved).unwrap());
+    restored.open(2);
+    restored.section = crate::state::SYSTEM_SECTION;
+    restored.focus = Target::Setting(10);
+    restored.activate();
+    assert_eq!(restored.focus, Target::Choice(1));
+    restored.direction(Direction::Down, &controls(&restored));
+    assert_eq!(restored.focus, Target::Choice(0));
+    restored.back();
+    assert_eq!(restored.focus, Target::Setting(10));
+    assert_eq!(restored.preferences.text_rendering, TextRendering::Analytic);
+    restored.activate();
+    restored.direction(Direction::Up, &controls(&restored));
+    assert_eq!(restored.activate(), vec![Effect::Save]);
+    assert_eq!(restored.preferences.text_rendering, TextRendering::Msaa);
+}
+
+#[test]
 fn input_visibility_has_explicit_choices_and_returns_to_the_same_input() {
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::INPUTS_SECTION;
+    state.focus = Target::Widget(3);
+    state.activate();
     let id = "com.webos.app.hdmi1".to_string();
     state.focus = Target::InputMode(id.clone());
     state.activate();
@@ -788,18 +1014,31 @@ fn input_visibility_has_explicit_choices_and_returns_to_the_same_input() {
     state.activate();
     state.back();
     assert_eq!(state.focus, Target::InputMode(id));
-    assert!(state.subpage.is_none());
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Inputs));
+    state.back();
+    assert_eq!(state.focus, Target::Widget(3));
 }
 
 #[test]
-fn background_entry_restores_the_applied_background() {
+fn background_sidebar_right_focuses_rotation_and_ok_restores_the_applied_background() {
     let mut state = ready();
     state.open(2);
     state.preferences.background = "forest".into();
     state.focus = Target::Sidebar(crate::state::BACKGROUND_SECTION);
     state.section = crate::state::BACKGROUND_SECTION;
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Background(6));
+    assert_eq!(state.focus, Target::WallpaperCycle);
+    assert_eq!(state.preferences.background, "forest");
+    assert!(!state.preferences.wallpaper_cycle);
+    assert!(state.overlay.is_none());
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::UploadWallpaper);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::WallpaperCycle);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Sidebar(1));
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::WallpaperCycle);
     state.back();
     state.activate();
     assert_eq!(state.focus, Target::Background(6));
@@ -844,13 +1083,360 @@ fn a_notice_does_not_escape_modal_focus_and_closing_restores_the_app() {
     assert!(
         controls(&state)
             .iter()
-            .all(|c| matches!(c.target, Target::Option(_) | Target::CloseDialog))
+            .all(|c| matches!(c.target, Target::OpenApp | Target::Option(_)))
     );
     state.focus = Target::Option(1);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Option(1));
+    assert_eq!(state.focus, Target::Option(2));
     state.back();
     assert_eq!(state.focus, Target::App("netflix".into()));
+}
+
+#[test]
+fn delete_confirmation_defaults_to_cancel_and_back_restores_side_popup() {
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    state.open(1);
+    state.focus = Target::App("netflix".into());
+    let card = controls(&state)
+        .into_iter()
+        .find(|c| c.target == state.focus)
+        .unwrap()
+        .rect;
+    let parent_draw_count = scene(&state).draw.len();
+    state.options();
+    let popup_scene = scene(&state);
+    let popup = popup_scene.modal.unwrap();
+    assert!(
+        popup_scene
+            .controls
+            .iter()
+            .all(|control| matches!(control.target, Target::OpenApp | Target::Option(_)))
+    );
+    assert!(!popup_scene.draw[parent_draw_count..].iter().any(|draw| matches!(draw,
+        crate::renderer::Draw::Text(value, rect, ..) if popup.contains(rect.x, rect.y)
+            && ["Netflix", "Streaming", "Select", "Close", "OK", "Back"].contains(&value.as_str()))));
+    let action_icons: Vec<_> = popup_scene.draw[parent_draw_count..]
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Image(_, rect, ..)
+            | crate::renderer::Draw::TintedImage(_, rect, ..)
+                if popup.contains(rect.x, rect.y) =>
+            {
+                Some(rect)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(action_icons.len(), 4);
+    assert!(
+        action_icons
+            .iter()
+            .all(|rect| rect.x > popup.x + popup.w - 80.)
+    );
+    assert!(popup.x >= card.x + card.w || popup.x + popup.w <= card.x);
+    state.focus = Target::Option(2);
+    let focused_scene = scene(&state);
+    let delete_rect = focused_scene
+        .controls
+        .iter()
+        .find(|c| c.target == Target::Option(2))
+        .unwrap()
+        .rect;
+    assert!(focused_scene.draw.iter().any(|draw| matches!(draw,
+        crate::renderer::Draw::Shape(rect, _, _, color) if rect.x == delete_rect.x && rect.y == delete_rect.y
+            && *color == [214. / 255., 59. / 255., 53. / 255., 1.])));
+    assert!(focused_scene.draw.iter().any(|draw| matches!(draw,
+        crate::renderer::Draw::Text(label, rect, _, color, _) if label == "Delete app" && delete_rect.contains(rect.x, rect.y)
+            && *color == crate::renderer::WHITE)));
+    assert!(state.activate().is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::Delete { .. })));
+    assert_eq!(state.focus, Target::CancelDelete);
+    let confirmation = scene(&state).modal.unwrap();
+    assert_eq!(confirmation.w, 640.);
+    assert!(confirmation.h < confirmation.w);
+    assert!(
+        controls(&state)
+            .iter()
+            .all(|c| matches!(c.target, Target::ConfirmDelete | Target::CancelDelete))
+    );
+    assert!(state.activate().is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::Options { .. })));
+    assert_eq!(state.focus, Target::Option(2));
+    state.activate();
+    state.back();
+    assert_eq!(state.focus, Target::Option(2));
+    state.back();
+    assert_eq!(state.focus, Target::App("netflix".into()));
+}
+
+#[test]
+fn opening_side_popup_preserves_card_artwork_geometry_with_or_without_captions() {
+    for page in [0, 1] {
+        for names in [false, true] {
+            let mut state = ready();
+            state.preferences.show_app_names = names;
+            state.preferences.show_home_names = names;
+            state.open(page);
+            state.focus = Target::App("netflix".into());
+            let before = scene(&state);
+            let logo_rect = |draws: &[crate::renderer::Draw]| {
+                draws
+                    .iter()
+                    .filter_map(|draw| match draw {
+                        crate::renderer::Draw::Image(path, rect, ..)
+                        | crate::renderer::Draw::TintedImage(path, rect, ..)
+                            if path.contains("netflix") =>
+                        {
+                            Some([rect.x, rect.y, rect.w, rect.h])
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let original = logo_rect(&before.draw);
+            assert!(!original.is_empty());
+            state.options();
+            let lifted = logo_rect(&scene(&state).draw);
+            assert_eq!(lifted.len(), original.len() * 2);
+            for (actual, expected) in lifted.iter().zip(original.iter().cycle()) {
+                for (a, b) in actual.iter().zip(expected) {
+                    assert!(
+                        (a - b).abs() < 0.001,
+                        "Artwork bounds changed: {actual:?} vs {expected:?}"
+                    );
+                }
+            }
+            let hearts = |draws: &[crate::renderer::Draw]| {
+                draws
+                    .iter()
+                    .filter_map(|draw| match draw {
+                        crate::renderer::Draw::Image(path, rect, ..)
+                        | crate::renderer::Draw::TintedImage(path, rect, ..)
+                            if path.contains("heart-filled") && rect.x < 350. =>
+                        {
+                            Some([rect.x, rect.y, rect.w, rect.h])
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let original_hearts = hearts(&before.draw);
+            assert_eq!(original_hearts.len(), usize::from(page == 1));
+            let popup_hearts = hearts(&scene(&state).draw);
+            assert_eq!(popup_hearts.len(), original_hearts.len() + 1);
+            if page == 1 {
+                assert_eq!(popup_hearts, vec![original_hearts[0], original_hearts[0]]);
+            }
+        }
+    }
+}
+
+#[test]
+fn protected_apps_cannot_be_deleted_through_ui_or_worker() {
+    for id in [
+        crate::platform::APP_ID,
+        crate::platform::HOME_ID,
+        "com.webos.app.livetv",
+        "com.webos.app.browser",
+        "com.webos.app.settings",
+        "com.webos.service.applicationmanager",
+        "com.palm.app.settings",
+        "com.palm.app.input",
+        "com.lge.app.store",
+        "com.lge.service.example",
+        "com.luma.launcher",
+        "com.luma.native",
+        "com.luma.launcher.native",
+        "org.webosbrew.hbchannel",
+        "org.webosbrew.hbchannel.service",
+        "custom.lamp",
+        "invalid';command",
+    ] {
+        assert!(crate::platform::uninstall_request(id).is_err());
+        let mut state = ready();
+        state.inventory.apps.push(App::new(id, "Renamed app"));
+        state.open(1);
+        state.focus = Target::App(id.into());
+        state.options();
+        assert!(
+            !controls(&state)
+                .iter()
+                .any(|c| c.target == Target::Option(2))
+        );
+        state.focus = Target::Option(2);
+        assert!(state.activate().is_empty());
+        assert!(matches!(state.overlay, Some(Overlay::Options { .. })));
+        state.overlay = Some(Overlay::Delete {
+            id: id.into(),
+            restore: Target::App(id.into()),
+        });
+        state.focus = Target::ConfirmDelete;
+        assert!(state.activate().is_empty());
+    }
+    assert_eq!(
+        crate::platform::uninstall_request("netflix").unwrap(),
+        (
+            "luna://com.webos.appInstallService/remove",
+            json!({"id": "netflix", "subscribe": true})
+        )
+    );
+    for id in [
+        "com.example.app",
+        "com.webosbrew.app",
+        "com.palmtree.app",
+        "com.lgeneric.app",
+    ] {
+        assert!(
+            crate::platform::can_uninstall(id),
+            "Unexpectedly protected: {id}"
+        );
+    }
+}
+
+#[test]
+fn deletion_is_single_flight_and_only_success_cleans_up_preferences() {
+    let mut state = ready();
+    state.open(1);
+    state.preferences.favorites = Some(vec!["netflix".into(), "youtube.leanback.v4".into()]);
+    state.preferences.hidden.push("netflix".into());
+    state.focus = Target::App("netflix".into());
+    state.options();
+    state.focus = Target::Option(2);
+    state.activate();
+    state.focus = Target::ConfirmDelete;
+    let cancel_before = controls(&state)
+        .into_iter()
+        .find(|c| c.target == Target::CancelDelete)
+        .unwrap()
+        .rect;
+    assert_eq!(state.activate(), vec![Effect::Uninstall("netflix".into())]);
+    assert_eq!(state.focus, Target::CancelDelete);
+    let cancel_after = controls(&state)
+        .into_iter()
+        .find(|c| c.target == Target::CancelDelete)
+        .unwrap()
+        .rect;
+    assert_eq!(
+        [
+            cancel_before.x,
+            cancel_before.y,
+            cancel_before.w,
+            cancel_before.h
+        ],
+        [
+            cancel_after.x,
+            cancel_after.y,
+            cancel_after.w,
+            cancel_after.h
+        ]
+    );
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|c| c.target == Target::ConfirmDelete)
+    );
+    state.focus = Target::ConfirmDelete;
+    assert!(state.activate().is_empty());
+    assert!(state.uninstall_response("other".into(), Ok(())).is_empty());
+    assert_eq!(state.uninstalling.as_deref(), Some("netflix"));
+    assert_eq!(
+        state.uninstall_response("netflix".into(), Err("denied".into())),
+        vec![Effect::Refresh]
+    );
+    assert!(state.inventory.apps.iter().any(|a| a.id == "netflix"));
+    assert!(state.preferences.hidden.contains(&"netflix".into()));
+    assert_eq!(state.preferences.favorites.as_ref().unwrap().len(), 2);
+    assert_eq!(state.focus, state.first_content());
+    assert!(state.overlay.is_none());
+    state.focus = Target::App("netflix".into());
+    state.options();
+    state.focus = Target::Option(2);
+    state.activate();
+    state.focus = Target::ConfirmDelete;
+    state.activate();
+    assert_eq!(
+        state.uninstall_response("netflix".into(), Ok(())),
+        vec![Effect::Save, Effect::Refresh]
+    );
+    assert!(!state.inventory.apps.iter().any(|a| a.id == "netflix"));
+    assert!(state.preferences.hidden.is_empty());
+    assert_eq!(
+        state.preferences.favorites,
+        Some(vec!["youtube.leanback.v4".into()])
+    );
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::App("youtube.leanback.v4".into()));
+}
+
+#[test]
+fn deletion_completion_does_not_steal_focus_after_dismissal() {
+    let mut state = ready();
+    state.uninstalling = Some("netflix".into());
+    state.open(2);
+    state.uninstall_response("netflix".into(), Ok(()));
+    assert_eq!(state.page, Page::Settings);
+    assert_eq!(state.focus, Target::Nav(2));
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn app_activation_opens_options_with_open_focused_and_next_ok_launches() {
+    for page in [0, 1] {
+        let mut state = ready();
+        state.open(page);
+        state.focus = Target::App("netflix".into());
+        if page == 0 {
+            assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+            assert!(state.overlay.is_none());
+            continue;
+        }
+        assert!(state.activate().is_empty());
+        assert!(matches!(state.overlay, Some(Overlay::Options { .. })));
+        assert_eq!(state.focus, Target::OpenApp);
+        assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+        assert!(state.overlay.is_none());
+        assert_eq!(state.focus, Target::App("netflix".into()));
+    }
+}
+
+#[test]
+fn uncertain_deletion_uses_complete_inventory_instead_of_visible_app_filtering() {
+    use crate::platform::inventory_confirms_removal;
+    assert_eq!(inventory_confirms_removal(&json!([]), "netflix"), Ok(true));
+    assert_eq!(
+        inventory_confirms_removal(&json!([{"id": "youtube.leanback.v4"}]), "netflix"),
+        Ok(true)
+    );
+    assert_eq!(
+        inventory_confirms_removal(&json!([{"id": "netflix", "visible": false}]), "netflix"),
+        Ok(false)
+    );
+    assert!(inventory_confirms_removal(&json!({}), "netflix").is_err());
+    assert!(inventory_confirms_removal(&json!([{}]), "netflix").is_err());
+}
+
+#[test]
+fn failed_deletion_refreshes_inventory_and_closes_stale_confirmation() {
+    let mut state = ready();
+    state.open(1);
+    state.focus = Target::App("netflix".into());
+    state.options();
+    state.focus = Target::Option(2);
+    state.activate();
+    state.focus = Target::ConfirmDelete;
+    state.activate();
+    assert_eq!(
+        state.uninstall_response("netflix".into(), Err("timeout".into())),
+        vec![Effect::Refresh]
+    );
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::App("netflix".into()));
+    let mut inventory = demo_inventory();
+    inventory.apps.retain(|app| app.id != "netflix");
+    state.set_inventory(inventory, None);
+    assert!(!state.apps().iter().any(|app| app.id == "netflix"));
+    assert_ne!(state.focus, Target::App("netflix".into()));
 }
 
 #[test]
@@ -906,6 +1492,8 @@ fn pinning_a_hidden_app_restores_it_and_leaves_hidden_when_empty() {
     state.preferences.hidden.push("org.jellyfin.webos".into());
     state.focus = Target::App("org.jellyfin.webos".into());
     state.options();
+    assert_eq!(state.focus, Target::OpenApp);
+    state.focus = Target::Option(0);
     state.activate();
     assert!(state.preferences.hidden.is_empty());
     assert_eq!(state.filter, 0);
@@ -922,8 +1510,12 @@ fn pinning_a_hidden_app_restores_it_and_leaves_hidden_when_empty() {
 fn weather_location_keyboard_back_and_sidebar_routes_restore_focus() {
     let mut state = ready();
     state.open(2);
-    state.focus = Target::Sidebar(crate::state::WEATHER_SECTION);
-    state.section = crate::state::WEATHER_SECTION;
+    state.focus = Target::Sidebar(crate::state::WIDGETS_SECTION);
+    state.section = crate::state::WIDGETS_SECTION;
+    state.activate();
+    assert_eq!(state.focus, Target::Widget(0));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Widget(1));
     state.activate();
     assert_eq!(state.focus, Target::WeatherToggle);
     state.direction(Direction::Down, &controls(&state));
@@ -938,14 +1530,20 @@ fn weather_location_keyboard_back_and_sidebar_routes_restore_focus() {
     assert_eq!(state.subpage, Some(crate::state::Subpage::WeatherLocation));
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::WeatherLocation);
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Weather));
+    state.back();
+    assert_eq!(state.focus, Target::Widget(1));
     assert!(state.subpage.is_none());
+    state.back();
+    assert_eq!(state.focus, Target::Sidebar(crate::state::WIDGETS_SECTION));
 }
 
 #[test]
 fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::WEATHER_SECTION;
+    state.focus = Target::Widget(1);
+    state.activate();
     let place = crate::weather::Location {
         name: "Vienna".into(),
         region: "Vienna".into(),
@@ -984,10 +1582,30 @@ fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
 }
 
 #[test]
+fn home_weather_setup_returns_through_the_widgets_weather_parent() {
+    use crate::state::{Subpage, WIDGETS_SECTION};
+    let mut state = ready();
+    state.focus = Target::WeatherConfigure;
+    state.activate();
+    assert_eq!(state.page, Page::Settings);
+    assert_eq!(state.section, WIDGETS_SECTION);
+    assert_eq!(state.subpage, Some(Subpage::WeatherLocation));
+    assert!(state.text_input_active());
+    state.back();
+    state.back();
+    assert_eq!(state.subpage, Some(Subpage::Weather));
+    assert_eq!(state.focus, Target::WeatherLocation);
+    state.back();
+    assert!(state.subpage.is_none());
+    assert_eq!(state.focus, Target::Widget(1));
+}
+
+#[test]
 fn removing_weather_location_clears_cache_and_cancels_pending_results() {
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::WEATHER_SECTION;
+    state.focus = Target::Widget(1);
+    state.activate();
     state.focus = Target::WeatherLocation;
     state.activate();
     state.focus = Target::WeatherClear;
@@ -1032,6 +1650,13 @@ fn remote_can_select_and_restore_every_language() {
             state.direction(Direction::Down, &controls(&state));
         }
         assert_eq!(state.focus, Target::Choice(index));
+        let focused = controls(&state)
+            .into_iter()
+            .find(|control| control.target == state.focus)
+            .unwrap();
+        let viewport = state.content_viewport();
+        assert!(focused.rect.y >= viewport.y);
+        assert!(focused.rect.y + focused.rect.h <= viewport.y + viewport.h);
         assert_eq!(state.activate(), vec![Effect::Save]);
         assert_eq!(state.preferences.language, language);
         assert_eq!(state.focus, Target::Setting(4));
@@ -1255,7 +1880,8 @@ fn custom_input_names_keep_the_label_port_and_status_as_detail() {
 fn remote_renames_and_resets_an_input_from_its_settings_page() {
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::INPUTS_SECTION;
+    state.focus = Target::Widget(3);
+    state.activate();
     let id = "com.webos.app.hdmi2".to_string();
     state.focus = Target::InputMode(id.clone());
     state.activate();
@@ -1292,14 +1918,15 @@ fn remote_renames_and_resets_an_input_from_its_settings_page() {
     state.focus = Target::InputRename;
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::InputMode(id));
-    assert!(state.subpage.is_none());
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Inputs));
 }
 
 #[test]
 fn keyboard_done_saves_a_typed_input_name() {
     let mut state = ready();
     state.open(2);
-    state.section = crate::state::INPUTS_SECTION;
+    state.focus = Target::Widget(3);
+    state.activate();
     state.focus = Target::InputMode("com.webos.app.hdmi1".into());
     state.activate();
     state.focus = Target::InputRename;
@@ -1449,7 +2076,7 @@ fn interface_scale_is_chosen_like_input_visibility_and_stays_open() {
     state.open(2);
     state.direction(Direction::Down, &controls(&state));
     state.direction(Direction::Right, &controls(&state));
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.direction(Direction::Down, &controls(&state));
     }
     assert_eq!(state.focus, Target::Setting(7));
@@ -1762,12 +2389,7 @@ fn widgets_can_be_removed_and_added_back() {
     let missing = state.missing_blocks();
     assert_eq!(
         missing,
-        vec![
-            BlockKind::Weather,
-            BlockKind::Crypto,
-            BlockKind::Premieres,
-            BlockKind::Esports(0)
-        ]
+        vec![BlockKind::Weather, BlockKind::Crypto, BlockKind::Premieres]
     );
     state.focus = Target::AddKind(1);
     assert_eq!(state.activate(), vec![Effect::Save]);
@@ -1779,6 +2401,523 @@ fn widgets_can_be_removed_and_added_back() {
     );
     assert_eq!(state.focus, Target::Block(BlockKind::Crypto));
     assert!(state.overlay.is_none());
+}
+
+#[test]
+fn tile_urls_need_a_host_the_request_client_accepts() {
+    use crate::model::valid_tile_url;
+    for url in [
+        "http://homeassistant.local:8123/api/webhook/lamp",
+        "http://ha/api/webhook/lamp",
+        "http://my_nas.lan/hook",
+        "https://example.com",
+        "HTTPS://example.com/",
+        "http://192.168.188.10:8123/api/webhook/lamp?on=1",
+        "http://[::1]:8123/api/webhook/lamp",
+        "http://[fd00::10]/hook",
+        "http://user:secret@ha.local/hook",
+        "http://ha.local:65535/",
+    ] {
+        assert!(valid_tile_url(url), "{url} should be valid");
+    }
+    for url in [
+        "http://",
+        "http:///",
+        "http:////api",
+        "http://:8123/foo",
+        "http://user@/foo",
+        "http://ha.local:/foo",
+        "http://ha.local:0/foo",
+        "http://ha.local:65536/foo",
+        "http://ha.local:80a/foo",
+        "http://ha.local:+80/foo",
+        "http://ha.local:80:81/foo",
+        "http://ha..local/foo",
+        "http://-ha.local/foo",
+        "http://ha%2elocal/foo",
+        "http://999.1.1.1/foo",
+        "http://192.168.1/foo",
+        "http://[::1/foo",
+        "http://[not-ip]/foo",
+        "http://::1/foo",
+        "http://ha.local/a b",
+        "ftp://ha.local/foo",
+    ] {
+        assert!(!valid_tile_url(url), "{url} should be invalid");
+    }
+}
+
+#[test]
+fn custom_tiles_are_sanitized_and_get_stable_unique_ids() {
+    use crate::model::{TileMethod, new_tile_id, valid_app_id};
+    let mut preferences: Preferences = serde_json::from_value(json!({
+        "custom_tiles": [
+            {"id": "custom.lamp", "title": "  Lamp ", "url": " http://ha.local/api/webhook/a "},
+            {"id": "custom.lamp", "title": "Duplicate", "url": "http://ha.local/b"},
+            {"id": "custom.get", "title": "Get", "url": "HTTPS://ha.local/c", "method": "GET", "icon": "netflix"},
+            {"id": "netflix", "title": "Not custom", "url": "http://ha.local/d"},
+            {"id": "custom.ftp", "title": "FTP", "url": "ftp://ha.local/e"},
+            {"id": "custom.space", "title": "Space", "url": "http://ha local/f"},
+            {"id": "custom.bare", "title": "Bare", "url": "http://"},
+            {"id": "custom.blank", "title": "  ", "url": "http://ha.local/g"}
+        ]
+    }))
+    .unwrap();
+    preferences.sanitize();
+    let tiles: Vec<_> = preferences
+        .custom_tiles
+        .iter()
+        .map(|tile| {
+            (
+                tile.id.as_str(),
+                tile.title.as_str(),
+                tile.url.as_str(),
+                tile.method,
+            )
+        })
+        .collect();
+    assert_eq!(
+        tiles,
+        [
+            (
+                "custom.lamp",
+                "Lamp",
+                "http://ha.local/api/webhook/a",
+                TileMethod::Post
+            ),
+            ("custom.get", "Get", "HTTPS://ha.local/c", TileMethod::Get),
+        ]
+    );
+    // Only interface icons from the list are kept.
+    assert!(preferences.custom_tiles[1].icon.is_empty());
+    assert_eq!(preferences.custom_tiles[1].icon(), "weather-moon");
+    assert_eq!(
+        new_tile_id(&preferences.custom_tiles, "Lamp"),
+        "custom.lamp-2"
+    );
+    assert_eq!(
+        new_tile_id(&preferences.custom_tiles, "Licht Küche!"),
+        "custom.licht-k-che"
+    );
+    assert_eq!(new_tile_id(&preferences.custom_tiles, "灯"), "custom.tile");
+    assert!(valid_app_id(&new_tile_id(
+        &preferences.custom_tiles,
+        &"x".repeat(200)
+    )));
+}
+
+#[test]
+fn shortcut_settings_only_offer_qr_editing_and_local_removal() {
+    use crate::state::{Subpage, WIDGETS_SECTION};
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    state.open(2);
+    state.focus = Target::Widget(2);
+    state.activate();
+    assert_eq!(state.section, WIDGETS_SECTION);
+    assert_eq!(state.subpage, Some(Subpage::Shortcuts));
+    assert_eq!(
+        controls(&state)
+            .into_iter()
+            .filter(|c| c.scrollable)
+            .map(|c| c.target)
+            .collect::<Vec<_>>(),
+        vec![Target::TileEditor]
+    );
+    let tile = crate::model::CustomTile {
+        id: "custom.lamp".into(),
+        title: "Lamp".into(),
+        url: "http://127.0.0.1:9/hook".into(),
+        ..Default::default()
+    };
+    assert_eq!(state.replace_tiles(vec![tile.clone()]), vec![Effect::Save]);
+    assert_eq!(state.subpage, Some(Subpage::Shortcuts));
+    assert!(!state.text_input_active());
+    assert_eq!(
+        controls(&state)
+            .into_iter()
+            .filter(|c| c.scrollable)
+            .map(|c| c.target)
+            .collect::<Vec<_>>(),
+        vec![Target::TileRemove(tile.id.clone()), Target::TileEditor]
+    );
+    assert!(state.hit_test(&controls(&state), 800., 280.).is_none());
+    let page = scene(&state);
+    assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, _, _, color, _) if label == "Lamp" && color[3] == 0.5)));
+    assert!(!page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::TintedImage(path, rect, ..) if path.ends_with("right.lvec") && rect.x >= 640.)));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::TileRemove(tile.id.clone()));
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.custom_tiles.is_empty());
+    assert!(
+        !state
+            .preferences
+            .favorites(&state.inventory.apps)
+            .contains(&tile.id)
+    );
+    assert!(!state.inventory.apps.iter().any(|app| app.id == tile.id));
+    assert_eq!(state.subpage, Some(Subpage::Shortcuts));
+    assert_eq!(state.focus, Target::TileEditor);
+    state.back();
+    assert_eq!(state.subpage, None);
+    assert_eq!(state.focus, Target::Widget(2));
+}
+
+#[test]
+fn widgets_group_existing_settings_and_restore_each_parent_without_changing_preferences() {
+    use crate::state::{SECTION_COUNT, Subpage, WIDGETS_SECTION};
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    state.preferences.greeting_name = "Ana".into();
+    state.preferences.show_weather = false;
+    state.preferences.weather_location = Some(crate::weather::Location {
+        name: "Vienna".into(),
+        region: "Vienna".into(),
+        country: "Austria".into(),
+        latitude: 48.2085,
+        longitude: 16.3721,
+    });
+    state.replace_tiles(vec![crate::model::CustomTile {
+        id: "custom.lamp".into(),
+        title: "Lamp".into(),
+        url: "http://127.0.0.1:9/hook".into(),
+        icon: "power".into(),
+        ..Default::default()
+    }]);
+    let saved = serde_json::to_value(&state.preferences).unwrap();
+    state.open(2);
+    assert_eq!(SECTION_COUNT, 4);
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|control| control.target == Target::Setting(6))
+    );
+    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Sidebar(WIDGETS_SECTION));
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Widget(0));
+    for (index, subpage) in [
+        Subpage::Greeting,
+        Subpage::Weather,
+        Subpage::Shortcuts,
+        Subpage::Inputs,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        state.focus = Target::Widget(index);
+        state.direction(Direction::Right, &controls(&state));
+        assert_eq!(state.subpage, Some(subpage));
+        state.back();
+        assert!(state.subpage.is_none());
+        assert_eq!(state.focus, Target::Widget(index));
+    }
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Sidebar(WIDGETS_SECTION));
+    assert_eq!(serde_json::to_value(&state.preferences).unwrap(), saved);
+    state.inventory.inputs.clear();
+    state.focus = Target::Widget(3);
+    state.activate();
+    assert_eq!(state.subpage, Some(Subpage::Inputs));
+    assert_eq!(state.focus, Target::Setting(3));
+    assert_eq!(state.activate(), vec![Effect::Reload]);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Widget(3));
+}
+
+#[test]
+fn companion_removal_updates_the_shortcut_list_on_close() {
+    use crate::state::Subpage;
+    let mut state = ready();
+    let tile = crate::model::CustomTile {
+        id: "custom.lamp".into(),
+        title: "Lamp".into(),
+        url: "http://127.0.0.1:9/hook".into(),
+        ..Default::default()
+    };
+    state.replace_tiles(vec![tile.clone()]);
+    state.open(2);
+    state.focus = Target::Widget(2);
+    state.activate();
+    state.activate();
+    assert!(matches!(state.overlay, Some(Overlay::TileEditor)));
+    state.replace_tiles(vec![]);
+    assert_eq!(state.subpage, Some(Subpage::Shortcuts));
+    assert_eq!(state.focus, Target::CloseDialog);
+    state.back();
+    assert_eq!(state.focus, Target::TileEditor);
+    assert!(
+        !state
+            .preferences
+            .favorites(&state.inventory.apps)
+            .contains(&tile.id)
+    );
+    state.back();
+    assert_eq!(state.focus, Target::Widget(2));
+}
+
+#[test]
+fn widgets_are_localized_without_legacy_sidebar_entries() {
+    use crate::state::WIDGETS_SECTION;
+    for language in crate::i18n::Language::ALL {
+        let mut state = ready();
+        state.preferences.language = language;
+        state.open(2);
+        state.pointer_focus(Target::Sidebar(WIDGETS_SECTION));
+        let page = scene(&state);
+        assert_eq!(
+            page.controls
+                .iter()
+                .filter(|c| matches!(c.target, Target::Sidebar(_)))
+                .count(),
+            4
+        );
+        assert_eq!(
+            page.controls
+                .iter()
+                .filter(|c| matches!(c.target, Target::Widget(_)))
+                .count(),
+            4
+        );
+        for key in ["widgets", "greeting", "weather", "shortcuts", "inputs"] {
+            assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t(key))), "{key}/{language:?}");
+        }
+        state.pointer_focus(Target::Sidebar(0));
+        assert!(!scene(&state).draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t("greeting"))));
+    }
+}
+
+#[test]
+fn shortcut_list_scroll_and_pointer_focus_preserve_control_positions() {
+    let mut state = ready();
+    state.replace_tiles(
+        (0..20)
+            .map(|index| crate::model::CustomTile {
+                id: format!("custom.tile-{index}"),
+                title: format!("Tile {index}"),
+                url: "http://127.0.0.1:9/hook".into(),
+                ..Default::default()
+            })
+            .collect(),
+    );
+    state.open(2);
+    state.focus = Target::Widget(2);
+    state.activate();
+    for _ in 0..20 {
+        state.direction(Direction::Down, &controls(&state));
+    }
+    assert_eq!(state.focus, Target::TileRemove("custom.tile-19".into()));
+    assert!(state.scroll > 0.);
+    let before: Vec<_> = controls(&state)
+        .iter()
+        .map(|c| (c.target.clone(), c.rect.y))
+        .collect();
+    let scroll = state.scroll;
+    let target = controls(&state)
+        .into_iter()
+        .find(|c| {
+            matches!(c.target, Target::TileRemove(_)) && c.rect.y > state.content_viewport().y
+        })
+        .unwrap();
+    state.pointer_focus(target.target);
+    assert_eq!(state.scroll, scroll);
+    assert_eq!(
+        before,
+        controls(&state)
+            .iter()
+            .map(|c| (c.target.clone(), c.rect.y))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn settings_lists_keep_bottom_padding_for_remote_and_wheel_scrolling() {
+    use crate::state::{SETTINGS_BOTTOM_PADDING, Subpage};
+    for backgrounds in [false, true] {
+        let mut state = ready();
+        state.preferences.reduced_motion = true;
+        state.open(2);
+        if backgrounds {
+            state.set_wallpapers(
+                (1..=8)
+                    .map(|index| crate::wallpapers::Wallpaper {
+                        id: format!("custom-{index:032x}"),
+                        directory: std::path::PathBuf::from(".build/padding-fixture"),
+                    })
+                    .collect(),
+            );
+        }
+        state.section = if backgrounds { 1 } else { 0 };
+        state.subpage = if backgrounds {
+            None
+        } else {
+            Some(Subpage::Language)
+        };
+        let last = if backgrounds {
+            Target::Background(state.background_count() - 1)
+        } else {
+            Target::Choice(crate::i18n::Language::ALL.len() - 1)
+        };
+        state.focus = last.clone();
+        state.reveal_focus(&controls(&state));
+        let bottom =
+            state.content_viewport().y + state.content_viewport().h - SETTINGS_BOTTOM_PADDING;
+        let rect = controls(&state)
+            .into_iter()
+            .find(|c| c.target == last)
+            .unwrap()
+            .rect;
+        assert!(rect.y + rect.h <= bottom + 0.01);
+        state.wheel_scroll(&controls(&state), Some((1000., 600.)), 0, -1000);
+        let rect = controls(&state)
+            .into_iter()
+            .find(|c| c.target == last)
+            .unwrap()
+            .rect;
+        assert!((rect.y + rect.h - bottom).abs() < 0.01);
+    }
+}
+
+#[test]
+fn shortcut_tiles_keep_apps_options_and_never_launch_or_uninstall_a_platform_app() {
+    let tile = crate::model::CustomTile {
+        id: "custom.lamp".into(),
+        title: "Lamp".into(),
+        url: "http://127.0.0.1:9/hook".into(),
+        ..Default::default()
+    };
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    state.replace_tiles(vec![tile.clone()]);
+    state.open(0);
+    state.focus = Target::App(tile.id.clone());
+    assert_eq!(state.activate(), vec![Effect::FireWebhook(tile.clone())]);
+    state.options();
+    assert_eq!(state.activate(), vec![Effect::FireWebhook(tile.clone())]);
+
+    state.open(1);
+    state.focus = Target::App(tile.id.clone());
+    assert!(state.activate().is_empty());
+    assert_eq!(state.focus, Target::OpenApp);
+    assert!(matches!(state.overlay, Some(Overlay::Options { .. })));
+    assert!(
+        !controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Option(2))
+    );
+    assert_eq!(state.activate(), vec![Effect::FireWebhook(tile.clone())]);
+    assert!(state.overlay.is_none());
+
+    state.focus = Target::App(tile.id.clone());
+    state.options();
+    state.focus = Target::Option(0);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(
+        !state
+            .preferences
+            .favorites(&state.inventory.apps)
+            .contains(&tile.id)
+    );
+    state.options();
+    state.focus = Target::Option(1);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(state.preferences.hidden.contains(&tile.id));
+    assert_eq!(state.preferences.custom_tile(&tile.id), Some(&tile));
+}
+
+#[test]
+fn shortcut_tiles_alone_do_not_stop_inventory_retries() {
+    let mut preferences: Preferences = serde_json::from_value(json!({
+        "custom_tiles": [{"id": "custom.lamp", "title": "Lamp", "url": "http://ha.local/hook"}]
+    }))
+    .unwrap();
+    preferences.sanitize();
+    let mut state = State::new(preferences);
+    state.loading = true;
+    state.sync_custom_tiles();
+    assert!(!state.inventory.apps.is_empty());
+    assert_eq!(
+        state.inventory_failed("timeout".into()),
+        Some(crate::state::INVENTORY_RETRY_DELAY)
+    );
+    assert!(state.loading && state.error.is_none());
+}
+
+#[test]
+fn shortcut_tiles_open_a_modal_editor_for_another_device() {
+    use crate::state::WIDGETS_SECTION;
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    state.open(2);
+    state.focus = Target::Widget(2);
+    state.activate();
+    assert_eq!(state.focus, Target::TileEditor);
+    assert!(state.activate().is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::TileEditor)));
+    assert_eq!(state.focus, Target::CloseDialog);
+    let modal = scene(&state);
+    assert!(modal.modal.is_some());
+    assert_eq!(modal.controls.len(), 1);
+    assert_eq!(modal.controls[0].target, Target::CloseDialog);
+    assert!(state.direction(Direction::Up, &modal.controls).is_empty());
+    assert_eq!(state.focus, Target::CloseDialog);
+    state.tile_editor = Some(Err("offline".into()));
+    state.activate();
+    assert!(state.overlay.is_none());
+    assert!(state.tile_editor.is_none());
+    assert_eq!(state.focus, Target::TileEditor);
+    assert_eq!(state.section, WIDGETS_SECTION);
+}
+
+#[test]
+fn tiles_edited_elsewhere_join_and_leave_home_like_tv_edits() {
+    use crate::model::CustomTile;
+    let tile = |id: &str, title: &str| CustomTile {
+        id: id.into(),
+        title: title.into(),
+        url: "http://10.0.0.2/hook".into(),
+        ..Default::default()
+    };
+    let mut state = ready();
+    let before = state.preferences.favorites(&state.inventory.apps);
+    let saved = state.replace_tiles(vec![
+        tile("custom.gate", "Gate"),
+        tile("custom.lights", "Lights"),
+    ]);
+    assert_eq!(saved, vec![Effect::Save]);
+    let favorites = state.preferences.favorites.clone().unwrap();
+    assert_eq!(&favorites[..before.len()], &before[..]);
+    assert_eq!(&favorites[before.len()..], ["custom.gate", "custom.lights"]);
+    assert!(
+        state
+            .inventory
+            .apps
+            .iter()
+            .any(|app| app.id == "custom.gate")
+    );
+    state.preferences.hidden.push("custom.lights".into());
+    // A rename keeps the favorite in place; a removal clears it from favorites and hidden.
+    state.replace_tiles(vec![tile("custom.gate", "Garage")]);
+    assert_eq!(state.preferences.custom_tiles[0].title, "Garage");
+    let favorites = state.preferences.favorites.clone().unwrap();
+    assert_eq!(&favorites[before.len()..], ["custom.gate"]);
+    assert!(state.preferences.hidden.is_empty());
+    assert!(
+        !state
+            .inventory
+            .apps
+            .iter()
+            .any(|app| app.id == "custom.lights")
+    );
+    let app = state
+        .inventory
+        .apps
+        .iter()
+        .find(|app| app.id == "custom.gate")
+        .unwrap();
+    assert_eq!(app.title, "Garage");
 }
 
 #[test]
@@ -1930,872 +3069,4 @@ fn a_home_theme_is_chosen_in_general_and_replaces_the_layout() {
     assert_eq!(state.subpage, Some(Subpage::Theme), "stays open");
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::Setting(9));
-}
-
-fn esports_match(game: &str, id: u64, tier: &str) -> crate::feeds::CsMatch {
-    let team = |id, short: &str| {
-        Some(crate::feeds::Team {
-            id,
-            name: short.into(),
-            short: short.into(),
-            image: None,
-            location: "EU".into(),
-        })
-    };
-    crate::feeds::CsMatch {
-        id,
-        game: game.into(),
-        running: id == 7,
-        begin_at: format!("2026-10-25T18:{id:02}:00Z"),
-        teams: [team(1, "NAVI"), team(2, "FaZe")],
-        score: [1, 0],
-        best_of: 3,
-        games: vec![],
-        event: "BLAST Premier".into(),
-        tier: tier.into(),
-        stage: "Playoffs".into(),
-        prizepool: "1000000 United States Dollar".into(),
-        online: Some(false),
-        league_image: None,
-        streams: vec![crate::feeds::Stream {
-            language: "ru".into(),
-            platform: "Twitch".into(),
-            official: true,
-            main: true,
-        }],
-        maps_source: String::new(),
-    }
-}
-
-#[test]
-fn the_esports_widget_scrolls_through_every_match() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 12,
-        h: 2,
-    });
-    let matches = (1..=8)
-        .map(|id| {
-            let mut found = esports_match("csgo", id, "s");
-            found.event = format!("Event {id}");
-            found.running = false;
-            found
-        })
-        .collect();
-    state.feeds.matches.insert("csgo".into(), matches);
-    let shown = |state: &State| {
-        scene_text(state)
-            .into_iter()
-            .filter_map(|t| t.strip_prefix("Event ").map(str::to_owned))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    // A full-width row holds three wide cards and the edge of a fourth; the rest are a press
-    // away, and once it scrolls the card before shows cut off at the left.
-    assert_eq!(shown(&state), "1,2,3,4");
-    assert!(scene_text(&state).iter().any(|t| t == "1–3 / 8"));
-    state.focus = Target::Match(0, 2);
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Match(0, 3), "past the edge");
-    assert_eq!(shown(&state), "1,2,3,4,5");
-    assert!(scene_text(&state).iter().any(|t| t == "2–4 / 8"));
-    for _ in 0..6 {
-        state.direction(Direction::Right, &controls(&state));
-    }
-    assert_eq!(state.focus, Target::Match(0, 7), "stops at the last");
-    assert_eq!(shown(&state), "5,6,7,8");
-    state.direction(Direction::Left, &controls(&state));
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::Match(0, 5));
-    assert_eq!(shown(&state), "5,6,7,8", "a card in view does not scroll");
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::Match(0, 4));
-    assert_eq!(shown(&state), "4,5,6,7,8");
-    // Arriving on the card cut off at the edge, from anywhere, scrolls it into view.
-    state.row_scroll.clear();
-    state.focus(Target::Match(0, 3), &controls(&state));
-    assert_eq!(shown(&state), "1,2,3,4,5");
-}
-
-#[test]
-fn every_row_has_the_same_header_and_cards() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    // Rows on screen at once, so none is cut off by the bottom of the screen.
-    let row = |kind, y| Block {
-        kind,
-        x: 0,
-        y,
-        w: 12,
-        h: 2,
-    };
-    state.preferences.home_layout = vec![
-        Block {
-            kind: BlockKind::Greeting,
-            x: 0,
-            y: 0,
-            w: 8,
-            h: 1,
-        },
-        row(BlockKind::Esports(0), 1),
-        row(BlockKind::Premieres, 3),
-        row(BlockKind::Inputs, 5),
-        row(BlockKind::Favorites, 7),
-    ];
-    state
-        .feeds
-        .matches
-        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
-    state.feeds.premieres = vec![crate::feeds::Premiere {
-        title: "Lupin".into(),
-        season: 4,
-        date: "2026-10-23".into(),
-        poster: None,
-    }];
-    let scene = scene(&state);
-    let card = |wanted: &dyn Fn(&Target) -> bool| {
-        scene
-            .controls
-            .iter()
-            .find(|c| wanted(&c.target))
-            .map(|c| (c.rect.w, c.rect.h))
-    };
-    let wide = Some((crate::design::WIDE_W, 158.));
-    assert_eq!(card(&|t| matches!(t, Target::Match(0, 0))), wide);
-    assert_eq!(card(&|t| matches!(t, Target::Poster(0))), wide);
-    assert_eq!(card(&|t| matches!(t, Target::Input(_))), wide);
-    let texts = scene_text(&state);
-    for title in [
-        "Esports · Counter-Strike 2",
-        "Season premieres",
-        "Inputs",
-        "Favorites",
-    ] {
-        assert!(texts.iter().any(|t| t == title), "{title}");
-    }
-}
-
-#[test]
-fn premieres_and_inputs_scroll_like_every_row() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Premieres,
-        x: 0,
-        y: 6,
-        w: 12,
-        h: 2,
-    });
-    state.feeds.premieres = (1..=6)
-        .map(|n| crate::feeds::Premiere {
-            title: format!("Show {n}"),
-            season: 1,
-            date: "2026-10-23".into(),
-            poster: None,
-        })
-        .collect();
-    let shown = |state: &State| {
-        scene_text(state)
-            .into_iter()
-            .filter_map(|t| t.strip_prefix("Show ").map(str::to_owned))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    assert_eq!(
-        shown(&state),
-        "1,2,3,4",
-        "three posters and the edge of a fourth"
-    );
-    state.focus = Target::Poster(2);
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Poster(3));
-    assert_eq!(shown(&state), "1,2,3,4,5");
-    // Inputs in a one-cell block: a compact row of wide cards, no header.
-    let mut state = ready();
-    let inputs: Vec<_> = state
-        .inventory
-        .inputs
-        .iter()
-        .filter(|input| state.preferences.input_visible(input))
-        .map(|input| input.id.clone())
-        .collect();
-    assert!(inputs.len() >= 2);
-    state.preferences.home_layout = vec![
-        Block::new(BlockKind::Greeting, 0, 0),
-        Block::new(BlockKind::Favorites, 0, 2),
-        Block {
-            kind: BlockKind::Inputs,
-            x: 0,
-            y: 4,
-            w: 6,
-            h: 1,
-        },
-    ];
-    let row = controls(&state)
-        .into_iter()
-        .find(|c| c.target == Target::Input(inputs[0].clone()))
-        .unwrap();
-    assert_eq!((row.rect.w, row.rect.h), (crate::design::WIDE_W, 100.));
-    assert!(!scene_text(&state).iter().any(|t| t == "Inputs"));
-    state.focus = Target::Input(inputs[0].clone());
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(
-        state.focus,
-        Target::Input(inputs[1].clone()),
-        "the next input"
-    );
-    assert!(
-        controls(&state)
-            .iter()
-            .any(|c| c.target == Target::Input(inputs[1].clone()) && c.rect.w > 500.),
-        "scrolled into view"
-    );
-}
-
-#[test]
-fn glance_widgets_all_sit_on_cards_or_none_do() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.feeds.quotes = crate::feeds::COINS.map(quote).to_vec();
-    let layout = vec![
-        Block {
-            kind: BlockKind::Greeting,
-            x: 0,
-            y: 0,
-            w: 6,
-            h: 1,
-        },
-        Block {
-            kind: BlockKind::Weather,
-            x: 6,
-            y: 0,
-            w: 6,
-            h: 1,
-        },
-        Block {
-            kind: BlockKind::Crypto,
-            x: 0,
-            y: 1,
-            w: 6,
-            h: 1,
-        },
-        Block::new(BlockKind::Favorites, 0, 2),
-    ];
-    for (theme, cards) in [("classic", false), ("cinema", true)] {
-        state.preferences.home_theme = theme.into();
-        state.preferences.home_layout = layout.clone();
-        let theme = crate::themes::theme(theme);
-        let surface = crate::design::color(theme.surface, theme.surface_alpha);
-        let carded = |kind: BlockKind| {
-            let rect = crate::home_grid::rect(layout.iter().find(|b| b.kind == kind).unwrap());
-            scene(&state).draw.iter().any(|draw| {
-                matches!(draw, crate::renderer::Draw::Shape(r, _, 0., color)
-                    if *color == surface && r.x == rect.x && r.y == rect.y && r.w == rect.w)
-            })
-        };
-        assert_eq!(carded(BlockKind::Weather), cards, "{} weather", theme.id);
-        assert_eq!(carded(BlockKind::Crypto), cards, "{} crypto", theme.id);
-        assert!(
-            !carded(BlockKind::Greeting),
-            "the greeting is the page's title"
-        );
-    }
-}
-
-#[test]
-fn a_match_names_its_maps_with_scores_picks_and_their_source() {
-    use crate::feeds::{GameState, MatchGame};
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 12,
-        h: 2,
-    });
-    let map = |position, state, name: &str, score, picked_by, decider| MatchGame {
-        position,
-        state,
-        winner: (state == GameState::Finished).then_some(1),
-        begin_at: String::new(),
-        length: None,
-        map: name.into(),
-        score,
-        picked_by,
-        decider,
-    };
-    let mut found = esports_match("csgo", 7, "s");
-    found.games = vec![
-        map(
-            1,
-            GameState::Finished,
-            "Dust II",
-            Some([13., 11.]),
-            Some(2),
-            false,
-        ),
-        map(
-            2,
-            GameState::Running,
-            "Nuke",
-            Some([7., 5.]),
-            Some(1),
-            false,
-        ),
-        map(3, GameState::Waiting, "Ancient", None, None, true),
-    ];
-    found.maps_source = "Liquipedia".into();
-    state.feeds.matches.insert("csgo".into(), vec![found]);
-    assert!(
-        scene_text(&state).iter().any(|t| t == "Map 2 · Nuke"),
-        "Home tells which map is live"
-    );
-    state.focus = Target::Match(0, 0);
-    state.activate();
-    let texts = scene_text(&state);
-    for name in ["Dust II", "Nuke", "Ancient"] {
-        assert!(texts.iter().any(|t| t == name), "{name}");
-    }
-    assert!(!texts.iter().any(|t| t == "Map 1"), "a known map is named");
-    assert!(
-        texts.iter().any(|t| t == "13:11"),
-        "rounds of a finished map"
-    );
-    assert!(texts.iter().any(|t| t == "7:5"), "rounds of the live map");
-    assert!(texts.iter().any(|t| t == "FaZe pick"));
-    assert!(texts.iter().any(|t| t == "Decider"));
-    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
-    // PandaScore's own data: numbered maps and no credit.
-    let found = &mut state.feeds.matches.get_mut("csgo").unwrap()[0];
-    found.maps_source.clear();
-    for game in &mut found.games {
-        game.map.clear();
-        game.score = None;
-    }
-    let texts = scene_text(&state);
-    assert!(texts.iter().any(|t| t == "Map 1"));
-    assert!(!texts.iter().any(|t| t.contains("Liquipedia")));
-}
-
-#[test]
-fn a_personal_key_names_live_maps_from_the_shared_feed_and_credits_it() {
-    use crate::feeds::{GameState, MatchGame, SharedFeed};
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 12,
-        h: 2,
-    });
-    state.preferences.esports_key = "key".into();
-    let map = |position, state, name: &str| MatchGame {
-        position,
-        state,
-        winner: (state == GameState::Finished).then_some(1),
-        begin_at: String::new(),
-        length: None,
-        map: name.into(),
-        score: None,
-        picked_by: None,
-        decider: false,
-    };
-    // PandaScore's lists: live, but the maps are only numbered.
-    let mut live = esports_match("csgo", 7, "s");
-    live.games = vec![
-        map(1, GameState::Finished, ""),
-        map(2, GameState::Running, ""),
-        map(3, GameState::Waiting, ""),
-    ];
-    // The shared feed names them, though its own state is minutes behind.
-    let mut shared = live.clone();
-    shared.score = [0, 0];
-    shared.games = vec![
-        map(1, GameState::Running, "Dust II"),
-        map(2, GameState::Waiting, "Nuke"),
-        map(3, GameState::Waiting, "Ancient"),
-    ];
-    shared.games[0].score = Some([9., 4.]);
-    shared.maps_source = "Liquipedia".into();
-    state.esports_received("csgo".into(), vec![live.clone()]);
-    state.shared_received(
-        "csgo".into(),
-        SharedFeed {
-            matches: vec![shared],
-            rosters: vec![],
-            updated: Some(0),
-        },
-    );
-    let dialog = |state: &mut State| {
-        state.focus = Target::Match(0, 0);
-        state.activate();
-        let texts = scene_text(state);
-        state.back();
-        texts
-    };
-    assert!(
-        scene_text(&state).iter().any(|t| t == "Map 2 · Nuke"),
-        "PandaScore tells which map is live, the feed its name"
-    );
-    assert!(
-        !scene_text(&state)
-            .iter()
-            .any(|t| t.starts_with("Data as of")),
-        "the matches stay live"
-    );
-    let texts = dialog(&mut state);
-    for name in ["Dust II", "Nuke", "Ancient", "9:4"] {
-        assert!(texts.iter().any(|t| t == name), "{name}");
-    }
-    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
-    // The next PandaScore poll keeps the names until the feed is fetched again.
-    state.esports_received("csgo".into(), vec![live]);
-    let texts = dialog(&mut state);
-    assert!(texts.iter().any(|t| t == "Nuke"));
-    assert!(texts.iter().any(|t| t == "Maps: Liquipedia (CC-BY-SA)"));
-    assert_eq!(
-        state.feeds.matches["csgo"][0].score,
-        [1, 0],
-        "the series score stays PandaScore's"
-    );
-}
-
-#[test]
-fn a_match_opens_its_details_and_asks_for_missing_lineups() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    state.preferences.esports_key = "key".into();
-    state
-        .feeds
-        .matches
-        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
-    state.feeds.rosters.insert(
-        2,
-        vec![crate::feeds::Player {
-            name: "ropz".into(),
-            real_name: "Robin Kool".into(),
-            nationality: "EE".into(),
-            role: String::new(),
-            age: Some(26),
-            image: None,
-            substitute: false,
-        }],
-    );
-    assert!(
-        controls(&state)
-            .iter()
-            .any(|c| c.target == Target::Match(0, 0))
-    );
-    state.focus = Target::Match(0, 0);
-    assert_eq!(
-        state.activate(),
-        vec![Effect::Rosters("csgo".into(), vec![1])]
-    );
-    assert!(matches!(
-        state.overlay,
-        Some(Overlay::Match {
-            instance: 0,
-            index: 0,
-            ..
-        })
-    ));
-    let texts = scene_text(&state);
-    assert!(texts.iter().any(|t| t == "ropz"));
-    assert!(texts.iter().any(|t| t.contains("Robin Kool")), "real names");
-    assert!(texts.iter().any(|t| t.contains("Twitch")), "streams");
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("1 000 000") || t.contains("1,000,000")),
-        "prize pool"
-    );
-    state.back();
-    assert!(state.overlay.is_none());
-    assert_eq!(state.focus, Target::Match(0, 0));
-}
-
-#[test]
-fn each_esports_widget_shows_its_own_disciplines_and_filter() {
-    use crate::home_grid::{Block, BlockKind};
-    use crate::model::EsportsWidget;
-    let mut state = ready();
-    state.feeds.matches.insert(
-        "csgo".into(),
-        vec![esports_match("csgo", 7, "s"), esports_match("csgo", 8, "c")],
-    );
-    state
-        .feeds
-        .matches
-        .insert("dota2".into(), vec![esports_match("dota2", 9, "a")]);
-    state
-        .preferences
-        .esports
-        .insert(0, EsportsWidget::default());
-    state.preferences.esports.insert(
-        1,
-        EsportsWidget {
-            games: vec!["csgo".into(), "dota2".into()],
-            major_only: false,
-        },
-    );
-    let ids = |state: &State, n| {
-        state
-            .esports_matches(n)
-            .iter()
-            .map(|m| m.id)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(ids(&state, 0), [7], "Counter-Strike, major events only");
-    assert_eq!(ids(&state, 1), [7, 8, 9], "live first, then by start");
-    // A second widget is added as a new instance with the default settings.
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    assert_eq!(state.missing_blocks().last(), Some(&BlockKind::Esports(1)));
-}
-
-#[test]
-fn the_esports_widget_settings_take_a_key_disciplines_and_the_major_filter() {
-    use crate::home_grid::{Block, BlockKind};
-    use crate::state::{BlockAction, Subpage};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    let actions = state.block_actions(BlockKind::Esports(0), false);
-    assert!(actions.contains(&BlockAction::Settings));
-    state.focus = Target::Block(BlockKind::Esports(0));
-    state.hold();
-    state.focus = Target::BlockAction(
-        actions
-            .iter()
-            .position(|a| *a == BlockAction::Settings)
-            .unwrap(),
-    );
-    state.activate();
-    assert_eq!(state.page, crate::state::Page::Settings);
-    assert_eq!(state.subpage, Some(Subpage::Esports(0)));
-    assert_eq!(state.focus, Target::EsportsKey);
-    state.activate();
-    assert!(state.text_input_active());
-    state.text("ps_Key-123");
-    assert_eq!(state.finish_text_input(), vec![Effect::Save]);
-    assert_eq!(state.preferences.esports_key, "ps_Key-123");
-    assert!(
-        state.esports_widget(0).major_only,
-        "major events by default"
-    );
-    state.focus = Target::EsportsMajor;
-    assert_eq!(state.activate(), vec![Effect::Save]);
-    assert!(!state.esports_widget(0).major_only);
-    state.focus = Target::EsportsGames;
-    state.activate();
-    assert_eq!(state.subpage, Some(Subpage::EsportsGames(0)));
-    // Each discipline toggles; the list stays open, and the last one cannot be turned off.
-    state.focus = Target::Choice(1);
-    assert_eq!(state.activate(), vec![Effect::Save]);
-    state.focus = Target::Choice(0);
-    assert_eq!(state.activate(), vec![Effect::Save]);
-    assert_eq!(state.esports_widget(0).games, ["dota2"]);
-    state.focus = Target::Choice(1);
-    assert_eq!(state.activate(), vec![]);
-    assert_eq!(state.esports_widget(0).games, ["dota2"]);
-    assert_eq!(state.subpage, Some(Subpage::EsportsGames(0)));
-    state.back();
-    assert_eq!(state.subpage, Some(Subpage::Esports(0)));
-    assert_eq!(state.focus, Target::EsportsGames);
-}
-
-#[test]
-fn the_key_can_come_from_a_phone_through_a_qr_code() {
-    use crate::state::Subpage;
-    let mut state = ready();
-    state.open(2);
-    state.subpage = Some(Subpage::Esports(0));
-    state.focus = Target::EsportsPhone;
-    assert!(
-        controls(&state)
-            .iter()
-            .any(|c| c.target == Target::EsportsPhone)
-    );
-    assert_eq!(state.activate(), vec![Effect::PhoneKeyStart]);
-    assert!(matches!(state.overlay, Some(Overlay::PhoneKey { .. })));
-    assert_eq!(state.focus, Target::CloseDialog);
-    let qr = crate::phone_key::qr_image("http://192.168.0.218:8765/ab").unwrap();
-    state.phone_key = Some((
-        "http://192.168.0.218:8765/ab".into(),
-        std::sync::Arc::new(crate::app_artwork::Artwork {
-            key: "qr:ab".into(),
-            pixels: qr,
-            backdrop: [[255; 3]; 2],
-        }),
-    ));
-    let texts = scene_text(&state);
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("http://192.168.0.218:8765/ab"))
-    );
-    assert!(texts.iter().any(|t| t.starts_with("1.")), "numbered steps");
-    assert_eq!(
-        state.phone_key_received("ps_123".into()),
-        vec![Effect::Save]
-    );
-    assert_eq!(state.preferences.esports_key, "ps_123");
-    assert!(state.overlay.is_none());
-    assert!(state.phone_key.is_none());
-    assert_eq!(state.focus, Target::EsportsPhone);
-}
-
-#[test]
-fn up_reaches_a_wide_block_directly_above_rather_than_a_closer_centre() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout = vec![
-        Block {
-            kind: BlockKind::Greeting,
-            x: 0,
-            y: 0,
-            w: 8,
-            h: 2,
-        },
-        Block {
-            kind: BlockKind::Esports(0),
-            x: 0,
-            y: 2,
-            w: 12,
-            h: 2,
-        },
-        Block {
-            kind: BlockKind::Favorites,
-            x: 0,
-            y: 4,
-            w: 12,
-            h: 2,
-        },
-    ];
-    state.direction(Direction::Down, &controls(&state));
-    assert!(matches!(state.focus, Target::App(_)));
-    state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Block(BlockKind::Esports(0)));
-}
-
-#[test]
-fn esports_widgets_load_team_logos_and_an_open_match_its_photos() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    let logo = "https://cdn-api.pandascore.co/navi.png".to_owned();
-    let league = "https://cdn-api.pandascore.co/blast.png".to_owned();
-    let photo = "https://cdn-api.pandascore.co/b1t.png".to_owned();
-    let mut found = esports_match("csgo", 7, "s");
-    found.teams[0].as_mut().unwrap().image = Some(logo.clone());
-    found.league_image = Some(league.clone());
-    state.feeds.matches.insert("csgo".into(), vec![found]);
-    state.feeds.rosters.insert(
-        1,
-        vec![crate::feeds::Player {
-            name: "b1t".into(),
-            real_name: String::new(),
-            nationality: String::new(),
-            role: String::new(),
-            age: None,
-            image: Some(photo.clone()),
-            substitute: false,
-        }],
-    );
-    assert_eq!(state.wanted_images(), vec![logo.clone()]);
-    state.focus = Target::Match(0, 0);
-    state.activate();
-    assert!(
-        state.feeds.images_due,
-        "opening a match asks for its images"
-    );
-    assert_eq!(state.wanted_images(), vec![logo, league, photo]);
-}
-
-#[test]
-fn the_shared_feed_tells_how_old_its_data_is_and_which_lineups_it_lacks() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    state
-        .feeds
-        .matches
-        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
-    state.feeds.updated.insert("csgo".into(), 0);
-    let as_of = |state: &State| {
-        scene_text(state)
-            .iter()
-            .any(|t| t.starts_with("Data as of"))
-    };
-    assert!(as_of(&state), "shared data says when it was built");
-    // Without a key the feed is the only source: a lineup it lacks is not coming.
-    state.focus = Target::Match(0, 0);
-    state.activate();
-    let texts = scene_text(&state);
-    assert!(texts.iter().any(|t| t == "Lineup not announced"));
-    assert!(!texts.iter().any(|t| t == "Loading lineup…"));
-    state.back();
-    state.preferences.esports_key = "key".into();
-    state.feeds.updated.clear();
-    assert!(!as_of(&state), "a personal key polls live data");
-    assert_eq!(view::prize("2,500 United States Dollar"), "$2 500");
-    assert_eq!(view::prize("50000 Euro"), "€50 000");
-    assert_eq!(view::prize("TBA"), "TBA");
-}
-
-fn lineup_player(name: &str, role: &str, substitute: bool) -> crate::feeds::Player {
-    crate::feeds::Player {
-        name: name.into(),
-        real_name: String::new(),
-        nationality: "BR".into(),
-        role: role.into(),
-        age: None,
-        image: None,
-        substitute,
-    }
-}
-
-#[test]
-fn a_match_dialog_lists_the_starters_and_puts_the_bench_on_a_line_of_its_own() {
-    use crate::home_grid::{Block, BlockKind};
-    let mut state = ready();
-    state.preferences.home_layout.push(Block {
-        kind: BlockKind::Esports(0),
-        x: 0,
-        y: 6,
-        w: 6,
-        h: 2,
-    });
-    state
-        .feeds
-        .matches
-        .insert("csgo".into(), vec![esports_match("csgo", 7, "s")]);
-    // PandaScore's whole roster, as the shared feed marks it from Liquipedia.
-    state.feeds.rosters.insert(
-        1,
-        vec![
-            lineup_player("tge", "coach", true),
-            lineup_player("biguzera", "", false),
-            lineup_player("vsm", "", true),
-            lineup_player("saffee", "", false),
-            lineup_player("Snowzin", "", false),
-            lineup_player("piriajr", "", true),
-            lineup_player("Tatu", "", false),
-        ],
-    );
-    state.focus = Target::Match(0, 0);
-    state.activate();
-    let texts = scene_text(&state);
-    let at = |name: &str| texts.iter().position(|t| t == name);
-    assert!(
-        at("biguzera") < at("saffee") && at("saffee") < at("Snowzin") && at("Snowzin") < at("Tatu"),
-        "starters in the feed's order"
-    );
-    assert!(texts.iter().any(|t| t == "BENCH"), "{texts:?}");
-    assert!(texts.iter().any(|t| t == "vsm · piriajr"));
-    assert!(texts.iter().any(|t| t == "COACH"));
-    assert!(at("Tatu") < at("vsm · piriajr") && at("Tatu") < at("tge"));
-    assert!(
-        !texts.iter().any(|t| t == "BR · COACH"),
-        "the bench has no rows of its own"
-    );
-    assert!(texts.iter().any(|t| t == "Lineups: Liquipedia (CC-BY-SA)"));
-    state
-        .feeds
-        .matches
-        .get_mut("csgo")
-        .unwrap()
-        .first_mut()
-        .unwrap()
-        .maps_source = "Liquipedia".into();
-    let texts = scene_text(&state);
-    assert!(
-        texts
-            .iter()
-            .any(|t| t == "Maps and lineups: Liquipedia (CC-BY-SA)")
-    );
-    // A lineup Liquipedia did not mark: everyone on a row of their own, no credit.
-    for player in state.feeds.rosters.get_mut(&1).unwrap() {
-        player.substitute = false;
-    }
-    state.feeds.matches.get_mut("csgo").unwrap()[0]
-        .maps_source
-        .clear();
-    let texts = scene_text(&state);
-    assert!(!texts.iter().any(|t| t == "BENCH"));
-    assert!(texts.iter().any(|t| t == "vsm") && texts.iter().any(|t| t == "BR · COACH"));
-    assert!(!texts.iter().any(|t| t.contains("Liquipedia")));
-}
-
-#[test]
-fn a_personal_keys_lineups_take_their_substitutes_from_the_shared_feed() {
-    let mut state = ready();
-    state.preferences.esports_key = "key".into();
-    let pandascore = || {
-        vec![(
-            1,
-            vec![
-                lineup_player("biguzera", "", false),
-                lineup_player("vsm", "", false),
-            ],
-        )]
-    };
-    let shared = || crate::feeds::SharedFeed {
-        matches: vec![],
-        rosters: vec![(
-            1,
-            vec![
-                lineup_player("biguzera", "", false),
-                lineup_player("vsm", "", true),
-            ],
-        )],
-        updated: Some(0),
-    };
-    let marked = |state: &State| {
-        state.feeds.rosters[&1]
-            .iter()
-            .map(|p| p.substitute)
-            .collect::<Vec<_>>()
-    };
-    // The lineup arrives before the shared feed, and after it.
-    state.rosters_received(pandascore());
-    state.shared_received("csgo".into(), shared());
-    assert_eq!(marked(&state), [false, true]);
-    state.rosters_received(pandascore());
-    assert_eq!(marked(&state), [false, true]);
 }

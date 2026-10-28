@@ -816,10 +816,6 @@ fn a_secret_typed_or_sent_from_a_phone_goes_to_the_secrets_file() {
         Some("phone-key-2")
     );
     assert_eq!(state.focus, crate::state::Target::WidgetSetting(2));
-    assert!(
-        state.preferences.esports_key.is_empty(),
-        "not the esports key"
-    );
     // Forget it.
     state.focus = crate::state::Target::WidgetSetting(3);
     state.activate();
@@ -860,19 +856,3 @@ fn a_secret_given_at_run_time_is_used_but_never_saved() {
     );
 }
 
-#[test]
-fn the_esports_phone_page_is_not_mistaken_for_a_store_widgets() {
-    let mut state = installed(&scratch("phone-switch"));
-    state.open(2);
-    state.open_widget_settings(0);
-    state.focus = crate::state::Target::WidgetSetting(2);
-    state.activate();
-    state.back();
-    // Later, the built-in esports widget's phone page.
-    state.focus = crate::state::Target::EsportsPhone;
-    state.activate();
-    assert!(state.phone_widget_secret().is_none());
-    state.phone_key_received("esports-key".into());
-    assert_eq!(state.preferences.esports_key, "esports-key");
-    assert_eq!(state.widgets.store.secret("scores", "key"), None);
-}

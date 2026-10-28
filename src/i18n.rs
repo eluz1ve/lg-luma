@@ -1,4 +1,4 @@
-//! Bundled English, German, Spanish, Chinese, Brazilian Portuguese, Italian and Russian message catalog.
+//! Bundled English, German, Spanish, Chinese, Brazilian Portuguese, Italian, Russian, Polish, French, Vietnamese and Dutch message catalog.
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{collections::BTreeMap, sync::OnceLock};
 use time::OffsetDateTime;
@@ -23,9 +23,13 @@ pub enum Language {
     Pt,
     It,
     Ru,
+    Pl,
+    Fr,
+    Vi,
+    Nl,
 }
 impl Language {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 11] = [
         Self::En,
         Self::De,
         Self::Zh,
@@ -33,6 +37,10 @@ impl Language {
         Self::Pt,
         Self::It,
         Self::Ru,
+        Self::Pl,
+        Self::Fr,
+        Self::Vi,
+        Self::Nl,
     ];
     pub fn code(self) -> &'static str {
         match self {
@@ -43,6 +51,10 @@ impl Language {
             Self::Pt => "pt",
             Self::It => "it",
             Self::Ru => "ru",
+            Self::Pl => "pl",
+            Self::Fr => "fr",
+            Self::Vi => "vi",
+            Self::Nl => "nl",
         }
     }
     pub fn name(self) -> &'static str {
@@ -54,6 +66,10 @@ impl Language {
             Self::Pt => "Português (Brasil)",
             Self::It => "Italiano",
             Self::Ru => "Русский",
+            Self::Pl => "Polski",
+            Self::Fr => "Français",
+            Self::Vi => "Tiếng Việt",
+            Self::Nl => "Nederlands",
         }
     }
     pub fn index(self) -> usize {
@@ -65,6 +81,10 @@ impl Language {
             Self::Pt => 4,
             Self::It => 5,
             Self::Ru => 6,
+            Self::Pl => 7,
+            Self::Fr => 8,
+            Self::Vi => 9,
+            Self::Nl => 10,
         }
     }
     pub fn t(self, key: &str) -> &str {
@@ -89,14 +109,6 @@ impl Language {
             "Utilities" => self.t("categoryUtilities"),
             _ => self.t("categoryUtilities"),
         }
-    }
-    pub fn wallpaper(self, id: &str) -> &str {
-        self.t(match id {
-            "dunes" => "monumentValley",
-            "san-francisco" => "sanFrancisco",
-            "northern-lights" => "northernLights",
-            _ => id,
-        })
     }
     pub fn greeting(self, hour: u8, name: &str) -> String {
         let key = match hour {
@@ -290,6 +302,115 @@ impl Language {
                 ][month]
             )
             .to_uppercase(),
+            Self::Pl => format!(
+                "{}, {} {}",
+                [
+                    "poniedziałek",
+                    "wtorek",
+                    "środa",
+                    "czwartek",
+                    "piątek",
+                    "sobota",
+                    "niedziela"
+                ][weekday],
+                now.day(),
+                [
+                    "stycznia",
+                    "lutego",
+                    "marca",
+                    "kwietnia",
+                    "maja",
+                    "czerwca",
+                    "lipca",
+                    "sierpnia",
+                    "września",
+                    "października",
+                    "listopada",
+                    "grudnia"
+                ][month]
+            )
+            .to_uppercase(),
+            Self::Fr => format!(
+                "{} {} {}",
+                [
+                    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"
+                ][weekday],
+                match now.day() {
+                    1 => "1er".to_owned(),
+                    day => day.to_string(),
+                },
+                [
+                    "janvier",
+                    "février",
+                    "mars",
+                    "avril",
+                    "mai",
+                    "juin",
+                    "juillet",
+                    "août",
+                    "septembre",
+                    "octobre",
+                    "novembre",
+                    "décembre"
+                ][month]
+            )
+            .to_uppercase(),
+            Self::Vi => format!(
+                "{}, {} {}",
+                [
+                    "thứ hai",
+                    "thứ ba",
+                    "thứ tư",
+                    "thứ năm",
+                    "thứ sáu",
+                    "thứ bảy",
+                    "chủ nhật"
+                ][weekday],
+                now.day(),
+                [
+                    "tháng 1",
+                    "tháng 2",
+                    "tháng 3",
+                    "tháng 4",
+                    "tháng 5",
+                    "tháng 6",
+                    "tháng 7",
+                    "tháng 8",
+                    "tháng 9",
+                    "tháng 10",
+                    "tháng 11",
+                    "tháng 12"
+                ][month]
+            )
+            .to_uppercase(),
+            Self::Nl => format!(
+                "{} {} {}",
+                [
+                    "maandag",
+                    "dinsdag",
+                    "woensdag",
+                    "donderdag",
+                    "vrijdag",
+                    "zaterdag",
+                    "zondag"
+                ][weekday],
+                now.day(),
+                [
+                    "januari",
+                    "februari",
+                    "maart",
+                    "april",
+                    "mei",
+                    "juni",
+                    "juli",
+                    "augustus",
+                    "september",
+                    "oktober",
+                    "november",
+                    "december"
+                ][month]
+            )
+            .to_uppercase(),
         }
     }
     pub fn clock(self, now: OffsetDateTime, hour24: bool, seconds: bool) -> String {
@@ -341,6 +462,10 @@ pub fn deserialize_language<'de, D: Deserializer<'de>>(
             Some("pt") => Language::Pt,
             Some("it") => Language::It,
             Some("ru") => Language::Ru,
+            Some("pl") => Language::Pl,
+            Some("fr") => Language::Fr,
+            Some("vi") => Language::Vi,
+            Some("nl") => Language::Nl,
             _ => Language::En,
         },
     )
@@ -410,6 +535,26 @@ mod tests {
             Language::Ru.format("favoriteAdded", &[("app", "Netflix")]),
             "Netflix: добавлено в избранное."
         );
+        assert_eq!(
+            Language::Pl.format("favoriteAdded", &[("app", "Netflix")]),
+            "Dodano Netflix do ulubionych."
+        );
+        assert_eq!(
+            Language::Fr.format("favoriteAdded", &[("app", "Netflix")]),
+            "Netflix fait maintenant partie de vos favoris."
+        );
+        assert_eq!(Language::Fr.greeting(2, "Ana"), "Toujours debout, Ana ?");
+        assert_eq!(
+            Language::Vi.format("favoriteAdded", &[("app", "Netflix")]),
+            "Đã thêm Netflix vào mục ưa thích."
+        );
+        assert_eq!(Language::Vi.greeting(2, "Ana"), "Vẫn chưa ngủ sao, Ana?");
+        assert_eq!(
+            Language::Nl.format("favoriteAdded", &[("app", "Netflix")]),
+            "Netflix toegevoegd aan favorieten."
+        );
+        assert_eq!(Language::Nl.greeting(2, "Ana"), "Nog wakker, Ana?");
+        assert_eq!(Language::Nl.category("Gaming"), "Games");
         assert_eq!(Language::De.category("Gaming"), "Spiele");
         assert_eq!(Language::En.greeting(15, ""), "Good afternoon.");
         assert_eq!(Language::En.greeting(15, "  Ana "), "Good afternoon, Ana.");
@@ -429,6 +574,14 @@ mod tests {
         assert_eq!(Language::Zh.date(now), "10月21日星期三");
         assert_eq!(Language::Ru.date(now), "СРЕДА, 21 ОКТЯБРЯ");
         assert_eq!(Language::Ru.clock(now, true, false), "20:41");
+        assert_eq!(Language::Pl.date(now), "ŚRODA, 21 PAŹDZIERNIKA");
+        assert_eq!(Language::Pl.clock(now, true, false), "20:41");
+        assert_eq!(Language::Fr.date(now), "MERCREDI 21 OCTOBRE");
+        assert_eq!(Language::Fr.clock(now, true, false), "20:41");
+        assert_eq!(Language::Vi.date(now), "THỨ TƯ, 21 THÁNG 10");
+        assert_eq!(Language::Vi.clock(now, true, false), "20:41");
+        assert_eq!(Language::Nl.date(now), "WOENSDAG 21 OKTOBER");
+        assert_eq!(Language::Nl.clock(now, true, false), "20:41");
         assert_eq!(Language::Zh.clock(now, false, false), "下午8:41");
         assert_eq!(Language::Zh.clock(now, false, true), "下午8:41:00");
         assert_eq!(Language::En.clock(now, true, false), "20:41");
@@ -445,6 +598,44 @@ mod tests {
             let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
                 .unwrap();
             assert_eq!(Language::Pt.date(now), expected);
+        }
+    }
+    #[test]
+    fn french_dates_use_the_ordinal_first_day_and_accented_months() {
+        for (date, expected) in [
+            ("2026-08-01T09:00:00+02:00", "SAMEDI 1ER AOÛT"),
+            ("2026-02-14T12:00:00+01:00", "SAMEDI 14 FÉVRIER"),
+            ("2026-12-25T20:41:00+01:00", "VENDREDI 25 DÉCEMBRE"),
+        ] {
+            let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
+                .unwrap();
+            assert_eq!(Language::Fr.date(now), expected);
+        }
+    }
+
+    #[test]
+    fn vietnamese_dates_cover_leap_days_and_weekend_names() {
+        for (date, expected) in [
+            ("2024-02-29T00:05:00+07:00", "THỨ NĂM, 29 THÁNG 2"),
+            ("2026-10-24T12:00:00+07:00", "THỨ BẢY, 24 THÁNG 10"),
+            ("2026-11-01T20:41:00+07:00", "CHỦ NHẬT, 1 THÁNG 11"),
+        ] {
+            let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
+                .unwrap();
+            assert_eq!(Language::Vi.date(now), expected);
+        }
+    }
+
+    #[test]
+    fn dutch_dates_cover_leap_days_and_month_boundaries() {
+        for (date, expected) in [
+            ("2024-02-29T00:05:00+01:00", "DONDERDAG 29 FEBRUARI"),
+            ("2026-05-01T12:00:00+02:00", "VRIJDAG 1 MEI"),
+            ("2026-12-27T20:41:00+01:00", "ZONDAG 27 DECEMBER"),
+        ] {
+            let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
+                .unwrap();
+            assert_eq!(Language::Nl.date(now), expected);
         }
     }
 }

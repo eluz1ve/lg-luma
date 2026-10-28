@@ -5,6 +5,7 @@ mod app_artwork;
 #[path = "app-subscription.rs"]
 mod app_subscription;
 mod branding;
+mod companion;
 mod damage;
 mod design;
 mod diagnostics;
@@ -26,12 +27,18 @@ mod scroll_preview;
 mod sdl_events;
 mod state;
 mod storage;
+mod text_rendering;
 mod themes;
+#[path = "tile-editor.rs"]
+mod tile_editor;
 mod vector;
 mod view;
+mod wallpaper_cycle;
+mod wallpapers;
 mod weather;
 #[path = "weather-service.rs"]
 mod weather_service;
+mod webhook;
 #[cfg(all(feature = "webos", any(target_os = "linux", test)))]
 #[path = "webos-compat.rs"]
 mod webos_compat;
@@ -105,10 +112,14 @@ impl Options {
                     serde_json::from_str(&argument).map_err(|error| error.to_string())?;
                 // Luma's own Home manifest passes "nid"; LG's Home manifest (Luma run in
                 // place of LG's Home executable) passes "appId" with lifecycle v2.
-                result.webos_home = metadata.get("nid").and_then(serde_json::Value::as_str)
-                    == Some(platform::HOME_ID)
-                    || metadata.get("appId").and_then(serde_json::Value::as_str)
-                        == Some(platform::HOME_ID)
+                result.webos_home = metadata
+                    .get("nid")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(platform::is_home_id)
+                    || metadata
+                        .get("appId")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(platform::is_home_id)
                     || platform::runs_as_lg_home();
             }
             eprintln!("Luma webOS launch parameters accepted");
@@ -293,6 +304,8 @@ fn effects(
     platform: &Platform,
     preferences: &std::path::Path,
     weather: &weather_service::Service,
+    wallpapers: &wallpapers::Service,
+    webhook: &webhook::Service,
 ) -> bool {
     for effect in effects {
         match effect {
@@ -301,7 +314,7 @@ fn effects(
                     eprintln!("{error}");
                     state.notify(state.preferences.language.t("savedError"));
                 } else {
-                    platform.sync_splash(&state.preferences.background);
+                    platform.sync_splash(state.preferences.splash_background());
                 }
             }
             effect @ (Effect::Refresh | Effect::Reload) => {
@@ -338,7 +351,12 @@ fn effects(
                     }
                 }
             }
+            Effect::FireWebhook(tile) => webhook.send(tile),
             Effect::Quit => return false,
+            Effect::Uninstall(id) => platform.send(Request::Uninstall(id)),
+            Effect::DeleteWallpaper(id) => {
+                wallpapers.delete(id, state.preferences.background.clone())
+            }
             Effect::Recent {
                 generation,
                 command,
@@ -350,7 +368,6 @@ fn effects(
             }
             Effect::Weather(command) => weather.send(command),
             Effect::Notify(text) => state.notify(text),
-            Effect::Rosters(game, teams) => state.feeds.pending_rosters.push((game, teams)),
             Effect::PhoneKeyStart => state.phone_key_start = true,
             Effect::HomeTakeover(enable) => {
                 state.notify(state.preferences.language.t(if enable {
@@ -419,6 +436,8 @@ fn script(
         "await-search" => vec![],
         "await-weather" => vec![],
         "await-recents" => vec![],
+        "await-upload" => vec![],
+        "await-tile-editor" => vec![],
         _ => return Err(format!("Unknown scripted action: {action}")),
     })
 }
@@ -447,6 +466,11 @@ fn compose(
     } else {
         scene
     }
+}
+
+fn wallpaper_upload_active(state: &State, webos: bool, focused: bool, visible: bool) -> bool {
+    // Desktop users need to switch to a browser without invalidating the upload URL.
+    visible && (!webos || focused) && matches!(state.overlay, Some(Overlay::WallpaperUpload))
 }
 
 fn weather_tick(state: &mut State, service: &weather_service::Service, visible: bool) {
@@ -580,7 +604,7 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         let surface_id = if options.webos_home {
-            platform::HOME_ID
+            platform::home_id()
         } else {
             platform::APP_ID
         };
@@ -596,6 +620,15 @@ fn run() -> Result<(), String> {
         // Magic Remotes send the separate Exit key for a long Back press.
         // Claim it before video init so the compositor does not close Luma.
         sdl2::hint::set("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
+        // SAM may not relaunch Home when its surface is already foreground. Handle the
+        // physical key ourselves only as Home; normal tile launches keep LG's routing.
+        if options.webos_home {
+            sdl2::hint::set("SDL_WEBOS_ACCESS_POLICY_KEYS_HOME", "true");
+        }
+        // SDL-webOS answers tvpower's screen saver requests with `ack: !suspend_screensaver`, and
+        // SDL suspends the screen saver unless this hint allows it: LG's screen saver never
+        // started while Luma was in front. A launcher has no video to protect.
+        sdl2::hint::set("SDL_VIDEO_ALLOW_SCREENSAVER", "1");
         // In place of LG's Home executable, SDL's own registration cannot reach the bus under
         // LG's Home role; Luma registers with sam itself below (lifecycle v2).
         if platform::runs_as_lg_home() {
@@ -635,6 +668,10 @@ fn run() -> Result<(), String> {
     };
     let mut state = State::new(initial_preferences);
     state.home_takeover = options.webos_home || platform::runs_as_lg_home();
+    // Scripted desktop captures must never open a server on the real LAN.
+    let mut wallpaper_service =
+        wallpapers::Service::new(&preferences_path, !webos && !options.script.is_empty())?;
+    let mut tile_editor_service = tile_editor::Service::new(!webos && !options.script.is_empty())?;
     if options.test_extra_apps > 0 {
         eprintln!(
             "Luma scroll preview: explicit {}-app expansion; preferences {}",
@@ -706,14 +743,17 @@ fn run() -> Result<(), String> {
         webos,
         options.preferences.is_none() && options.test_extra_apps == 0,
     );
+    let webhook_service = webhook::Service::new();
     effects(
         vec![Effect::Refresh],
         &mut state,
         &platform,
         &preferences_path,
         &weather_service,
+        &wallpaper_service,
+        &webhook_service,
     );
-    platform.sync_splash(&state.preferences.background);
+    platform.sync_splash(state.preferences.splash_background());
     startup_stage("preferences and workers");
 
     let sdl = sdl2::init()?;
@@ -767,16 +807,17 @@ fn run() -> Result<(), String> {
     };
     let mut opened = None;
     let mut failures = Vec::new();
-    // On the TV, text and logos stay crisper through the panel's 2x scale-up with their
-    // analytic edge filters than with 4x MSAA coverage, at the same cost. Desktop previews
-    // keep multisampling (LUMA_MSAA=4 or 0 overrides either), with a non-MSAA fallback.
-    let sample_counts: &[u8] = match std::env::var("LUMA_MSAA").as_deref() {
-        Ok("4") => &[4, 2, 0],
-        Ok("0") => &[0],
-        _ if webos => &[0],
-        _ => &[4, 2, 0],
-    };
-    for &samples in sample_counts {
+    // MSAA is the default on TV and desktop. The System setting is applied only at launch.
+    let text_config = text_rendering::Configuration::new(
+        state.preferences.text_rendering,
+        std::env::var("LUMA_MSAA").ok().as_deref(),
+        std::env::var("LUMA_EMBOLDEN").ok().as_deref(),
+    );
+    eprintln!(
+        "Luma text rendering: {:?}, embolden {} px",
+        text_config.mode, text_config.embolden
+    );
+    for &samples in text_config.sample_counts {
         attributes.set_multisample_buffers(u8::from(samples > 0));
         attributes.set_multisample_samples(samples);
         match create_window() {
@@ -799,7 +840,8 @@ fn run() -> Result<(), String> {
     if let Err(error) = video.gl_set_swap_interval(1) {
         eprintln!("VSync: {error}");
     }
-    let mut renderer = renderer::Renderer::new(&assets.root.join("font.ttf"), webos)?;
+    let mut renderer =
+        renderer::Renderer::new(&assets.root.join("font.ttf"), webos, text_config.embolden)?;
     startup_stage("renderer");
     // Redraw only what changed since the back buffer's frame (LUMA_PARTIAL=0 draws in full).
     let partial = (std::env::var("LUMA_PARTIAL").as_deref() != Ok("0"))
@@ -861,9 +903,9 @@ fn run() -> Result<(), String> {
                 // so Luma registers through lifecycle v2 on its own connection.
                 let push = pusher(subsystem.event_sender());
                 luna::subscribe(
-                    Some(platform::HOME_ID),
+                    Some(platform::home_id()),
                     "luna://com.webos.applicationManager/registerApp",
-                    &serde_json::json!({"id": platform::HOME_ID}),
+                    &serde_json::json!({"id": platform::home_id()}),
                     // sam answers "registered" at once; without it sam would end Home later.
                     Duration::from_secs(10),
                     move |message| {
@@ -898,7 +940,7 @@ fn run() -> Result<(), String> {
                 let push = pusher(subsystem.event_sender());
                 let close = pusher(subsystem.event_sender());
                 match luna::subscribe_as_app(
-                    platform::HOME_ID,
+                    platform::home_id(),
                     "luna://com.webos.applicationManager/registerNativeApp",
                     &serde_json::json!({}),
                     Duration::from_secs(10),
@@ -967,10 +1009,6 @@ fn run() -> Result<(), String> {
     let mut phone_server: Option<phone_key::PhoneKey> = None;
     let mut crypto_fetched: Option<Instant> = None;
     let mut premieres_fetched: Option<Instant> = None;
-    // Esports matches per discipline, refetched sooner while one is live; a new key starts over.
-    let mut esports_fetched: std::collections::HashMap<String, Instant> = Default::default();
-    let mut maps_fetched: std::collections::HashMap<String, Instant> = Default::default();
-    let mut esports_key = String::new();
     let mut last_minute = None;
     let mut frame = 0u64;
     let mut visible = true;
@@ -978,6 +1016,9 @@ fn run() -> Result<(), String> {
     let mut queued_event = None;
     let mut text_active = false;
     let mut initial_focus = options.script.is_empty();
+    let mut startup_cycle_pending = state.preferences.wallpaper_cycle;
+    let mut wallpapers_scanned = false;
+    let launched = Instant::now();
     // When to ask for the inventory again after a failed load (State::inventory_failed).
     let mut inventory_retry: Option<Instant> = None;
     let scripted_input = !options.script.is_empty();
@@ -1003,6 +1044,74 @@ fn run() -> Result<(), String> {
             state.dirty = true;
         }
         state.tick();
+        wallpaper_service.set_active(wallpaper_upload_active(&state, webos, focused, visible));
+        while let Ok(event) = wallpaper_service.receiver.try_recv() {
+            match event {
+                wallpapers::Event::Catalog(items) => {
+                    wallpapers_scanned = true;
+                    state.set_wallpapers(items);
+                }
+                wallpapers::Event::Deleted(id, result) => state.wallpaper_deleted(id, result),
+                wallpapers::Event::Session(generation, result)
+                    if generation == wallpaper_service.generation()
+                        && matches!(state.overlay, Some(Overlay::WallpaperUpload)) =>
+                {
+                    if let Err(error) = &result {
+                        eprintln!("Luma wallpaper upload: {error}");
+                    }
+                    state.wallpaper_upload = Some(result);
+                    state.dirty = true;
+                }
+                wallpapers::Event::Ended(generation)
+                    if generation == wallpaper_service.generation()
+                        && matches!(state.overlay, Some(Overlay::WallpaperUpload)) =>
+                {
+                    state.back();
+                    state.notify(state.preferences.language.t("wallpaperUploadEnded"));
+                }
+                _ => {}
+            }
+        }
+        tile_editor_service.set_active(
+            focused && visible && matches!(state.overlay, Some(Overlay::TileEditor)),
+            &state.preferences.custom_tiles,
+        );
+        while let Ok(event) = tile_editor_service.receiver.try_recv() {
+            match event {
+                // Applied even after the dialog closed: the phone was already told it saved.
+                tile_editor::Event::Tiles(revision, tiles) => {
+                    let pending = state.replace_tiles(tiles);
+                    tile_editor_service.acknowledge(revision);
+                    running &= effects(
+                        pending,
+                        &mut state,
+                        &platform,
+                        &preferences_path,
+                        &weather_service,
+                        &wallpaper_service,
+                        &webhook_service,
+                    );
+                }
+                tile_editor::Event::Session(generation, result)
+                    if generation == tile_editor_service.generation()
+                        && matches!(state.overlay, Some(Overlay::TileEditor)) =>
+                {
+                    if let Err(error) = &result {
+                        eprintln!("Luma tile editor: {error}");
+                    }
+                    state.tile_editor = Some(result);
+                    state.dirty = true;
+                }
+                tile_editor::Event::Ended(generation)
+                    if generation == tile_editor_service.generation()
+                        && matches!(state.overlay, Some(Overlay::TileEditor)) =>
+                {
+                    state.back();
+                    state.notify(state.preferences.language.t("tileEditorEnded"));
+                }
+                _ => {}
+            }
+        }
         state.dirty |= assets.artwork.poll();
         if visible && state.page == state::Page::Home {
             let blocks = state.home_blocks();
@@ -1018,70 +1127,12 @@ fn run() -> Result<(), String> {
                 premieres_fetched = Some(Instant::now());
                 feeds.send(feeds::FeedRequest::Premieres);
             }
-            let key = state.preferences.esports_key.trim().to_owned();
-            if key != esports_key {
-                esports_key = key.clone();
-                esports_fetched.clear();
-                maps_fetched.clear();
-                state.feeds.matches.clear();
-                state.feeds.maps.clear();
-                state.feeds.lineups.clear();
-                state.feeds.rosters.clear();
-                state.feeds.updated.clear();
-                state.feeds.matches_error = None;
-            }
-            // Without a key, the shared feed (rebuilt every 15 minutes); with one, PandaScore
-            // directly, as often as the free plan allows while a match is live, and the shared
-            // feed at its own pace for the map names PandaScore's free lists lack.
-            let games = state.esports_games();
-            for game in &games {
-                let live = state
-                    .feeds
-                    .matches
-                    .get(game)
-                    .is_some_and(|matches| matches.iter().any(|m| m.running));
-                let every = if !key.is_empty() && live {
-                    feeds::live_interval(games.len())
-                } else {
-                    300
-                };
-                if due(esports_fetched.get(game).copied(), every) {
-                    esports_fetched.insert(game.clone(), Instant::now());
-                    feeds.send(if key.is_empty() {
-                        feeds::FeedRequest::Shared { game: game.clone() }
-                    } else {
-                        feeds::FeedRequest::Matches {
-                            key: key.clone(),
-                            game: game.clone(),
-                        }
-                    });
-                }
-                if !key.is_empty() && due(maps_fetched.get(game).copied(), 300) {
-                    maps_fetched.insert(game.clone(), Instant::now());
-                    feeds.send(feeds::FeedRequest::Shared { game: game.clone() });
-                }
-            }
             if std::mem::take(&mut state.feeds.images_due) {
-                for url in state.wanted_images() {
-                    if state.feeds.requested.insert(url.clone()) {
-                        feeds.send(feeds::FeedRequest::Image(url));
-                    }
-                }
                 // Store widgets' images, already limited to their widgets' origins.
                 for (url, poster) in state.wanted_widget_images() {
                     if state.feeds.requested.insert(url.clone()) {
                         feeds.send(feeds::FeedRequest::WidgetImage { url, poster });
                     }
-                }
-            }
-            for (game, teams) in std::mem::take(&mut state.feeds.pending_rosters) {
-                // The shared feed brings lineups along.
-                if !key.is_empty() {
-                    feeds.send(feeds::FeedRequest::Rosters {
-                        key: key.clone(),
-                        game,
-                        teams,
-                    });
                 }
             }
         }
@@ -1098,6 +1149,8 @@ fn run() -> Result<(), String> {
                 &platform,
                 &preferences_path,
                 &weather_service,
+                &wallpaper_service,
+                &webhook_service,
             );
         }
         if std::mem::take(&mut state.phone_key_start) {
@@ -1124,7 +1177,7 @@ fn run() -> Result<(), String> {
                     steps: ["phonePageStep1", "phonePageStep2", "phonePageStep3"]
                         .map(|key| language.t(key).to_owned())
                         .to_vec(),
-                    field: language.t("esportsKey").into(),
+                    field: String::new(),
                     send: language.t("phonePageSend").into(),
                     saved: language.t("phonePageSaved").into(),
                     invalid: language.t("phonePageInvalid").into(),
@@ -1158,6 +1211,8 @@ fn run() -> Result<(), String> {
                 &platform,
                 &preferences_path,
                 &weather_service,
+                &wallpaper_service,
+                &webhook_service,
             );
         }
         while let Ok(response) = feeds.receiver.try_recv() {
@@ -1188,25 +1243,34 @@ fn run() -> Result<(), String> {
                     state.feeds.images.insert(url, image);
                 }
                 feeds::FeedResponse::Image(_, None) => {}
-                feeds::FeedResponse::Matches {
-                    game,
-                    result: Ok(matches),
-                } => state.esports_received(game, matches),
-                feeds::FeedResponse::Matches {
-                    result: Err(error), ..
-                } => state.feeds.matches_error = Some(error),
-                feeds::FeedResponse::Rosters(rosters) => state.rosters_received(rosters),
-                feeds::FeedResponse::Shared {
-                    game,
-                    result: Ok(feed),
-                } => state.shared_received(game, feed),
-                // With a key the matches are PandaScore's: only their map names are missing.
-                feeds::FeedResponse::Shared {
-                    result: Err(error), ..
-                } if state.preferences.esports_key.trim().is_empty() => {
-                    state.feeds.matches_error = Some(error)
-                }
-                feeds::FeedResponse::Shared { .. } => {}
+            }
+        }
+        let unix = state::unix_now();
+        let startup_cycle = wallpaper_cycle::startup_due(
+            state.preferences.wallpaper_cycle,
+            startup_cycle_pending,
+            wallpapers_scanned,
+            launched.elapsed(),
+        );
+        if focused
+            && visible
+            && state.overlay.is_none()
+            && state.moving.is_none()
+            && state.deleting_wallpaper.is_none()
+            && !state.animating()
+            && (startup_cycle
+                || wallpaper_cycle::due(
+                    state.preferences.wallpaper_cycle,
+                    state.preferences.wallpaper_changed,
+                    unix,
+                ))
+        {
+            let cycled = state.cycle_wallpaper(unix);
+            if startup_cycle {
+                startup_cycle_pending = false;
+            }
+            if cycled && let Err(error) = storage::save(&preferences_path, &state.preferences) {
+                eprintln!("{error}");
             }
         }
         while let Ok(response) = platform.receiver.try_recv() {
@@ -1277,6 +1341,18 @@ fn run() -> Result<(), String> {
                         }
                     }
                 }
+                Response::Uninstalled { id, result } => {
+                    let pending = state.uninstall_response(id, result);
+                    running &= effects(
+                        pending,
+                        &mut state,
+                        &platform,
+                        &preferences_path,
+                        &weather_service,
+                        &wallpaper_service,
+                        &webhook_service,
+                    );
+                }
                 Response::Recent {
                     generation,
                     command,
@@ -1297,9 +1373,23 @@ fn run() -> Result<(), String> {
                         &platform,
                         &preferences_path,
                         &weather_service,
+                        &wallpaper_service,
+                        &webhook_service,
                     );
                 }
             }
+        }
+        while let Ok(webhook::Response::Done { title, result }) =
+            webhook_service.receiver.try_recv()
+        {
+            let key = match result {
+                Ok(()) => "tileSent",
+                Err(error) => {
+                    eprintln!("Luma webhook {title}: {error}");
+                    "tileFailed"
+                }
+            };
+            state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         weather_tick(&mut state, &weather_service, visible);
         // Rebuild hit regions before input whenever inventory/layout changed.
@@ -1359,6 +1449,9 @@ fn run() -> Result<(), String> {
                 Event::Quit { .. } => running = false,
                 Event::User { type_, code, .. } if Some(type_) == lifecycle_event => {
                     if code == 1 {
+                        press = None;
+                        back_button.cancel();
+                        pending = state.return_home();
                         // A staged Home must come forward itself. If it does not, its
                         // registration would leave the Home key dead: check below.
                         if end_registration.is_some() {
@@ -1383,6 +1476,14 @@ fn run() -> Result<(), String> {
                     ..
                 } if window_id == window.id() => match win_event {
                     WindowEvent::Hidden | WindowEvent::Minimized => {
+                        if matches!(
+                            state.overlay,
+                            Some(Overlay::WallpaperUpload | Overlay::TileEditor)
+                        ) {
+                            state.back();
+                        }
+                        wallpaper_service.set_active(false);
+                        tile_editor_service.set_active(false, &[]);
                         visible = false;
                         focused = false;
                         press = None;
@@ -1393,6 +1494,16 @@ fn run() -> Result<(), String> {
                         profile.pause();
                     }
                     WindowEvent::FocusLost => {
+                        if webos {
+                            if matches!(
+                                state.overlay,
+                                Some(Overlay::WallpaperUpload | Overlay::TileEditor)
+                            ) {
+                                state.back();
+                            }
+                            wallpaper_service.set_active(false);
+                            tile_editor_service.set_active(false, &[]);
+                        }
                         focused = false;
                         press = None;
                         back_button.cancel();
@@ -1433,6 +1544,17 @@ fn run() -> Result<(), String> {
                         back_button.cancel();
                     }
                     match key {
+                        _ if webos
+                            && options.webos_home
+                            && i32::from(key) == sdl_events::WEBOS_HOME_KEYCODE =>
+                        {
+                            if !repeat {
+                                eprintln!("Luma Home key: returning to Home tab");
+                                press = None;
+                                back_button.cancel();
+                                pending = state.return_home();
+                            }
+                        }
                         _ if native_hold => {
                             if !repeat && back_button.native_hold(Instant::now()) {
                                 press = None;
@@ -1619,6 +1741,14 @@ fn run() -> Result<(), String> {
                 &platform,
                 &preferences_path,
                 &weather_service,
+                &wallpaper_service,
+                &webhook_service,
+            );
+            wallpaper_service
+                .set_active(running && wallpaper_upload_active(&state, webos, focused, visible));
+            tile_editor_service.set_active(
+                running && focused && visible && matches!(state.overlay, Some(Overlay::TileEditor)),
+                &state.preferences.custom_tiles,
             );
             if press
                 .as_ref()
@@ -1645,6 +1775,8 @@ fn run() -> Result<(), String> {
                 &platform,
                 &preferences_path,
                 &weather_service,
+                &wallpaper_service,
+                &webhook_service,
             );
         }
         if let Some(held) = &mut press
@@ -1661,6 +1793,12 @@ fn run() -> Result<(), String> {
                 (action == "await-search" && state.weather.searching)
                     || (action == "await-weather" && state.weather.fetching())
                     || (action == "await-recents" && state.recents.pending.is_some())
+                    || (action == "await-upload"
+                        && matches!(state.overlay, Some(Overlay::WallpaperUpload))
+                        && state.wallpaper_upload.is_none())
+                    || (action == "await-tile-editor"
+                        && matches!(state.overlay, Some(Overlay::TileEditor))
+                        && state.tile_editor.is_none())
             })
             && let Some(action) = options.script.pop_front()
         {
@@ -1676,9 +1814,17 @@ fn run() -> Result<(), String> {
                     &platform,
                     &preferences_path,
                     &weather_service,
+                    &wallpaper_service,
+                    &webhook_service,
                 );
             }
         }
+        wallpaper_service
+            .set_active(running && wallpaper_upload_active(&state, webos, focused, visible));
+        tile_editor_service.set_active(
+            running && focused && visible && matches!(state.overlay, Some(Overlay::TileEditor)),
+            &state.preferences.custom_tiles,
+        );
         // state.loading stays set meanwhile, so focus/relaunch refreshes do not add requests.
         if inventory_retry.is_some_and(|at| Instant::now() >= at) {
             inventory_retry = None;
@@ -1699,6 +1845,8 @@ fn run() -> Result<(), String> {
                 &platform,
                 &preferences_path,
                 &weather_service,
+                &wallpaper_service,
+                &webhook_service,
             );
         }
         let keyboard = state.text_input_active();
@@ -1933,6 +2081,7 @@ fn run() -> Result<(), String> {
             "display_mode": display_mode,
             "drawable_is_4k": Size::new(dw, dh).is_4k(), "presented_frames": presented,
             "graphics": renderer.info, "last_presented": renderer.stats(), "capture": captured,
+            "text_rendering": text_config,
             "profile": options.profile_frames.map(|_| profile.summary()),
             "partial_redraw": partial.as_ref().map(egl_damage::PartialUpdate::describe),
             "redrawn_fraction_mean": redrawn_total / presented.max(1) as f64,
