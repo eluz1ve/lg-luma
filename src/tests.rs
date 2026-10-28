@@ -1560,6 +1560,7 @@ fn weather_units_save_without_replacing_celsius_cache_and_hide_keeps_city() {
             code: 2,
             is_day: true,
         },
+        hourly: vec![],
     });
     state.focus = Target::WeatherTemperature;
     state.activate();
@@ -2679,9 +2680,16 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
                 .iter()
                 .filter(|c| matches!(c.target, Target::Widget(_)))
                 .count(),
-            4
+            5
         );
-        for key in ["widgets", "greeting", "weather", "shortcuts", "inputs"] {
+        for key in [
+            "widgets",
+            "greeting",
+            "weather",
+            "shortcuts",
+            "inputs",
+            "cryptoWidget",
+        ] {
             assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t(key))), "{key}/{language:?}");
         }
         state.pointer_focus(Target::Sidebar(0));
@@ -2968,6 +2976,49 @@ fn scene_text(state: &State) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn a_tall_weather_block_adds_an_hourly_strip_a_short_one_does_not() {
+    use crate::home_grid::BlockKind;
+    use crate::weather::{Cache, Hourly, Reading};
+    let mut state = ready();
+    let place = crate::weather::Location {
+        name: "Vienna".into(),
+        region: "Vienna".into(),
+        country: "Austria".into(),
+        latitude: 48.2085,
+        longitude: 16.3721,
+    };
+    state.preferences.weather_location = Some(place.clone());
+    state.weather.cache = Some(Cache {
+        key: place.key(),
+        updated_at: 1000,
+        reading: Reading {
+            temperature: 14.2,
+            code: 2,
+            is_day: true,
+        },
+        hourly: vec![Hourly {
+            time: "2026-10-29T15:00".into(),
+            temperature: 17.0,
+            code: 3,
+        }],
+    });
+    for (h, shown) in [(1, false), (2, true)] {
+        state.preferences.home_layout = vec![crate::home_grid::Block {
+            kind: BlockKind::Weather,
+            x: 0,
+            y: 0,
+            w: 8,
+            h,
+        }];
+        assert_eq!(
+            scene_text(&state).iter().any(|t| t == "17°C"),
+            shown,
+            "h={h}"
+        );
+    }
 }
 
 #[test]

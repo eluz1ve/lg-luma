@@ -1545,18 +1545,95 @@ fn weather_block(
     if !state.preferences.show_weather {
         return;
     }
-    if theme.cards {
+    let cards = state.preferences.weather_card.resolve(theme.cards);
+    if cards {
         widget_card(out, theme, rect);
     }
-    let pad = if theme.cards { 24. } else { 0. };
+    let pad = if cards { 24. } else { 0. };
     let summary = weather_summary_layout(state, assets, rect.w - 2. * pad);
-    // On a card the summary is centred; bare, it follows the greeting from the top.
-    let y = if theme.cards {
+    // Tall enough to fit the hourly strip below the summary: top-aligned instead of centred.
+    let tall = rect.h > 150.;
+    let y = if cards && !tall {
         rect.y + (rect.h - summary.height) / 2.
     } else {
         rect.y + 4.
     };
+    let summary_height = summary.height;
     weather_summary(out, state, assets, summary, rect.x + pad, y);
+    if tall {
+        let hours = state
+            .preferences
+            .weather_location
+            .as_ref()
+            .map_or(&[][..], |place| state.weather.hourly(place));
+        if !hours.is_empty() {
+            let strip_y = y + summary_height + 16.;
+            hourly_strip(
+                out,
+                state,
+                assets,
+                hours,
+                Rect::new(rect.x + pad, strip_y, rect.w - 2. * pad, rect.y + rect.h - strip_y),
+            );
+        }
+    }
+}
+
+/// Upcoming hours as a row of compact tiles: time, icon and temperature.
+fn hourly_strip(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    hours: &[weather::Hourly],
+    rect: Rect,
+) {
+    let language = state.preferences.language;
+    let tile_w = 92.;
+    let gap = 8.;
+    let count = ((rect.w + gap) / (tile_w + gap)).floor().max(1.) as usize;
+    for (index, hour) in hours.iter().take(count).enumerate() {
+        let x = rect.x + index as f32 * (tile_w + gap);
+        let condition = weather::condition(weather::Reading {
+            temperature: hour.temperature,
+            code: hour.code,
+            is_day: true,
+        });
+        out.text(
+            hour_label(&hour.time, language, state.preferences.hour_24),
+            Rect::new(x, rect.y, tile_w, 20.),
+            text(14.4, 450, 0.).leading(1.2),
+            c(0xf5f5f5, 0.58),
+            true,
+        );
+        out.icon(
+            assets,
+            &format!("weather-{}", condition.icon),
+            Rect::new(x + tile_w / 2. - 12., rect.y + 26., 24., 24.),
+            c(0xdedede, 0.83),
+        );
+        out.text(
+            weather::format_temperature(hour.temperature, state.preferences.temperature_unit),
+            Rect::new(x, rect.y + 56., tile_w, 24.),
+            text(17.6, 500, -0.01).leading(1.2),
+            c(0xf5f5f5, 0.87),
+            true,
+        );
+    }
+}
+
+/// The hour and minute of an Open-Meteo `YYYY-MM-DDTHH:MM` local timestamp, in the user's clock
+/// format; the date is irrelevant since only the time of day is shown.
+fn hour_label(time: &str, language: Language, hour_24: bool) -> String {
+    if time.len() < 16 {
+        return String::new();
+    }
+    let (Ok(hour), Ok(minute)) = (time[11..13].parse::<i64>(), time[14..16].parse::<i64>()) else {
+        return String::new();
+    };
+    let at = OffsetDateTime::UNIX_EPOCH
+        + time::Duration::hours(hour)
+        + time::Duration::minutes(minute);
+    language.clock(at, hour_24, false)
 }
 
 fn favorites_block(out: &mut Scene, state: &State, assets: &Assets, rect: Rect) {
@@ -1756,8 +1833,8 @@ fn crypto_block(
     rect: Rect,
 ) {
     let language = state.preferences.language;
-    // A glance widget (docs/design.md): on the theme's card exactly when the weather is.
-    let pad = if theme.cards {
+    // A glance widget (docs/design.md): on a card by the theme's own choice, or its override.
+    let pad = if state.preferences.crypto_card.resolve(theme.cards) {
         widget_card(out, theme, rect);
         24.
     } else {
@@ -2600,6 +2677,42 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
             chevron: true,
         },
     );
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::WeatherCard,
+            rect: Rect::new(640., y + 84., 1120., 72.),
+            title: language.t("cardBackground"),
+            icon: Some("grid"),
+            value: Some(language.t(state.preferences.weather_card.label_key())),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
+}
+
+/// The crypto widget's own settings: whether it sits on a card.
+fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let s = state.scroll;
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::CryptoCard,
+            rect: Rect::new(640., 164.8 - s, 1120., 72.),
+            title: language.t("cardBackground"),
+            icon: Some("grid"),
+            value: Some(language.t(state.preferences.crypto_card.label_key())),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
 }
 
 fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -2812,6 +2925,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Weather) => language.t("weather"),
                 Some(Subpage::Shortcuts) => language.t("shortcuts"),
                 Some(Subpage::Inputs) => language.t("inputs"),
+                Some(Subpage::Crypto) => language.t("cryptoWidget"),
                 Some(Subpage::Clock) => language.t("clock"),
                 Some(Subpage::ClockFormat | Subpage::TimeFormat) => nested_path.as_deref().unwrap(),
                 Some(Subpage::WeatherLocation | Subpage::Temperature | Subpage::Input(_)) => {
@@ -2902,6 +3016,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 | Subpage::Greeting
                 | Subpage::AppNames
                 | Subpage::Clock
+                | Subpage::Crypto
                 | Subpage::Widget(_)
         ) {
             match subpage {
@@ -2912,6 +3027,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 Subpage::Greeting => greeting_settings(out, state, assets),
                 Subpage::AppNames => app_name_settings(out, state, assets),
                 Subpage::Clock => clock_settings(out, state, assets),
+                Subpage::Crypto => crypto_settings(out, state, assets),
                 Subpage::Widget(slot) => widget_view::settings(out, state, assets, *slot),
                 _ => unreachable!(),
             }
@@ -2974,7 +3090,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                     state.preferences.temperature_unit == Unit::Fahrenheit,
                 ),
             ],
-            Subpage::Weather | Subpage::Shortcuts | Subpage::Inputs => {
+            Subpage::Weather | Subpage::Shortcuts | Subpage::Inputs | Subpage::Crypto => {
                 unreachable!()
             }
             Subpage::Theme => crate::themes::THEMES
@@ -3221,6 +3337,7 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
                 ("weather", "weather-sun"),
                 ("shortcuts", "sparkles"),
                 ("inputs", "input-hdmi"),
+                ("cryptoWidget", "generic"),
             ]
             .into_iter()
             .enumerate()

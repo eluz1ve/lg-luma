@@ -1,7 +1,56 @@
 use crate::i18n::Language;
 use crate::weather::{Location, Unit};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
+
+/// Whether a glance widget (weather, crypto) sits on a card: the theme's own choice, or an
+/// explicit override.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CardBackground {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl CardBackground {
+    pub fn resolve(self, theme_default: bool) -> bool {
+        match self {
+            Self::Auto => theme_default,
+            Self::On => true,
+            Self::Off => false,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::On,
+            Self::On => Self::Off,
+            Self::Off => Self::Auto,
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Auto => "cardBackgroundAuto",
+            Self::On => "stateOn",
+            Self::Off => "stateOff",
+        }
+    }
+}
+
+pub fn deserialize_card_background<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<CardBackground, D::Error> {
+    Ok(
+        match serde_json::Value::deserialize(deserializer)?.as_str() {
+            Some("on") => CardBackground::On,
+            Some("off") => CardBackground::Off,
+            _ => CardBackground::Auto,
+        },
+    )
+}
 
 pub const CATEGORIES: [&str; 4] = ["Streaming", "Music", "Gaming", "Utilities"];
 pub const BACKGROUNDS: [(&str, &str); 9] = [
@@ -255,6 +304,12 @@ pub struct Preferences {
     pub wallpaper_cycle: bool,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
+    /// Whether the weather widget sits on a card, overriding the theme's own choice.
+    #[serde(deserialize_with = "deserialize_card_background")]
+    pub weather_card: CardBackground,
+    /// Whether the crypto widget sits on a card, overriding the theme's own choice.
+    #[serde(deserialize_with = "deserialize_card_background")]
+    pub crypto_card: CardBackground,
 }
 
 /// The store's widgets: installed manifests (their files are next to the preferences) and the
@@ -318,6 +373,8 @@ impl Default for Preferences {
             text_rendering: crate::text_rendering::TextRendering::default(),
             wallpaper_cycle: false,
             wallpaper_changed: 0,
+            weather_card: CardBackground::Auto,
+            crypto_card: CardBackground::Auto,
         }
     }
 }

@@ -24,7 +24,7 @@ const fn block(kind: BlockKind, x: u8, y: u8, w: u8, h: u8) -> Block {
     Block { kind, x, y, w, h }
 }
 
-pub static THEMES: [Theme; 6] = [
+pub static THEMES: [Theme; 3] = [
     Theme {
         id: "classic",
         name_key: "themeClassic",
@@ -58,24 +58,6 @@ pub static THEMES: [Theme; 6] = [
         },
     },
     Theme {
-        id: "minimal",
-        name_key: "themeMinimal",
-        hint_key: "themeMinimalHint",
-        wallpaper: "slate",
-        accent: 0xffffff,
-        surface: 0xffffff,
-        surface_alpha: 0.07,
-        radius: 30.,
-        cards: true,
-        layout: || {
-            vec![
-                block(BlockKind::Greeting, 0, 0, 12, 3),
-                block(BlockKind::Weather, 3, 3, 6, 1),
-                block(BlockKind::Favorites, 0, 4, 12, 2),
-            ]
-        },
-    },
-    Theme {
         id: "dashboard",
         name_key: "themeDashboard",
         hint_key: "themeDashboardHint",
@@ -91,47 +73,8 @@ pub static THEMES: [Theme; 6] = [
                 block(BlockKind::Crypto, 6, 0, 6, 2),
                 block(BlockKind::Weather, 0, 1, 6, 1),
                 block(BlockKind::Favorites, 0, 2, 12, 2),
-                block(BlockKind::Inputs, 0, 4, 12, 1),
-                block(BlockKind::Premieres, 0, 5, 12, 2),
-            ]
-        },
-    },
-    Theme {
-        id: "gaming",
-        name_key: "themeGaming",
-        hint_key: "themeGamingHint",
-        wallpaper: "prism",
-        accent: 0xc4b5fd,
-        surface: 0x160a22,
-        surface_alpha: 0.74,
-        radius: 8.,
-        cards: true,
-        layout: || {
-            vec![
-                block(BlockKind::Greeting, 0, 0, 8, 1),
-                block(BlockKind::Crypto, 8, 0, 4, 1),
-                block(BlockKind::Inputs, 0, 1, 12, 1),
-                block(BlockKind::Favorites, 0, 2, 12, 2),
                 block(BlockKind::Premieres, 0, 4, 12, 2),
-            ]
-        },
-    },
-    Theme {
-        id: "forest",
-        name_key: "themeForest",
-        hint_key: "themeForestHint",
-        wallpaper: "forest",
-        accent: 0xbbf7d0,
-        surface: 0xf0f8f0,
-        surface_alpha: 0.16,
-        radius: 24.,
-        cards: true,
-        layout: || {
-            vec![
-                block(BlockKind::Greeting, 0, 0, 7, 2),
-                block(BlockKind::Weather, 7, 0, 5, 2),
-                block(BlockKind::Favorites, 0, 2, 12, 2),
-                block(BlockKind::Premieres, 0, 4, 12, 2),
+                block(BlockKind::Inputs, 0, 6, 12, 1),
             ]
         },
     },

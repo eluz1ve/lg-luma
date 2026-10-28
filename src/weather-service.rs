@@ -1,7 +1,9 @@
 //! Dedicated latest-job HTTP workers and an ordered cache writer. No request,
 //! DNS/TLS work or cache write blocks the SDL thread.
 use crate::i18n::Language;
-use crate::weather::{Cache, Command, Location, Reading, parse_locations, parse_reading};
+use crate::weather::{
+    Cache, Command, Hourly, Location, Reading, parse_hourly, parse_locations, parse_reading,
+};
 use serde_json::Value;
 use std::{
     fs,
@@ -110,19 +112,22 @@ impl Client {
             ],
         )?)
     }
-    pub fn forecast(&self, location: &Location) -> Result<Reading, String> {
+    pub fn forecast(&self, location: &Location) -> Result<(Reading, Vec<Hourly>), String> {
         let latitude = location.latitude.to_string();
         let longitude = location.longitude.to_string();
-        parse_reading(&self.request(
+        let body = self.request(
             &self.forecast,
             &[
                 ("latitude", &latitude),
                 ("longitude", &longitude),
                 ("current", "temperature_2m,is_day,weather_code"),
+                ("hourly", "temperature_2m,weather_code"),
+                ("forecast_days", "2"),
                 ("temperature_unit", "celsius"),
                 ("timezone", "auto"),
             ],
-        )?)
+        )?;
+        Ok((parse_reading(&body)?, parse_hourly(&body)))
     }
 }
 
@@ -134,7 +139,7 @@ pub enum Response {
     Forecast {
         id: u64,
         key: String,
-        result: Result<Reading, String>,
+        result: Result<(Reading, Vec<Hourly>), String>,
     },
 }
 #[derive(Default)]
@@ -320,6 +325,7 @@ mod tests {
                 code: 2,
                 is_day: true,
             },
+            hourly: vec![],
         };
         {
             let service = Service::new(

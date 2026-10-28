@@ -176,12 +176,58 @@ pub struct Cache {
     pub key: String,
     pub updated_at: i64,
     pub reading: Reading,
+    /// This hour onward, local to the location; empty for a cache saved before this existed.
+    #[serde(default)]
+    pub hourly: Vec<Hourly>,
 }
 impl Cache {
     pub fn age(&self, now: i64) -> Option<i64> {
         now.checked_sub(self.updated_at)
             .filter(|age| (0..=MAX_CACHE_AGE).contains(age) && self.reading.valid())
     }
+}
+
+/// One hour of the location's forecast.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Hourly {
+    /// `YYYY-MM-DDTHH:MM`, local to the location, exactly as Open-Meteo writes it: comparable
+    /// lexicographically with `current.time` from the same reply to keep only upcoming hours.
+    pub time: String,
+    pub temperature: f64,
+    pub code: u8,
+}
+
+/// Upcoming hours (`hourly.time` from `current.time` onward), paired with their reading.
+pub fn parse_hourly(value: &Value) -> Vec<Hourly> {
+    let current_time = value["current"]["time"].as_str().unwrap_or("");
+    let (Some(times), Some(temperatures), Some(codes)) = (
+        value["hourly"]["time"].as_array(),
+        value["hourly"]["temperature_2m"].as_array(),
+        value["hourly"]["weather_code"].as_array(),
+    ) else {
+        return vec![];
+    };
+    times
+        .iter()
+        .zip(temperatures)
+        .zip(codes)
+        .filter_map(|((time, temperature), code)| {
+            let time = time.as_str()?;
+            if time < current_time {
+                return None;
+            }
+            let temperature = temperature.as_f64()?;
+            let code = code
+                .as_f64()
+                .filter(|n| n.fract() == 0. && (0.0..=99.0).contains(n))?;
+            Some(Hourly {
+                time: time.into(),
+                temperature,
+                code: code as u8,
+            })
+        })
+        .take(24)
+        .collect()
 }
 
 pub struct Condition {
@@ -315,6 +361,12 @@ impl Weather {
             .filter(|cache| cache.key == location.key())
             .map(|cache| cache.reading)
     }
+    pub fn hourly(&self, location: &Location) -> &[Hourly] {
+        self.cache
+            .as_ref()
+            .filter(|cache| cache.key == location.key())
+            .map_or(&[], |cache| &cache.hourly)
+    }
     pub fn sync(
         &mut self,
         preferences: &Preferences,
@@ -388,7 +440,7 @@ impl Weather {
         &mut self,
         id: u64,
         key: &str,
-        result: Result<Reading, String>,
+        result: Result<(Reading, Vec<Hourly>), String>,
         now: i64,
     ) -> (bool, Option<Command>) {
         if self
@@ -401,11 +453,12 @@ impl Weather {
         self.pending = None;
         self.loading = false;
         match result {
-            Ok(reading) if reading.valid() => {
+            Ok((reading, hourly)) if reading.valid() => {
                 let cache = Cache {
                     key: key.into(),
                     updated_at: now,
                     reading,
+                    hourly,
                 };
                 self.cache = Some(cache.clone());
                 self.failed = false;

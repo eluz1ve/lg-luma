@@ -110,6 +110,8 @@ pub enum Target {
     WeatherSearch,
     WeatherClear,
     WeatherResult(usize),
+    WeatherCard,
+    CryptoCard,
     TileRemove(String),
     TileEditor,
 }
@@ -246,6 +248,7 @@ pub enum Subpage {
     Weather,
     Shortcuts,
     Inputs,
+    Crypto,
     Clock,
     ClockFormat,
     TimeFormat,
@@ -1232,6 +1235,7 @@ impl State {
             Some(Subpage::Weather) => Target::Widget(1),
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
+            Some(Subpage::Crypto) => Target::Widget(4),
             Some(Subpage::Clock) => Target::Setting(1),
             Some(Subpage::ClockFormat) => {
                 self.subpage = Some(Subpage::Clock);
@@ -1478,8 +1482,11 @@ impl State {
             {
                 return self.activate();
             }
-            if matches!(self.focus, Target::Setting(_) | Target::WeatherToggle)
-                && matches!(direction, Direction::Right)
+            if matches!(
+                self.focus,
+                Target::Setting(_) | Target::WeatherToggle | Target::WeatherCard
+                    | Target::CryptoCard
+            ) && matches!(direction, Direction::Right)
             {
                 return vec![];
             }
@@ -1499,6 +1506,10 @@ impl State {
                 return vec![];
             }
             if self.focus == Target::WeatherToggle && matches!(direction, Direction::Up) {
+                self.focus(Target::Nav(2), controls);
+                return vec![];
+            }
+            if self.focus == Target::CryptoCard && matches!(direction, Direction::Up) {
                 self.focus(Target::Nav(2), controls);
                 return vec![];
             }
@@ -2257,6 +2268,14 @@ impl State {
                 self.weather.invalidate_forecast();
                 return vec![Effect::Save];
             }
+            Target::WeatherCard => {
+                self.preferences.weather_card = self.preferences.weather_card.next();
+                return vec![Effect::Save];
+            }
+            Target::CryptoCard => {
+                self.preferences.crypto_card = self.preferences.crypto_card.next();
+                return vec![Effect::Save];
+            }
             Target::WeatherLocation => self.open_location(),
             Target::WeatherTemperature => {
                 self.subpage = Some(Subpage::Temperature);
@@ -2313,6 +2332,7 @@ impl State {
                             .map(|input| Target::InputMode(input.id.clone()))
                             .unwrap_or(Target::Setting(3)),
                     ),
+                    4 => (Subpage::Crypto, Target::CryptoCard),
                     _ => return vec![],
                 };
                 self.section = WIDGETS_SECTION;
@@ -2707,7 +2727,8 @@ impl State {
                         | Subpage::Widget(_)
                         | Subpage::Weather
                         | Subpage::Shortcuts
-                        | Subpage::Inputs,
+                        | Subpage::Inputs
+                        | Subpage::Crypto,
                     ) => {
                         return vec![];
                     }

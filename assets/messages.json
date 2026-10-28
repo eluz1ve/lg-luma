@@ -4704,5 +4704,31 @@
     "fr": "{secret} pour Luma",
     "vi": "{secret} cho Luma",
     "nl": "{secret} voor Luma"
+  },
+  "cardBackground": {
+    "en": "Card background",
+    "de": "Kartenhintergrund",
+    "es": "Fondo de tarjeta",
+    "zh": "卡片背景",
+    "pt": "Fundo do cartão",
+    "it": "Sfondo scheda",
+    "ru": "Фон карточки",
+    "pl": "Tło karty",
+    "fr": "Fond de la carte",
+    "vi": "Nền thẻ",
+    "nl": "Kaartachtergrond"
+  },
+  "cardBackgroundAuto": {
+    "en": "Auto",
+    "de": "Automatisch",
+    "es": "Automático",
+    "zh": "自动",
+    "pt": "Automático",
+    "it": "Automatico",
+    "ru": "Авто",
+    "pl": "Automatycznie",
+    "fr": "Auto",
+    "vi": "Tự động",
+    "nl": "Automatisch"
   }
 }

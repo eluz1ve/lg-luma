@@ -28,6 +28,7 @@ fn cache(updated_at: i64) -> Cache {
         key: place().key(),
         updated_at,
         reading: reading(),
+        hourly: vec![],
     }
 }
 
@@ -84,6 +85,27 @@ fn api_readings_and_conditions_cover_invalid_data_and_night() {
             icon
         );
     }
+}
+
+#[test]
+fn hourly_keeps_only_this_hour_onward_and_skips_entries_with_an_invalid_code() {
+    let body = json!({
+        "current": {"time": "2026-10-29T14:00"},
+        "hourly": {
+            "time": ["2026-10-29T13:00", "2026-10-29T14:00", "2026-10-29T15:00"],
+            "temperature_2m": [12.0, 14.0, 15.0],
+            "weather_code": [1, 2, 200],
+        },
+    });
+    assert_eq!(
+        parse_hourly(&body),
+        vec![Hourly {
+            time: "2026-10-29T14:00".into(),
+            temperature: 14.0,
+            code: 2,
+        }]
+    );
+    assert!(parse_hourly(&json!({})).is_empty());
 }
 
 #[test]
@@ -147,7 +169,7 @@ fn removed_disabled_or_changed_locations_reject_in_flight_results() {
     weather.remove_location();
     preferences.weather_location = None;
     assert_eq!(
-        weather.accept_forecast(id, &location.key(), Ok(reading()), 1001),
+        weather.accept_forecast(id, &location.key(), Ok((reading(), vec![])), 1001),
         (false, None)
     );
     assert!(weather.cache.is_none());
@@ -158,7 +180,7 @@ fn removed_disabled_or_changed_locations_reject_in_flight_results() {
     preferences.show_weather = false;
     weather.sync(&preferences, true, 1003);
     assert_eq!(
-        weather.accept_forecast(id, &location.key(), Ok(reading()), 1004),
+        weather.accept_forecast(id, &location.key(), Ok((reading(), vec![])), 1004),
         (false, None)
     );
     preferences.show_weather = true;
@@ -178,12 +200,12 @@ fn removed_disabled_or_changed_locations_reject_in_flight_results() {
         panic!();
     };
     assert_eq!(
-        weather.accept_forecast(old, &old_location.key(), Ok(reading()), 1007),
+        weather.accept_forecast(old, &old_location.key(), Ok((reading(), vec![])), 1007),
         (false, None)
     );
     assert!(
         weather
-            .accept_forecast(new, &new_location.key(), Ok(reading()), 1007)
+            .accept_forecast(new, &new_location.key(), Ok((reading(), vec![])), 1007)
             .0
     );
     assert_eq!(weather.cache.as_ref().unwrap().key, new_location.key());
