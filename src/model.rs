@@ -80,12 +80,14 @@ impl App {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Input {
     pub id: String,
     pub title: String,
     pub port: String,
     pub connected: Option<bool>,
+    /// Optional signal information; never overrides the cable state or Auto visibility.
+    pub signal: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -252,6 +254,7 @@ pub struct Preferences {
     pub text_rendering: crate::text_rendering::TextRendering,
     #[serde(deserialize_with = "crate::wallpaper_cycle::deserialize")]
     pub wallpaper_cycle: bool,
+    pub wallpaper_gradient: bool,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
 }
@@ -284,6 +287,7 @@ impl Default for Preferences {
             language: Language::En,
             text_rendering: crate::text_rendering::TextRendering::default(),
             wallpaper_cycle: false,
+            wallpaper_gradient: true,
             wallpaper_changed: 0,
         }
     }
@@ -582,18 +586,21 @@ pub fn demo_inventory() -> Inventory {
                 title: "PlayStation 5".into(),
                 port: "HDMI 1".into(),
                 connected: Some(true),
+                signal: None,
             },
             Input {
                 id: "com.webos.app.hdmi2".into(),
                 title: "Apple TV".into(),
                 port: "HDMI 2".into(),
                 connected: Some(true),
+                signal: None,
             },
             Input {
                 id: "com.webos.app.hdmi3".into(),
                 title: "HDMI 3".into(),
                 port: "HDMI 3".into(),
                 connected: Some(false),
+                signal: None,
             },
         ],
     };

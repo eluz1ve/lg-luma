@@ -75,6 +75,7 @@ pub enum Target {
     Background(usize),
     UploadWallpaper,
     WallpaperCycle,
+    WallpaperGradient,
     UseBackground,
     DeleteBackground,
     InputMode(String),
@@ -649,6 +650,31 @@ impl State {
         self.inventory_failures = 0;
         self.dirty = true;
         self.reconcile_focus();
+    }
+
+    /// Replace only input status; leave installed apps, artwork and saved preferences alone.
+    pub fn set_inputs(&mut self, inputs: Vec<crate::model::Input>) {
+        if self.inventory.inputs == inputs {
+            return;
+        }
+        self.inventory.inputs = inputs;
+        self.dirty = true;
+        self.reconcile_focus();
+        let missing = |id: &str| !self.inventory.inputs.iter().any(|input| input.id == id);
+        if self.page == Page::Settings
+            && (matches!(&self.subpage, Some(Subpage::Input(id)) if missing(id))
+                || matches!(&self.focus, Target::InputMode(id) if missing(id)))
+        {
+            self.subpage = Some(Subpage::Inputs);
+            self.scroll = 0.;
+            self.focus = self
+                .inventory
+                .inputs
+                .first()
+                .map_or(Target::Sidebar(WIDGETS_SECTION), |input| {
+                    Target::InputMode(input.id.clone())
+                });
+        }
     }
 
     /// A failed inventory load. Right after a cold boot, or when the TV is short of memory, the
@@ -1412,6 +1438,8 @@ impl State {
                         self.focus(
                             if index == 2 {
                                 Target::WallpaperCycle
+                            } else if index == 1 {
+                                Target::WallpaperGradient
                             } else if index < 3 {
                                 Target::UploadWallpaper
                             } else {
@@ -1438,14 +1466,26 @@ impl State {
                     Direction::Down => self.focus(Target::Background(0), controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
                     Direction::Left => self.focus(Target::Sidebar(1), controls),
+                    Direction::Right => self.focus(Target::WallpaperGradient, controls),
+                }
+                return vec![];
+            }
+            if self.focus == Target::WallpaperGradient {
+                match direction {
                     Direction::Right => self.focus(Target::WallpaperCycle, controls),
+                    Direction::Left => self.focus(Target::UploadWallpaper, controls),
+                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Down => self.focus(
+                        Target::Background(1.min(self.background_count().saturating_sub(1))),
+                        controls,
+                    ),
                 }
                 return vec![];
             }
             if self.focus == Target::WallpaperCycle {
                 match direction {
                     Direction::Right => {}
-                    Direction::Left => self.focus(Target::UploadWallpaper, controls),
+                    Direction::Left => self.focus(Target::WallpaperGradient, controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
                     Direction::Down => self.focus(
                         Target::Background(2.min(self.background_count().saturating_sub(1))),
@@ -2230,6 +2270,10 @@ impl State {
             Target::WallpaperCycle => {
                 self.preferences.wallpaper_cycle = !self.preferences.wallpaper_cycle;
                 self.preferences.wallpaper_changed = unix_now();
+                return vec![Effect::Save];
+            }
+            Target::WallpaperGradient => {
+                self.preferences.wallpaper_gradient = !self.preferences.wallpaper_gradient;
                 return vec![Effect::Save];
             }
             Target::UseBackground => {
