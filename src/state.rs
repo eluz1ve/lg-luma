@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 
 pub const WIDGETS_SECTION: usize = 2;
 pub const SYSTEM_SECTION: usize = 3;
+/// System › Luma as Home screen.
+pub const HOME_TAKEOVER_ROW: usize = 9;
 pub const SECTION_COUNT: usize = 4;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
-/// System › Luma as Home screen.
-pub const HOME_TAKEOVER_ROW: usize = 9;
 pub const APPS_COLUMNS: usize = 6;
 /// Automatic inventory retries before the error shows: with the 6.5 s Luna timeout about 50 s.
 pub const INVENTORY_RETRIES: u32 = 5;
