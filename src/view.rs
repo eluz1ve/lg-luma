@@ -53,14 +53,23 @@ impl Assets {
 
     fn background(&self, state: &State, id: &str) -> String {
         if let Some(item) = state.wallpapers.iter().find(|item| item.id == id) {
-            return item.image();
+            return if state.preferences.wallpaper_gradient {
+                item.image()
+            } else {
+                item.unshaded_image()
+            };
         }
         let id = if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
             id
         } else {
             "dunes"
         };
-        self.path(format!("wallpapers/{id}.jpg"))
+        let suffix = if state.preferences.wallpaper_gradient {
+            ""
+        } else {
+            "-plain"
+        };
+        self.path(format!("wallpapers/{id}{suffix}.jpg"))
     }
 
     fn width(&self, value: &str, style: TextStyle) -> f32 {
@@ -247,7 +256,7 @@ impl Scene {
                 | Draw::Shadow(_, _, _, color)
                 | Draw::Text(_, _, _, color, _)
                 | Draw::TintedImage(_, _, _, _, color)
-                | Draw::AppImage(_, _, color) => apply(color),
+                | Draw::AppImage(_, _, _, color) => apply(color),
                 Draw::RoundedGradient(_, _, a, b) => {
                     apply(a);
                     apply(b);
@@ -815,14 +824,9 @@ fn tile(
         if focused { 14. } else { 9. },
         if focused { 0.4 } else { 0.165 },
     );
-    app_face(out, assets, app, rect, state.preferences.language, 19.2);
+    let favorite_color = app_face(out, assets, app, rect, state.preferences.language, 19.2);
     if pinned {
-        out.icon(
-            assets,
-            "heart-filled",
-            Rect::new(rect.x + rect.w - 27.2, rect.y + 11.2, 16., 16.),
-            c(0xffffff, 0.9),
-        );
+        favorite_badge(out, assets, rect, favorite_color);
     }
     if state.moving.as_ref() == Some(&app.id) {
         let indicator = Rect::new(
@@ -885,6 +889,11 @@ fn tile(
     }
 }
 
+fn favorite_badge(out: &mut Scene, assets: &Assets, card: Rect, color: Color) {
+    let icon = Rect::new(card.x + card.w - 27.2, card.y + 11.2, 16., 16.);
+    out.icon(assets, "heart-filled", icon, color);
+}
+
 /// Shared card artwork for Home, Apps and Recents. Curated vectors always take
 /// precedence over installed artwork, with the same relative logo proportions.
 fn app_face(
@@ -894,7 +903,7 @@ fn app_face(
     rect: Rect,
     language: Language,
     radius: f32,
-) {
+) -> Color {
     let logo = crate::branding::for_key(&app.brand);
     let artwork = logo
         .is_none()
@@ -904,19 +913,19 @@ fn app_face(
                 .and_then(|source| assets.artwork.get(source))
         })
         .flatten();
-    if let Some([top, bottom]) = artwork.as_ref().map(|image| image.backdrop) {
-        let color = |rgb: [u8; 3]| rgb.map(|c| c as f32 / 255.);
-        let [top, bottom] = [color(top), color(bottom)];
-        if top == bottom {
-            out.shape(rect, radius, [top[0], top[1], top[2], 1.]);
-        } else {
-            out.draw.push(Draw::RoundedGradient(
-                rect,
-                radius,
-                [top[0], top[1], top[2], 1.],
-                [bottom[0], bottom[1], bottom[2], 1.],
-            ));
-        }
+    // The heart's centre is 19.2px below the top, outside the inset installed icon.
+    // Bundled and generic surfaces are dark, so their badge remains white.
+    let favorite_color = if artwork
+        .as_ref()
+        .is_some_and(|image| image.dark_badge(19.2 / rect.h))
+    {
+        c(0x000000, 1.)
+    } else {
+        c(0xffffff, 1.)
+    };
+    let installed = artwork.is_some();
+    if let Some(image) = artwork {
+        out.draw.push(Draw::AppImage(image, rect, radius, [1.; 4]));
     } else {
         out.image(
             assets.path(format!("surfaces/{}.png", app.brand)),
@@ -940,20 +949,10 @@ fn app_face(
             0.,
             true,
         );
-    } else if let Some(image) = artwork {
-        out.draw.push(Draw::AppImage(
-            image,
-            Rect::new(
-                rect.x + rect.w * 0.16,
-                rect.y + rect.h * 0.16,
-                rect.w * 0.68,
-                rect.h * 0.68,
-            ),
-            [1.; 4],
-        ));
-    } else {
+    } else if !installed {
         brand_mark(out, assets, app, rect, language);
     }
+    favorite_color
 }
 
 fn caption_height(state: &State, assets: &Assets, app: &App, width: f32) -> f32 {
@@ -1767,8 +1766,11 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         } else {
             (row.rect.h - 29.12) / 2.
         };
-    let compact_value_width = (row.target == Target::WallpaperCycle)
-        .then(|| rotation_value_width(assets, state.preferences.language));
+    let compact_value_width = matches!(
+        row.target,
+        Target::WallpaperCycle | Target::WallpaperGradient
+    )
+    .then(|| rotation_value_width(assets, state.preferences.language));
     let right_inset = if let Some(width) = compact_value_width {
         width + 24.2 + 24.
     } else if row.value.is_some() {
@@ -1845,7 +1847,10 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
             },
         );
     }
-    let scrollable = !matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle);
+    let scrollable = !matches!(
+        row.target,
+        Target::UploadWallpaper | Target::WallpaperCycle | Target::WallpaperGradient
+    );
     out.control(row.target, row.rect, scrollable);
 }
 
@@ -2407,6 +2412,12 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 .ceil()
                 .min(520.);
             let cycle_label = language.t("wallpaperCycle");
+            let gradient_label = language.t("wallpaperGradient");
+            let gradient_width = (assets.width(gradient_label, text(20.8, 550, -0.02))
+                + rotation_value_width(assets, language)
+                + 111.6)
+                .ceil()
+                .min(360.);
             let cycle_width = (assets.width(cycle_label, text(20.8, 550, -0.02))
                 + rotation_value_width(assets, language)
                 + 111.6)
@@ -2440,9 +2451,37 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 state,
                 assets,
                 Row {
+                    target: Target::WallpaperGradient,
+                    rect: Rect::new(
+                        1760. - cycle_width - 20. - gradient_width,
+                        164.8,
+                        gradient_width,
+                        64.,
+                    ),
+                    title: gradient_label,
+                    icon: Some(if state.preferences.wallpaper_gradient {
+                        "eye"
+                    } else {
+                        "eye-off"
+                    }),
+                    value: Some(language.t(if state.preferences.wallpaper_gradient {
+                        "stateOn"
+                    } else {
+                        "stateOff"
+                    })),
+                    description: None,
+                    selected: false,
+                    chevron: false,
+                },
+            );
+            row(
+                out,
+                state,
+                assets,
+                Row {
                     target: Target::UploadWallpaper,
                     rect: Rect::new(
-                        1760. - cycle_width - 20. - upload_width,
+                        1760. - cycle_width - 40. - gradient_width - upload_width,
                         164.8,
                         upload_width,
                         64.,
@@ -3056,6 +3095,7 @@ pub fn input_status(input: &Input, renamed: bool, language: Language) -> String 
     parts.push(match input.connected {
         Some(false) => language.t("noDevice"),
         None => language.t("externalInput"),
+        Some(true) if input.signal == Some(false) => language.t("noSignal"),
         Some(true) => language.t("connected"),
     });
     parts.join(" · ")
@@ -3184,14 +3224,9 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
         out.image(path, card, 16., false);
         out.border(card, 16., 1., c(0xffffff, 0.086));
     } else if let Some(app) = app.filter(|_| !shortcut) {
-        app_face(out, assets, app, card, language, 19.2);
+        let favorite_color = app_face(out, assets, app, card, language, 19.2);
         if favorite {
-            out.icon(
-                assets,
-                "heart-filled",
-                Rect::new(card.x + card.w - 27.2, card.y + 11.2, 16., 16.),
-                c(0xffffff, 0.9),
-            );
+            favorite_badge(out, assets, card, favorite_color);
         }
     }
     let panel_start = out.draw.len();

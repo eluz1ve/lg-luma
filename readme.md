@@ -120,7 +120,7 @@ https://github.com/ecklf/lg-luma/releases/latest/download/repo.json
 On your computer, replace `TV_IP`:
 
 ```sh
-scp -O dist/com.ecklf.luma_2.15.3_arm.ipk root@TV_IP:/tmp/luma.ipk
+scp -O dist/com.ecklf.luma_2.16.2_arm.ipk root@TV_IP:/tmp/luma.ipk
 ssh root@TV_IP
 ```
 
@@ -235,6 +235,10 @@ Enable **Rotation** beside **Upload** to cycle through backgrounds on each Luma 
 15 minutes with a slow cross-fade. Rotation is off by default and leaves your manually chosen
 LG splash unchanged.
 
+Toggle **Gradient** beside **Rotation** to turn background shading on or off. It defaults to On
+and remembers your choice. Older uploads without an unshaded copy keep their full-resolution
+shaded image. This does not change LG's launch splash.
+
 ### Recent app switching
 
 Press **Back** on Home, or hold **Back** for 0.6 seconds from any page, to open Recent apps.
@@ -272,7 +276,7 @@ checksum-pinned SDL-webOS library; both downloads are cached under `.build/`.
 Output:
 
 ```text
-dist/com.ecklf.luma_2.15.3_arm.ipk
+dist/com.ecklf.luma_2.16.2_arm.ipk
 dist/sha256sums
 dist/repo.json
 dist/app-icon-large.png
