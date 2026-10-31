@@ -1102,23 +1102,27 @@ impl State {
                                 .iter()
                                 .find(|control| control.target == self.focus)
                                 .map_or(960., |control| control.rect.center().0);
-                            let top = controls
-                                .iter()
-                                .filter(|control| matches!(control.target, Target::Input(_)))
-                                .map(|control| control.rect.y)
-                                .fold(f32::INFINITY, f32::min);
-                            let next = controls
-                                .iter()
-                                .filter(|control| {
-                                    matches!(control.target, Target::Input(_))
-                                        && (control.rect.y - top).abs() < 1.
-                                })
-                                .min_by(|a, b| {
-                                    (a.rect.center().0 - x)
-                                        .abs()
-                                        .total_cmp(&(b.rect.center().0 - x).abs())
-                                })
-                                .map(|control| control.target.clone());
+                            // The nearest card of the row below: Inputs, else crypto prices.
+                            let nearest = |in_row: fn(&Target) -> bool| {
+                                let top = controls
+                                    .iter()
+                                    .filter(|control| in_row(&control.target))
+                                    .map(|control| control.rect.y)
+                                    .fold(f32::INFINITY, f32::min);
+                                controls
+                                    .iter()
+                                    .filter(|control| {
+                                        in_row(&control.target) && (control.rect.y - top).abs() < 1.
+                                    })
+                                    .min_by(|a, b| {
+                                        (a.rect.center().0 - x)
+                                            .abs()
+                                            .total_cmp(&(b.rect.center().0 - x).abs())
+                                    })
+                                    .map(|control| control.target.clone())
+                            };
+                            let next = nearest(|target| matches!(target, Target::Input(_)))
+                                .or_else(|| nearest(|target| matches!(target, Target::Coin(_))));
                             if let Some(next) = next {
                                 self.focus(next, controls);
                             }

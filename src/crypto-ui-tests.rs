@@ -116,3 +116,19 @@ fn drawn_text(scene: &view::Scene) -> Vec<String> {
         })
         .collect()
 }
+
+#[test]
+fn down_from_favorites_reaches_crypto_prices_without_inputs() {
+    let mut state = ready();
+    state.inventory.inputs.clear();
+    state.preferences.show_crypto = true;
+    let favorite = state.apps()[2].id.clone();
+    state.focus = Target::App(favorite);
+    state.direction(Direction::Down, &controls(&state));
+    assert!(matches!(state.focus, Target::Coin(_)), "{:?}", state.focus);
+    let card = controls(&state)
+        .into_iter()
+        .find(|c| c.target == state.focus)
+        .unwrap();
+    assert!(card.rect.y + card.rect.h <= 1080.);
+}
