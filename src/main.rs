@@ -577,7 +577,12 @@ fn crypto_tick(state: &mut State, service: &crypto_service::Service, visible: bo
     }
 }
 
-fn shows_tick(state: &mut State, service: &shows_service::Service, visible: bool) {
+fn shows_tick(
+    state: &mut State,
+    service: &shows_service::Service,
+    visible: bool,
+    offset: time::UtcOffset,
+) {
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let installed: Vec<(String, String)> = state
         .inventory
@@ -595,7 +600,13 @@ fn shows_tick(state: &mut State, service: &shows_service::Service, visible: bool
     );
     state.dirty |= changed;
     service.generation(state.shows.generation());
-    if let Some(command) = command {
+    if let Some(mut command) = command {
+        // The schedules follow the TV's own day.
+        let local = OffsetDateTime::now_utc().to_offset(offset);
+        command.date = local.date();
+        command.until = local.date().next_day().map_or(i64::MAX, |day| {
+            day.midnight().assume_offset(offset).unix_timestamp()
+        });
         service.send(command);
     }
     while let Ok(response) = service.receiver.try_recv() {
@@ -1442,7 +1453,7 @@ fn run() -> Result<(), String> {
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         cs2_tick(&mut state, &cs2_service, visible);
-        shows_tick(&mut state, &shows_service, visible);
+        shows_tick(&mut state, &shows_service, visible, local_offset);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],
@@ -1922,7 +1933,7 @@ fn run() -> Result<(), String> {
             platform.send(Request::RefreshInputs);
         }
         cs2_tick(&mut state, &cs2_service, visible);
-        shows_tick(&mut state, &shows_service, visible);
+        shows_tick(&mut state, &shows_service, visible, local_offset);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],

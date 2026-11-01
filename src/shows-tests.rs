@@ -1,6 +1,10 @@
 use super::*;
 use serde_json::json;
 
+/// 1 November 2026, 20:00 UTC, on a TV on UTC: its day ends at midnight.
+const NOW: i64 = 1_793_563_200;
+const UNTIL: i64 = 1_793_577_600;
+
 fn entry(id: i64, name: &str, weight: i64, channel: &str) -> Value {
     json!({
         "id": id, "name": name, "weight": weight,
@@ -29,7 +33,7 @@ fn schedules_list_playable_shows_first_then_by_popularity() {
         {"_embedded": {"show": {"id": 5, "name": "No poster", "image": null}}}
     ]);
     let tv = json!([{"show": entry(6, "Broadcast", 60, "Disney+")}]);
-    let shows = parse_schedules(&[web, tv], &installed());
+    let shows = parse_schedules(&[web, tv], &installed(), UNTIL);
     let titles: Vec<&str> = shows.iter().map(|s| s.title.as_str()).collect();
     assert_eq!(
         titles,
@@ -49,7 +53,7 @@ fn schedules_list_playable_shows_first_then_by_popularity() {
 fn posters_come_only_from_tvmaze() {
     let mut value = entry(1, "Show", 1, "Netflix");
     value["image"]["medium"] = json!("https://example.com/a.jpg");
-    let shows = parse_schedules(&[json!([{ "show": value }])], &[]);
+    let shows = parse_schedules(&[json!([{ "show": value }])], &[], UNTIL);
     assert!(
         shows.is_empty(),
         "a show without a TVmaze poster is left out"
@@ -92,6 +96,7 @@ fn posters_are_wanted_once_around_the_row() {
                     .collect::<Vec<_>>()
             )],
             &installed(),
+            UNTIL,
         ),
         ..Default::default()
     };
@@ -116,7 +121,7 @@ fn schedule_entries_keep_each_episodes_air_time() {
          "_embedded": {"show": entry(1, "Loud", 90, "Netflix")}},
         {"_embedded": {"show": entry(2, "Undated", 40, "Netflix")}}
     ]);
-    let shows = parse_schedules(&[web], &installed());
+    let shows = parse_schedules(&[web], &installed(), UNTIL);
     let loud = &shows[0];
     assert_eq!(
         loud.episodes,
@@ -144,9 +149,83 @@ fn an_episode_airing_this_local_evening_counts_even_on_the_next_utc_date() {
         {"airstamp": "2026-11-02T01:00:00+00:00", "season": 1, "number": 3,
          "show": entry(7, "Late", 50, "Netflix")}
     ]);
-    let show = &parse_schedules(&[tv], &installed())[0];
+    let show = &parse_schedules(&[tv], &installed(), UNTIL)[0];
     // 1 November in UTC−5: 05:00Z on the 1st to 05:00Z on the 2nd.
     let day = (1_793_509_200, 1_793_509_200 + 86_400);
-    assert_eq!(show.airing(day.0, day.1).map(|e| e.number), Some(Some(3)));
-    assert!(show.airing(day.1, day.1 + 86_400).is_none());
+    assert_eq!(
+        show.today(day.0, day.1, day.0).map(|e| e.number),
+        Some(Some(3))
+    );
+    assert!(show.today(day.1, day.1 + 86_400, day.1).is_none());
+}
+
+#[test]
+fn a_show_keeps_its_newest_airings() {
+    // Ten daily airings at 21:00 UTC, from 23 October to tonight's of 1 November and tomorrow's.
+    let tonight = 1_793_566_800;
+    let web = json!(
+        (0..10)
+            .map(|day| {
+                let airs = tonight + (day - 8) * 86_400;
+                json!({
+                    "airstamp": time::OffsetDateTime::from_unix_timestamp(airs)
+                        .unwrap()
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap(),
+                    "_embedded": {"show": entry(1, "Daily", 90, "Netflix")}
+                })
+            })
+            .collect::<Vec<_>>()
+    );
+    let show = &parse_schedules(&[web], &installed(), UNTIL)[0];
+    assert_eq!(show.episodes.len(), 8);
+    // Tonight's and tomorrow's airings are kept, the two oldest are not.
+    assert_eq!(show.episodes.last().unwrap().airs, tonight + 86_400);
+    assert_eq!(show.episodes[0].airs, tonight - 6 * 86_400);
+}
+
+#[test]
+fn shows_that_only_air_later_come_after_this_weeks() {
+    let web = json!([
+        {"airstamp": "2026-11-02T21:00:00+00:00",
+         "_embedded": {"show": entry(1, "Premiere", 99, "Netflix")}},
+        {"airstamp": "2026-10-31T21:00:00+00:00",
+         "_embedded": {"show": entry(2, "Running", 10, "Netflix")}}
+    ]);
+    let titles: Vec<String> = parse_schedules(&[web], &installed(), UNTIL)
+        .into_iter()
+        .map(|show| show.title)
+        .collect();
+    assert_eq!(titles, ["Running", "Premiere"]);
+}
+
+#[test]
+fn the_days_episode_is_the_coming_one_else_the_last_aired() {
+    let morning = NOW - 11 * 3600;
+    let evening = NOW + 3600;
+    let show = Show {
+        id: 1,
+        title: "Twice".into(),
+        poster: None,
+        meta: String::new(),
+        service: None,
+        app: None,
+        episodes: [morning, evening]
+            .map(|airs| Episode {
+                airs,
+                season: None,
+                number: None,
+            })
+            .to_vec(),
+    };
+    let day = (NOW - 20 * 3600, NOW + 4 * 3600);
+    assert_eq!(
+        show.today(day.0, day.1, UNTIL).map(|e| e.airs),
+        Some(evening)
+    );
+    assert_eq!(
+        show.today(day.0, day.1, evening + 60).map(|e| e.airs),
+        Some(evening),
+        "after both, the latest"
+    );
 }

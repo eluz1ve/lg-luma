@@ -127,11 +127,17 @@ pub struct Episode {
 const EPISODES: usize = 8;
 
 impl Show {
-    /// Its first airing from `from` until before `to`.
-    pub fn airing(&self, from: i64, to: i64) -> Option<&Episode> {
-        self.episodes
-            .iter()
-            .find(|episode| (from..to).contains(&episode.airs))
+    /// Its airing for the day from `from` until before `to`: the next one still to come, else the
+    /// last one that aired.
+    pub fn today(&self, from: i64, to: i64, now: i64) -> Option<&Episode> {
+        let day = || {
+            self.episodes
+                .iter()
+                .filter(move |episode| (from..to).contains(&episode.airs))
+        };
+        day()
+            .find(|episode| episode.airs >= now)
+            .or_else(|| day().next_back())
     }
 
     fn add(&mut self, episode: Episode) {
@@ -140,7 +146,9 @@ impl Show {
         }
         self.episodes.push(episode);
         self.episodes.sort_by_key(|episode| episode.airs);
-        self.episodes.truncate(EPISODES);
+        // The newest matter: today's and tonight's.
+        let extra = self.episodes.len().saturating_sub(EPISODES);
+        self.episodes.drain(..extra);
     }
 }
 
@@ -236,7 +244,7 @@ fn show(value: &Value, installed: &[(String, String)]) -> Option<(i64, Show)> {
 /// The shows of TVmaze schedule replies (`/schedule/web` embeds them, `/schedule` nests them),
 /// without repeats or posterless ones: those an installed app plays first, each group the most
 /// popular first, each with its airings. At most `SHOWN`.
-pub fn parse_schedules(replies: &[Value], installed: &[(String, String)]) -> Vec<Show> {
+pub fn parse_schedules(replies: &[Value], installed: &[(String, String)], until: i64) -> Vec<Show> {
     let mut shows: Vec<(i64, Show)> = Vec::new();
     for entry in replies.iter().filter_map(Value::as_array).flatten() {
         let Some(value) = entry
@@ -260,8 +268,14 @@ pub fn parse_schedules(replies: &[Value], installed: &[(String, String)]) -> Vec
             shows[index].1.add(episode);
         }
     }
-    // Stable, so equally popular shows keep their schedule order.
-    shows.sort_by_key(|(weight, show)| (show.app.is_none(), std::cmp::Reverse(*weight)));
+    // Stable, so equally popular shows keep their schedule order. Shows airing only after
+    // today (tomorrow's premieres) follow this week's.
+    let later = |show: &Show| {
+        !show.episodes.is_empty() && show.episodes.iter().all(|episode| episode.airs >= until)
+    };
+    shows.sort_by_key(|(weight, show)| {
+        (show.app.is_none(), later(show), std::cmp::Reverse(*weight))
+    });
     shows.truncate(SHOWN);
     shows.into_iter().map(|(_, show)| show).collect()
 }
@@ -273,6 +287,10 @@ pub struct Command {
     pub country: String,
     /// The TV's apps as (id, title), to find the app that plays each show.
     pub installed: Vec<(String, String)>,
+    /// The TV's local date, the day the schedules are read around.
+    pub date: time::Date,
+    /// When that day ends (Unix seconds): shows airing only from then on are tomorrow's.
+    pub until: i64,
 }
 
 pub enum Poster {
@@ -320,6 +338,9 @@ impl Shows {
                 id: self.id,
                 country: country.into(),
                 installed: installed.to_vec(),
+                date: time::OffsetDateTime::from_unix_timestamp(now)
+                    .map_or(time::Date::MIN, |t| t.date()),
+                until: now + 86_400,
             });
         }
         (command, before != (self.loading, self.failed))

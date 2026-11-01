@@ -49,7 +49,7 @@ pub fn today(state: &State, now: i64, day: (i64, i64)) -> Today {
     }
     if preferences.show_shows && preferences.shows_today {
         for show in state.shows.list.iter().filter(|show| show.app.is_some()) {
-            if let Some(episode) = show.airing(day.0, day.1) {
+            if let Some(episode) = show.today(day.0, day.1, now) {
                 let line = Line::Episode {
                     show: show.id,
                     airs: episode.airs,

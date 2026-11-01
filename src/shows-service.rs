@@ -61,23 +61,9 @@ impl Client {
     }
     /// The week's streaming schedule up to tomorrow, and today's TV in `country`.
     pub fn shows(&self, command: &Command) -> Result<Vec<Show>, String> {
-        let today = time::OffsetDateTime::now_utc().date();
         let mut replies = Vec::new();
-        let mut requests: Vec<(String, Vec<(&str, String)>)> = (-1..DAYS)
-            .map(|day| {
-                let date = (today - time::Duration::days(day)).to_string();
-                (format!("{API}/schedule/web"), vec![("date", date)])
-            })
-            .collect();
-        requests.push((
-            format!("{API}/schedule"),
-            vec![
-                ("country", command.country.clone()),
-                ("date", today.to_string()),
-            ],
-        ));
         let mut error = None;
-        for (url, query) in requests {
+        for (url, query) in requests(command) {
             let query: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
             match self.get(&url, &query, LIMIT).and_then(|bytes| {
                 serde_json::from_slice::<Value>(&bytes)
@@ -90,7 +76,7 @@ impl Client {
         if replies.is_empty() {
             return Err(error.unwrap_or_else(|| "TVmaze is unavailable.".into()));
         }
-        Ok(parse_schedules(&replies, &command.installed))
+        Ok(parse_schedules(&replies, &command.installed, command.until))
     }
     /// A poster from TVmaze's image CDN, decoded and scaled on this worker.
     pub fn poster(&self, url: &str) -> Option<Arc<Artwork>> {
@@ -118,6 +104,26 @@ impl Client {
             backdrop: [[0; 3]; 2],
         }))
     }
+}
+
+/// What a refresh asks TVmaze for: the streaming schedule from the TV's tomorrow back over the
+/// week, and the TV schedule of the TV's today in its country. Dates are the TV's own, so evening
+/// shows are not lost where the UTC date is already another.
+fn requests(command: &Command) -> Vec<(String, Vec<(&'static str, String)>)> {
+    let mut requests: Vec<_> = (-1..DAYS)
+        .map(|day| {
+            let date = (command.date - time::Duration::days(day)).to_string();
+            (format!("{API}/schedule/web"), vec![("date", date)])
+        })
+        .collect();
+    requests.push((
+        format!("{API}/schedule"),
+        vec![
+            ("country", command.country.clone()),
+            ("date", command.date.to_string()),
+        ],
+    ));
+    requests
 }
 
 pub enum Response {
@@ -204,5 +210,33 @@ impl Drop for Service {
         self.generation.store(u64::MAX, Ordering::SeqCst);
         self.sender.take();
         self.posters.take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_schedules_are_asked_for_the_tvs_local_days() {
+        let command = Command {
+            id: 1,
+            country: "US".into(),
+            installed: Vec::new(),
+            date: time::Date::from_calendar_date(2026, time::Month::November, 1).unwrap(),
+            until: 0,
+        };
+        let asked = requests(&command);
+        let dates = |path: &str| -> Vec<String> {
+            asked
+                .iter()
+                .filter(|(url, _)| url.ends_with(path))
+                .map(|(_, query)| query.iter().find(|(k, _)| *k == "date").unwrap().1.clone())
+                .collect()
+        };
+        assert_eq!(dates("/schedule"), ["2026-11-01"]);
+        let web = dates("/schedule/web");
+        assert_eq!(web.first().map(String::as_str), Some("2026-11-02"));
+        assert_eq!(web.last().map(String::as_str), Some("2026-10-26"));
     }
 }
