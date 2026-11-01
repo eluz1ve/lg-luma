@@ -627,7 +627,27 @@ fn recommendations_tick(
     }
     // Only fetch while the Home page is actually on screen.
     if visible && state.page == state::Page::Home {
-        let region = recommendations_region(state);
+        let (language, region) = recommendations_locale(state);
+        let lang = state.preferences.language;
+        let labels = recommendations::DetailLabels {
+            season: lang.t("season").to_string(),
+            seasons: lang.t("seasons").to_string(),
+            // TMDB's composite TV genres that it leaves in English even for pt-BR; override by id
+            // so they read correctly in the UI language.
+            genres: [
+                (10759, "genreActionAdventure"),
+                (10765, "genreSciFiFantasy"),
+                (10768, "genreWarPolitics"),
+                (10762, "genreKids"),
+                (10763, "genreNews"),
+                (10766, "genreSoap"),
+                (10767, "genreTalk"),
+                (10764, "genreReality"),
+            ]
+            .into_iter()
+            .map(|(id, key)| (id as i64, lang.t(key).to_string()))
+            .collect(),
+        };
         // The TV's apps the worker uses to filter/resolve launchable titles (lean id/title copy).
         let installed: Vec<recommendations::InstalledApp> = state
             .inventory
@@ -638,11 +658,15 @@ fn recommendations_tick(
                 title: app.title.clone(),
             })
             .collect();
-        if let Some(request) =
-            state
-                .recommendations
-                .sync(&state.preferences, &region, cache_dir, &installed, now)
-        {
+        if let Some(request) = state.recommendations.sync(
+            &state.preferences,
+            &language,
+            &region,
+            cache_dir,
+            &labels,
+            &installed,
+            now,
+        ) {
             service.send(request);
         }
     }
@@ -661,21 +685,21 @@ fn recommendations_tick(
     }
 }
 
-/// The country whose TV schedule joins the streaming one, from the UI language.
-fn recommendations_region(state: &State) -> String {
-    match state.preferences.language.code() {
+/// TMDB language tag and region for the current UI language (region defaults to the key's country).
+fn recommendations_locale(state: &State) -> (String, String) {
+    let language = state.preferences.language;
+    // TMDB accepts BCP-47-ish tags; use the UI language code, defaulting region to a sensible value.
+    let lang = match language.code() {
+        "pt" => "pt-BR".to_string(),
+        other => other.to_string(),
+    };
+    let region = match language.code() {
         "pt" => "BR",
-        "de" => "DE",
-        "fr" => "FR",
-        "es" => "ES",
-        "it" => "IT",
-        "pl" => "PL",
-        "nl" => "NL",
-        "sv" => "SE",
-        "ru" => "RU",
+        "en" => "US",
         _ => "US",
     }
-    .to_string()
+    .to_string();
+    (lang, region)
 }
 
 fn scripted_click(

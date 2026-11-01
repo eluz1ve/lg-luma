@@ -123,6 +123,9 @@ pub enum Target {
     /// Widgets › Crypto: one of `State::crypto_choices`.
     CryptoCoin(usize),
     RecommendationsToggle,
+    RecommendationsKey,
+    RecommendationsKeyClear,
+    RecommendationsType,
     RecommendationsInterval,
     RecommendationsCount,
     RecommendationsHideAnimation,
@@ -229,6 +232,7 @@ pub enum TextField {
     Name,
     InputName,
     Coin,
+    TmdbKey,
 }
 
 #[derive(Clone, Copy)]
@@ -1384,6 +1388,7 @@ impl State {
                 })
             && self.page == Page::Home
             && self.preferences.show_recommendations
+            && !self.preferences.tmdb_key.trim().is_empty()
             && self.recommendations.visible_len > 0
             && controls
                 .iter()
@@ -1471,6 +1476,7 @@ impl State {
                             if let Some(next) = next {
                                 self.focus(next, controls);
                             } else if self.preferences.show_recommendations
+                                && !self.preferences.tmdb_key.trim().is_empty()
                                 && self.recommendations.visible_len > 0
                                 && controls
                                     .iter()
@@ -1494,6 +1500,9 @@ impl State {
                 ]),
                 Some(Subpage::Recommendations) => Some(&[
                     Target::RecommendationsToggle,
+                    Target::RecommendationsKey,
+                    Target::RecommendationsKeyClear,
+                    Target::RecommendationsType,
                     Target::RecommendationsInterval,
                     Target::RecommendationsCount,
                     Target::RecommendationsHideAnimation,
@@ -1526,6 +1535,8 @@ impl State {
                                 | Target::ClockFormat
                                 | Target::ClockTimeFormat
                                 | Target::DateFormat
+                                | Target::RecommendationsKey
+                                | Target::RecommendationsType
                                 | Target::RecommendationsInterval
                                 | Target::RecommendationsCount
                         ) =>
@@ -2136,6 +2147,16 @@ impl State {
                 self.dirty = true;
                 return;
             }
+            if self.keyboard_field == TextField::TmdbKey {
+                let key = &mut self.preferences.tmdb_key;
+                key.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control() && !c.is_whitespace())
+                        .take(64usize.saturating_sub(key.chars().count())),
+                );
+                self.dirty = true;
+                return;
+            }
             self.query.extend(
                 text.chars()
                     .filter(|c| !c.is_control())
@@ -2158,6 +2179,8 @@ impl State {
                 self.greeting_name_draft.pop();
             } else if self.keyboard_field == TextField::InputName {
                 self.input_name.pop();
+            } else if self.keyboard_field == TextField::TmdbKey {
+                self.preferences.tmdb_key.pop();
             } else {
                 self.query.pop();
             }
@@ -2194,6 +2217,11 @@ impl State {
                 return vec![Effect::Save];
             }
             return vec![];
+        }
+        if self.keyboard_field == TextField::TmdbKey {
+            // The key is edited in place while typing; persist it on close.
+            self.preferences.tmdb_key = self.preferences.tmdb_key.trim().to_string();
+            return vec![Effect::Save];
         }
         self.commit_input_name()
     }
@@ -2339,6 +2367,7 @@ impl State {
             TextField::InputName => &self.input_name,
             TextField::Apps => &self.query,
             TextField::Coin => &self.crypto.search.query,
+            TextField::TmdbKey => &self.preferences.tmdb_key,
         }
     }
     pub fn open_keyboard(&mut self, field: TextField) {
@@ -2368,6 +2397,7 @@ impl State {
                 TextField::InputName => Target::InputRename,
                 TextField::Apps => Target::Search,
                 TextField::Coin => Target::CryptoSearch,
+                TextField::TmdbKey => Target::RecommendationsKey,
             };
             self.panel_started = None;
             self.dirty = true;
@@ -2397,6 +2427,7 @@ impl State {
             TextField::InputName => Target::InputRename,
             TextField::Apps => Target::Search,
             TextField::Coin => Target::CryptoSearch,
+            TextField::TmdbKey => Target::RecommendationsKey,
         }
     }
 
@@ -2453,7 +2484,7 @@ impl State {
                     crate::recommendations::MAX_ITEMS,
                 );
                 if index >= items.len() {
-                    // Refresh card: fetch the NEXT page of titles (an earlier week) (a fresh batch), not a
+                    // Refresh card: fetch the NEXT page of titles from TMDB (a fresh batch), not a
                     // reshuffle of the same list. Bump the page, invalidate the cache so `sync`
                     // refetches, and jump focus back to the first card. The row shows "loading"
                     // until the worker responds.
@@ -2584,6 +2615,21 @@ impl State {
             }
             Target::RecommendationsToggle => {
                 self.preferences.show_recommendations = !self.preferences.show_recommendations;
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsKey => self.open_keyboard(TextField::TmdbKey),
+            Target::RecommendationsKeyClear => {
+                self.preferences.tmdb_key.clear();
+                self.focus = Target::RecommendationsKey;
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsType => {
+                use crate::model::RecType;
+                self.preferences.rec_type = match self.preferences.rec_type {
+                    RecType::Movies => RecType::Shows,
+                    RecType::Shows => RecType::Both,
+                    RecType::Both => RecType::Movies,
+                };
                 return vec![Effect::Save];
             }
             Target::RecommendationsInterval => {
@@ -3099,6 +3145,7 @@ impl State {
                     TextField::InputName => self.input_name.clear(),
                     TextField::Apps => self.query.clear(),
                     TextField::Coin => self.crypto.search.query.clear(),
+                    TextField::TmdbKey => self.preferences.tmdb_key.clear(),
                 },
                 "Done" => {
                     self.overlay = None;
