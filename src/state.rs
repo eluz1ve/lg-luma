@@ -128,6 +128,14 @@ pub enum Target {
     CryptoToggle,
     /// Widgets › Crypto: one of `crypto::COINS`.
     CryptoCoin(usize),
+    RecommendationsToggle,
+    RecommendationsKey,
+    RecommendationsKeyClear,
+    RecommendationsType,
+    RecommendationsInterval,
+    RecommendationsCount,
+    RecommendationsHideAnimation,
+    Recommendation(usize),
     Tile(String),
     TileTest(String),
     TileRemove(String),
@@ -206,6 +214,7 @@ pub enum Subpage {
     Inputs,
     /// Widgets › Crypto: show the prices and choose their coins.
     Crypto,
+    Recommendations,
     Clock,
     ClockFormat,
     TimeFormat,
@@ -228,6 +237,7 @@ pub enum TextField {
     Location,
     Name,
     InputName,
+    TmdbKey,
 }
 
 #[derive(Clone, Copy)]
@@ -316,6 +326,7 @@ pub struct State {
     pub recents: crate::recents::Recents,
     /// Whether this instance runs as the TV's Home (the takeover is enabled).
     pub home_takeover: bool,
+    pub recommendations: crate::recommendations::Recommendations,
 }
 
 impl State {
@@ -364,6 +375,7 @@ impl State {
             input_name: String::new(),
             recents: crate::recents::Recents::default(),
             home_takeover: false,
+            recommendations: crate::recommendations::Recommendations::default(),
         }
     }
 
@@ -556,6 +568,62 @@ impl State {
         self.subpage = None;
         self.panel_started = None;
         self.dirty = true;
+    }
+
+    /// Directory where recommendation posters are cached on disk (set by the tick).
+    pub fn posters_cache_dir(&self) -> std::path::PathBuf {
+        self.recommendations.cache_dir.clone()
+    }
+
+    /// The installed app id to launch for a recommendation: the first of its services whose
+    /// app (matched by id or title) is installed on this TV. None when nothing matches.
+    pub fn recommendation_app(
+        &self,
+        item: &crate::recommendations::Recommendation,
+    ) -> Option<String> {
+        // Prefer the app resolved at fetch time (Free My TV's approach: every kept card has one).
+        if !item.app_id.is_empty() {
+            return Some(item.app_id.clone());
+        }
+        self.recommendation_service_app(item).map(|(_, id)| id)
+    }
+
+    /// The display name of the installed service for a recommendation (for the details line).
+    pub fn recommendation_service_name(
+        &self,
+        item: &crate::recommendations::Recommendation,
+    ) -> Option<String> {
+        if !item.service_name.is_empty() {
+            return Some(item.service_name.clone());
+        }
+        self.recommendation_service_app(item).map(|(name, _)| name)
+    }
+
+    /// Resolve (service display name, installed app id) for a recommendation's services.
+    fn recommendation_service_app(
+        &self,
+        item: &crate::recommendations::Recommendation,
+    ) -> Option<(String, String)> {
+        use crate::recommendations::{InstalledApp, SERVICES, app_for};
+        // Match against the same lean view the worker uses, so exclusions (e.g. Alexa) apply here too.
+        let installed: Vec<InstalledApp> = self
+            .inventory
+            .apps
+            .iter()
+            .map(|app| InstalledApp {
+                id: app.id.clone(),
+                title: app.title.clone(),
+            })
+            .collect();
+        for service_name in &item.services {
+            let Some(service) = SERVICES.iter().find(|s| s.name == service_name) else {
+                continue;
+            };
+            if let Some(app) = app_for(service, &installed) {
+                return Some((service.name.to_string(), app.id.clone()));
+            }
+        }
+        None
     }
 
     pub fn apps(&self) -> Vec<&App> {
@@ -1141,6 +1209,7 @@ impl State {
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Crypto) => Target::Widget(5),
+            Some(Subpage::Recommendations) => Target::Widget(7),
             Some(Subpage::Clock) => Target::Setting(1),
             Some(Subpage::ClockFormat) => {
                 self.subpage = Some(Subpage::Clock);
@@ -1186,6 +1255,133 @@ impl State {
             self.overlay,
             Some(Overlay::WallpaperUpload | Overlay::TileEditor)
         ) {
+            return vec![];
+        }
+        // Recommendations carousel: Left/Right move the cursor; the row only slides when the
+        // cursor would leave the visible window (Netflix-style), so going back keeps the row
+        // still until the cursor reaches the first visible card.
+        if let Target::Recommendation(index) = self.focus {
+            // How many cards are visible at once (same clamp as the view).
+            let visible = (self.preferences.rec_count.clamp(5, 10) as usize).max(1);
+            // Total navigable slots = cards + the refresh card at the end.
+            let last_slot = self.recommendations.visible_len; // index of the refresh card
+            // Self-correct a focus left past the end by an earlier refetch that shrank the list.
+            let index = if index > last_slot {
+                self.recommendations.focus = last_slot;
+                self.focus = Target::Recommendation(last_slot);
+                last_slot
+            } else {
+                index
+            };
+            // Keep window_start a valid left edge for the current focus, self-correcting any drift
+            // from earlier moves / row changes so navigation never gets stuck.
+            let clamp_window = |start: usize, focus: usize| -> usize {
+                let max_start = (last_slot + 1).saturating_sub(visible);
+                let mut s = start.min(max_start);
+                if focus < s {
+                    s = focus;
+                }
+                if focus >= s + visible {
+                    s = focus + 1 - visible;
+                }
+                s
+            };
+            match direction {
+                Direction::Right => {
+                    if index < last_slot {
+                        let next = index + 1;
+                        self.recommendations.focus = next;
+                        self.focus = Target::Recommendation(next);
+                        self.recommendations.window_start =
+                            clamp_window(self.recommendations.window_start, next);
+                        self.dirty = true;
+                    }
+                    return vec![];
+                }
+                Direction::Left => {
+                    if index == 0 {
+                        // fall through to default (leave the row to the left)
+                    } else {
+                        let prev = index - 1;
+                        self.recommendations.focus = prev;
+                        self.focus = Target::Recommendation(prev);
+                        self.recommendations.window_start =
+                            clamp_window(self.recommendations.window_start, prev);
+                        self.dirty = true;
+                        return vec![];
+                    }
+                }
+                Direction::Up => {
+                    // Leave the row upward. Pick the nearest control actually on screen above the
+                    // focused card: the bottom-most row of inputs, crypto prices or CS2 Score if any
+                    // is visible, otherwise the favorites/content. Targeting a hidden input would
+                    // blank the cursor.
+                    let x = controls
+                        .iter()
+                        .find(|c| c.target == self.focus)
+                        .map_or(960., |c| c.rect.center().0);
+                    let input_bottom = controls
+                        .iter()
+                        .filter(|c| {
+                            matches!(
+                                c.target,
+                                Target::Input(_) | Target::Coin(_) | Target::Cs2Match(_)
+                            )
+                        })
+                        .map(|c| c.rect.y)
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let target = controls
+                        .iter()
+                        .filter(|c| {
+                            matches!(
+                                c.target,
+                                Target::Input(_) | Target::Coin(_) | Target::Cs2Match(_)
+                            ) && (c.rect.y - input_bottom).abs() < 1.
+                        })
+                        .min_by(|a, b| {
+                            (a.rect.center().0 - x)
+                                .abs()
+                                .total_cmp(&(b.rect.center().0 - x).abs())
+                        })
+                        .map(|c| c.target.clone())
+                        .unwrap_or_else(|| self.first_content());
+                    self.focus(target, controls);
+                    return vec![];
+                }
+                Direction::Down => return vec![], // last section; nowhere to go
+            }
+        }
+        // Entering the recommendations row from the lowest row above it (inputs, crypto prices or
+        // CS2 Score) with Down. Favorites->down is handled in the App block below (it goes to the
+        // first row below first, or straight to the widget when none is shown).
+        let above = |target: &Target| {
+            matches!(
+                target,
+                Target::Input(_) | Target::Coin(_) | Target::Cs2Match(_)
+            )
+        };
+        if matches!(direction, Direction::Down)
+            && above(&self.focus)
+            && controls
+                .iter()
+                .find(|c| c.target == self.focus)
+                .is_some_and(|focused| {
+                    !controls
+                        .iter()
+                        .any(|c| above(&c.target) && c.rect.y > focused.rect.y + 1.)
+                })
+            && self.page == Page::Home
+            && self.preferences.show_recommendations
+            && !self.preferences.tmdb_key.trim().is_empty()
+            && self.recommendations.visible_len > 0
+            && controls
+                .iter()
+                .any(|c| c.target == Target::Recommendation(0))
+        {
+            self.recommendations.focus = 0;
+            self.recommendations.window_start = 0;
+            self.focus = Target::Recommendation(0);
+            self.dirty = true;
             return vec![];
         }
         if let Some(id) = self.moving.clone() {
@@ -1263,6 +1459,17 @@ impl State {
                                 });
                             if let Some(next) = next {
                                 self.focus(next, controls);
+                            } else if self.preferences.show_recommendations
+                                && !self.preferences.tmdb_key.trim().is_empty()
+                                && self.recommendations.visible_len > 0
+                                && controls
+                                    .iter()
+                                    .any(|c| c.target == Target::Recommendation(0))
+                            {
+                                // No inputs/HDMI row visible: drop straight into the widget row.
+                                self.recommendations.focus = 0;
+                                self.recommendations.window_start = 0;
+                                self.focus(Target::Recommendation(0), controls);
                             }
                         }
                     }
@@ -1274,6 +1481,15 @@ impl State {
                     Target::GreetingToggle,
                     Target::GreetingName,
                     Target::GreetingNameClear,
+                ]),
+                Some(Subpage::Recommendations) => Some(&[
+                    Target::RecommendationsToggle,
+                    Target::RecommendationsKey,
+                    Target::RecommendationsKeyClear,
+                    Target::RecommendationsType,
+                    Target::RecommendationsInterval,
+                    Target::RecommendationsCount,
+                    Target::RecommendationsHideAnimation,
                 ]),
                 Some(Subpage::AppNames) => Some(&[Target::AppNamesHome, Target::AppNamesApps]),
                 Some(Subpage::Date) => Some(&[Target::DateToggle, Target::DateFormat]),
@@ -1303,6 +1519,10 @@ impl State {
                                 | Target::ClockFormat
                                 | Target::ClockTimeFormat
                                 | Target::DateFormat
+                                | Target::RecommendationsKey
+                                | Target::RecommendationsType
+                                | Target::RecommendationsInterval
+                                | Target::RecommendationsCount
                         ) =>
                     {
                         return self.activate();
@@ -1902,6 +2122,16 @@ impl State {
                 self.dirty = true;
                 return;
             }
+            if self.keyboard_field == TextField::TmdbKey {
+                let key = &mut self.preferences.tmdb_key;
+                key.extend(
+                    text.chars()
+                        .filter(|c| !c.is_control() && !c.is_whitespace())
+                        .take(64usize.saturating_sub(key.chars().count())),
+                );
+                self.dirty = true;
+                return;
+            }
             self.query.extend(
                 text.chars()
                     .filter(|c| !c.is_control())
@@ -1922,6 +2152,8 @@ impl State {
                 self.greeting_name_draft.pop();
             } else if self.keyboard_field == TextField::InputName {
                 self.input_name.pop();
+            } else if self.keyboard_field == TextField::TmdbKey {
+                self.preferences.tmdb_key.pop();
             } else {
                 self.query.pop();
             }
@@ -1958,6 +2190,11 @@ impl State {
                 return vec![Effect::Save];
             }
             return vec![];
+        }
+        if self.keyboard_field == TextField::TmdbKey {
+            // The key is edited in place while typing; persist it on close.
+            self.preferences.tmdb_key = self.preferences.tmdb_key.trim().to_string();
+            return vec![Effect::Save];
         }
         self.commit_input_name()
     }
@@ -2072,6 +2309,7 @@ impl State {
             TextField::Name => &self.greeting_name_draft,
             TextField::InputName => &self.input_name,
             TextField::Apps => &self.query,
+            TextField::TmdbKey => &self.preferences.tmdb_key,
         }
     }
     pub fn open_keyboard(&mut self, field: TextField) {
@@ -2095,6 +2333,7 @@ impl State {
                 TextField::Name => Target::GreetingName,
                 TextField::InputName => Target::InputRename,
                 TextField::Apps => Target::Search,
+                TextField::TmdbKey => Target::RecommendationsKey,
             };
             self.panel_started = None;
             self.dirty = true;
@@ -2123,6 +2362,7 @@ impl State {
             TextField::Name => Target::GreetingName,
             TextField::InputName => Target::InputRename,
             TextField::Apps => Target::Search,
+            TextField::TmdbKey => Target::RecommendationsKey,
         }
     }
 
@@ -2168,6 +2408,35 @@ impl State {
                 self.pressed = None;
             }
             Target::TvSettings => return vec![Effect::Launch("com.palm.app.settings".into())],
+            Target::Recommendation(index) if !self.launching => {
+                // The last slot is the refresh button; a card launches its provider's app.
+                use time::OffsetDateTime;
+                let now = OffsetDateTime::now_utc().unix_timestamp();
+                let interval = self.preferences.rec_interval.seconds();
+                let items = self.recommendations.feed.visible(
+                    now,
+                    interval,
+                    crate::recommendations::MAX_ITEMS,
+                );
+                if index >= items.len() {
+                    // Refresh card: fetch the NEXT page of titles from TMDB (a fresh batch), not a
+                    // reshuffle of the same list. Bump the page, invalidate the cache so `sync`
+                    // refetches, and jump focus back to the first card. The row shows "loading"
+                    // until the worker responds.
+                    self.recommendations.page = self.recommendations.page.max(1) + 1;
+                    self.recommendations.feed = crate::recommendations::Feed::default();
+                    self.recommendations.focus = 0;
+                    self.recommendations.window_start = 0;
+                    self.focus = Target::Recommendation(0);
+                    self.dirty = true;
+                    return vec![];
+                }
+                // Resolve the first service that has an app installed on this TV.
+                if let Some(app) = self.recommendation_app(&items[index]) {
+                    return vec![Effect::Launch(app)];
+                }
+                return vec![];
+            }
             Target::App(_) if self.page == Page::Apps && !self.launching => self.options(),
             Target::App(id) | Target::Input(id) if !self.launching => {
                 return vec![Effect::Launch(id)];
@@ -2297,6 +2566,44 @@ impl State {
                 self.focus = Target::GreetingName;
                 return vec![Effect::Save];
             }
+            Target::RecommendationsToggle => {
+                self.preferences.show_recommendations = !self.preferences.show_recommendations;
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsKey => self.open_keyboard(TextField::TmdbKey),
+            Target::RecommendationsKeyClear => {
+                self.preferences.tmdb_key.clear();
+                self.focus = Target::RecommendationsKey;
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsType => {
+                use crate::model::RecType;
+                self.preferences.rec_type = match self.preferences.rec_type {
+                    RecType::Movies => RecType::Shows,
+                    RecType::Shows => RecType::Both,
+                    RecType::Both => RecType::Movies,
+                };
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsInterval => {
+                self.preferences.rec_interval = self.preferences.rec_interval.next();
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsCount => {
+                // Cycle 5..=10 visible cards.
+                self.preferences.rec_count = if self.preferences.rec_count >= 10 {
+                    5
+                } else {
+                    self.preferences.rec_count.max(5) + 1
+                };
+                return vec![Effect::Save];
+            }
+            Target::RecommendationsHideAnimation => {
+                self.preferences.rec_hide_animation = !self.preferences.rec_hide_animation;
+                // This changes which titles belong in the feed, so force a refetch.
+                self.recommendations.feed = crate::recommendations::Feed::default();
+                return vec![Effect::Save];
+            }
             Target::AppNamesHome => {
                 self.preferences.show_home_names = !self.preferences.show_home_names;
                 return vec![Effect::Save];
@@ -2371,6 +2678,7 @@ impl State {
                             .map(|input| Target::InputMode(input.id.clone()))
                             .unwrap_or(Target::Setting(3)),
                     ),
+                    7 => (Subpage::Recommendations, Target::RecommendationsToggle),
                     _ => return vec![],
                 };
                 self.section = WIDGETS_SECTION;
@@ -2657,7 +2965,8 @@ impl State {
                         | Subpage::Weather
                         | Subpage::Shortcuts
                         | Subpage::Inputs
-                        | Subpage::Crypto,
+                        | Subpage::Crypto
+                        | Subpage::Recommendations,
                     ) => {
                         return vec![];
                     }
@@ -2786,6 +3095,7 @@ impl State {
                     TextField::Name => self.greeting_name_draft.clear(),
                     TextField::InputName => self.input_name.clear(),
                     TextField::Apps => self.query.clear(),
+                    TextField::TmdbKey => self.preferences.tmdb_key.clear(),
                 },
                 "Done" => {
                     self.overlay = None;
