@@ -1359,7 +1359,10 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     };
     // Centred in the header, whose height is fixed: the favorites stay put.
     let block = date_height + greeting_height + summary.as_ref().map_or(0., |s| s.height);
-    let top = CONTENT_TOP + ((HEADER_BOTTOM - CONTENT_TOP - block) / 2.).max(0.) - s;
+    // Centred, and never past the header's bottom onto the favorites.
+    let top = (CONTENT_TOP + ((HEADER_BOTTOM - CONTENT_TOP - block) / 2.).max(0.))
+        .min(HEADER_BOTTOM - block)
+        - s;
     if state.preferences.show_date {
         out.text(
             state.preferences.date_format.format(language, now),
@@ -1952,6 +1955,21 @@ fn today_card(
             }
             Line::Crypto => {
                 out.icon(assets, "globe", icon.inset(6.), c(0xf5f5f5, 0.7));
+                if state.crypto.quotes.is_empty() {
+                    let status = language.t(if state.crypto.failed {
+                        "cryptoUnavailable"
+                    } else {
+                        "cryptoLoading"
+                    });
+                    out.text(
+                        status,
+                        Rect::new(text_x, row.y + 17., inner - text_x + x, 28.),
+                        side,
+                        c(0xe8e8e8, 0.62),
+                        false,
+                    );
+                    continue;
+                }
                 let coins = &state.preferences.crypto_coins;
                 let slot = (rect.x + rect.w - 24. - text_x) / coins.len().max(1) as f32;
                 for (index, symbol) in coins.iter().enumerate() {
@@ -3083,6 +3101,9 @@ fn weather_summary_layout(state: &State, assets: &Assets, column: f32) -> Weathe
     let mut rows: Vec<Vec<WeatherPart>> = vec![Vec::new()];
     let mut used = 0.;
     for (label, style, color) in parts {
+        // A part wider than the column (a very long place name) shrinks onto one line rather than
+        // wrapping the header down into the favorites.
+        let style = assets.fit_text(&label, style, column - WEATHER_INDENT);
         let measured_width = assets.width(&label, style);
         let width = measured_width.min(column - WEATHER_INDENT);
         // Use the same extra pixel as the rendered text rectangle. Counting

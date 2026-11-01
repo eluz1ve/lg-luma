@@ -161,6 +161,14 @@ fn format_compact_keeps_four_coins_on_one_line() {
     state.preferences.show_crypto = true;
     state.preferences.crypto_beside = true;
     state.preferences.crypto_coins = ["BTC", "ETH", "SOL", "DOGE"].map(String::from).to_vec();
+    state.crypto.quotes = ["BTC", "ETH", "SOL", "DOGE"]
+        .iter()
+        .map(|symbol| crate::crypto::Quote {
+            symbol: (*symbol).into(),
+            price: 77_881.97,
+            change: 0.4,
+        })
+        .collect();
     let scene = at(&state);
     let coins: Vec<_> = scene
         .draw
@@ -184,4 +192,57 @@ fn format_compact_keeps_four_coins_on_one_line() {
             .iter()
             .all(|r| r.x >= 1160. && r.x + r.w <= 1840. - 24.)
     );
+}
+
+#[test]
+fn the_crypto_line_says_when_prices_are_loading_or_unavailable() {
+    let mut state = ready();
+    state.preferences.show_crypto = true;
+    state.preferences.crypto_beside = true;
+    assert!(texts(&at(&state)).iter().any(|t| t == "Loading prices…"));
+    state.crypto.failed = true;
+    assert!(texts(&at(&state)).iter().any(|t| t == "Prices unavailable"));
+}
+
+#[test]
+fn a_long_weather_line_stays_in_the_header_beside_today() {
+    let mut state = today_state();
+    let place = crate::weather::Location {
+        name: "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch ".repeat(2),
+        region: String::new(),
+        country: "Wales".into(),
+        latitude: 53.22,
+        longitude: -4.2,
+        id: None,
+    };
+    state.weather.cache = Some(crate::weather::Cache {
+        key: place.key(),
+        updated_at: NOW,
+        reading: crate::weather::Reading {
+            temperature: 9.,
+            code: 2,
+            is_day: true,
+        },
+    });
+    state.preferences.weather_location = Some(place);
+    state.preferences.greeting_name = "Maximilian-Alexander".into();
+    let scene = at(&state);
+    for draw in &scene.draw {
+        if let crate::renderer::Draw::Text(label, rect, ..) = draw
+            && rect.x < 1120.
+            && rect.y > 120.
+            && rect.y < 400.
+        {
+            assert!(
+                rect.y + rect.h <= 400.,
+                "{label} ends at {}",
+                rect.y + rect.h
+            );
+            assert!(
+                rect.x + rect.w <= 1121.,
+                "{label} reaches {}",
+                rect.x + rect.w
+            );
+        }
+    }
 }

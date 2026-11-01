@@ -199,6 +199,14 @@ fn crypto_can_sit_in_today_instead_of_below_the_inputs() {
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(state.preferences.crypto_beside);
     state.open(0);
+    state.crypto.quotes = ["BTC", "ETH", "SOL", "DOGE"]
+        .iter()
+        .map(|symbol| crate::crypto::Quote {
+            symbol: (*symbol).into(),
+            price: 77_881.97,
+            change: 0.4,
+        })
+        .collect();
     // The prices become the Today card's last line, beside the greeting, and the row is gone.
     assert!(text_at(&state, "TODAY").is_some_and(|rect| rect.x >= 1160. && rect.y < 400.));
     let coin = text_at(&state, "BTC").expect("the coins are listed");
