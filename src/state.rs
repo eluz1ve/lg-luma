@@ -116,6 +116,8 @@ pub enum Target {
     CryptoToggle,
     /// Widgets › Crypto: a row below the inputs or a block beside the greeting.
     CryptoLayout,
+    /// Widgets › Crypto: whether the block beside the greeting sits on a card.
+    CryptoCard,
     /// Widgets › Crypto: the coin search's field.
     CryptoSearch,
     /// Widgets › Crypto: one of the search's matches.
@@ -1418,6 +1420,7 @@ impl State {
                     | Target::InputMode(_)
                     | Target::CryptoToggle
                     | Target::CryptoLayout
+                    | Target::CryptoCard
                     | Target::CryptoSearch
                     | Target::CryptoResult(_)
                     | Target::CryptoCoin(_)
@@ -1464,6 +1467,7 @@ impl State {
                 self.focus,
                 Target::CryptoToggle
                     | Target::CryptoLayout
+                    | Target::CryptoCard
                     | Target::CryptoSearch
                     | Target::CryptoResult(_)
                     | Target::CryptoCoin(_)
@@ -2372,6 +2376,10 @@ impl State {
             Target::InputRename => self.open_keyboard(TextField::InputName),
             Target::CryptoToggle => {
                 self.preferences.show_crypto = !self.preferences.show_crypto;
+                return vec![Effect::Save];
+            }
+            Target::CryptoCard => {
+                self.preferences.crypto_card = !self.preferences.crypto_card;
                 return vec![Effect::Save];
             }
             Target::CryptoLayout => {
