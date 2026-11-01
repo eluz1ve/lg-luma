@@ -15,6 +15,8 @@ pub const SYSTEM_SECTION: usize = 3;
 /// System › Luma as Home screen.
 pub const HOME_TAKEOVER_ROW: usize = 9;
 pub const SECTION_COUNT: usize = 4;
+/// System row turning automatic Homebrew app updates on or off (homebrew_updates.rs).
+pub const HOMEBREW_UPDATES_ROW: usize = 13;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
 pub const APPS_COLUMNS: usize = 6;
@@ -2239,6 +2241,9 @@ impl State {
                         return vec![];
                     }
                     5 => return vec![Effect::Quit],
+                    HOMEBREW_UPDATES_ROW => {
+                        self.preferences.homebrew_updates = !self.preferences.homebrew_updates
+                    }
                     7 => {
                         self.subpage = Some(Subpage::TextRendering);
                         self.focus = Target::Choice(self.preferences.text_rendering.index());

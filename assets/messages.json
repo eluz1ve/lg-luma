@@ -4003,5 +4003,35 @@
     "vi": "Lớn hơn 50%, để xem từ xa hơn",
     "nl": "50% groter, voor kijken op grotere afstand",
     "sv": "50 % större, för att titta på längre avstånd"
+  },
+  "homebrewUpdates": {
+    "en": "Update Homebrew apps automatically",
+    "de": "Homebrew-Apps automatisch aktualisieren",
+    "es": "Actualizar apps de Homebrew automáticamente",
+    "zh": "自动更新 Homebrew 应用",
+    "zh-tw": "自動更新 Homebrew 應用程式",
+    "pt": "Atualizar apps do Homebrew automaticamente",
+    "it": "Aggiorna automaticamente le app Homebrew",
+    "ru": "Автоматически обновлять приложения Homebrew",
+    "pl": "Automatycznie aktualizuj aplikacje Homebrew",
+    "fr": "Mettre à jour les apps Homebrew automatiquement",
+    "vi": "Tự động cập nhật ứng dụng Homebrew",
+    "nl": "Homebrew-apps automatisch bijwerken",
+    "sv": "Uppdatera Homebrew-appar automatiskt"
+  },
+  "homebrewUpdated": {
+    "en": "updated",
+    "de": "aktualisiert",
+    "es": "actualizada",
+    "zh": "已更新",
+    "zh-tw": "已更新",
+    "pt": "atualizado",
+    "it": "aggiornata",
+    "ru": "обновлено",
+    "pl": "zaktualizowano",
+    "fr": "mise à jour",
+    "vi": "đã cập nhật",
+    "nl": "bijgewerkt",
+    "sv": "uppdaterad"
   }
 }

@@ -362,7 +362,7 @@ try {
   assert.deepEqual(clockFocus.focus, { Choice: 1 });
   const system = await scenario(
     'system-settings',
-    'settings,down,down,down,down,right,down,down,down',
+    'settings,down,down,down,down,right,down,down,down,down',
   );
   assert.deepEqual(system.focus, { Setting: 5 });
   assert.ok(system.ui_text.includes('Refresh apps & inputs'));
@@ -384,6 +384,15 @@ try {
   const scaled = JSON.parse(await fs.readFile(preferences, 'utf8'));
   await fs.writeFile(preferences, JSON.stringify({ ...scaled, ui_scale: 'normal' }));
   assert.ok(system.ui_text.includes('Text rendering'));
+  assert.ok(system.ui_text.includes('Update Homebrew apps automatically'));
+  assert.equal(system.preferences.homebrew_updates, false);
+  // The opt-in only changes the saved preference; desktop runs never contact the repository.
+  const homebrewPath = 'settings,down,down,down,down,right,down,down,down,enter';
+  const homebrewOn = await scenario('homebrew-updates-on', homebrewPath);
+  assert.deepEqual(homebrewOn.focus, { Setting: 13 });
+  assert.equal(homebrewOn.preferences.homebrew_updates, true);
+  const homebrewOff = await scenario('homebrew-updates-off', homebrewPath);
+  assert.equal(homebrewOff.preferences.homebrew_updates, false);
   const updatePreview = await scenario('update-preview', 'settings,down,down,down,down,right', [
     '--test-update-version',
     '99.0.0',
