@@ -535,9 +535,10 @@ fn companion(
 }
 
 /// Shadowed text is drawn opaque: through a translucent glyph its own shadow would show, greying
-/// it. It takes the shade it has over the dark foot of a shaded wallpaper.
+/// it. It takes the light grey of its white blended over a mid-tone, so secondary text stays a
+/// step below white without turning dark.
 fn solid(color: Color) -> Color {
-    const BACKDROP: f32 = 22. / 255.;
+    const BACKDROP: f32 = 120. / 255.;
     let [r, g, b, a] = color;
     let over = |value: f32| value * a + BACKDROP * (1. - a);
     [over(r), over(g), over(b), 1.]
