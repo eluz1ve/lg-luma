@@ -1,6 +1,5 @@
-//! TMDB "trending" feed for the Recommendations widget. Network/TLS and JSON parsing happen on a
-//! worker thread (see `recommendations-service`-style usage in `main`), never on the SDL thread.
-//! Uses a TMDB v3 API key (the `?api_key=` query parameter), matching the key format Free My TV uses.
+//! The Top Picks widget's feed: shows streaming this week, from TVmaze's public API (no key).
+//! Network/TLS and JSON parsing happen on a worker thread, never on the SDL thread.
 use crate::model::RecType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,9 +34,6 @@ pub struct Recommendation {
     /// Whether the detail request has already filled genre/detail.
     pub detailed: bool,
 }
-
-/// TMDB's Animation genre id (covers cartoons and anime, in both movies and shows).
-const ANIMATION_GENRE: i64 = 16;
 
 /// A TV app as the worker needs it: just the id and title used to match streaming services.
 /// (The full `model::App` isn't available on the worker thread, so we pass this lean copy.)
@@ -166,101 +162,124 @@ pub fn app_for<'a>(
     })
 }
 
-/// True when some installed app provides this service (so its titles are worth showing).
-pub fn usable(service: &StreamingService, installed: &[InstalledApp]) -> bool {
-    app_for(service, installed).is_some()
-}
-
 impl Recommendation {
-    /// Full poster URL at the given width bucket (e.g. "w342"), using TMDB's image CDN.
-    pub fn poster_url(&self, width: &str) -> String {
-        format!("https://image.tmdb.org/t/p/{width}{}", self.poster_path)
+    /// The poster's URL: TVmaze's image CDN only.
+    pub fn poster_url(&self) -> Option<&str> {
+        self.poster_path
+            .starts_with(POSTER_ORIGIN)
+            .then_some(self.poster_path.as_str())
     }
 
-    /// The on-disk cache path for this poster under `cache_dir` (empty poster_path -> None).
+    /// The on-disk cache path for this poster under `cache_dir`, named after its path on the CDN.
     pub fn poster_file(&self, cache_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-        let name = self.poster_path.trim_start_matches('/').replace('/', "_");
-        if name.is_empty() {
-            None
-        } else {
-            Some(cache_dir.join(name))
-        }
+        let name: String = self
+            .poster_url()?
+            .trim_start_matches(POSTER_ORIGIN)
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        (!name.is_empty()).then(|| cache_dir.join(name))
     }
 }
 
-/// Parse a TMDB trending response (`{"results":[...]}`) into recommendations.
-/// `as_show` labels the batch (TMDB's movie and tv endpoints are queried separately).
-pub fn parse_results(value: &Value, as_show: bool) -> Vec<Recommendation> {
-    let Some(results) = value.get("results").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for item in results {
-        let poster_path = item
-            .get("poster_path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if poster_path.is_empty() {
-            continue; // no artwork, no card
-        }
-        // Movies carry `title`, shows carry `name`.
-        let title = item
-            .get("title")
-            .or_else(|| item.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(120)
-            .collect::<String>();
-        if title.is_empty() {
-            continue;
-        }
-        let id = item.get("id").and_then(Value::as_i64).unwrap_or(0);
-        // Year from release_date (movie) or first_air_date (show): "YYYY-..." -> "YYYY".
-        let year = item
-            .get("release_date")
-            .or_else(|| item.get("first_air_date"))
+/// TVmaze's image CDN; posters come from nowhere else.
+const POSTER_ORIGIN: &str = "https://static.tvmaze.com/uploads/images/";
+/// Days of the streaming schedule a refresh reads.
+const SCHEDULE_DAYS: i64 = 7;
+
+/// A show from a TVmaze schedule entry, with its popularity (`weight`, 0–100) for sorting.
+pub fn parse_show(show: &Value, installed: &[InstalledApp]) -> Option<(i64, Recommendation)> {
+    let id = show.get("id")?.as_i64()?;
+    let title: String = show
+        .get("name")?
+        .as_str()?
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(120)
+        .collect();
+    let poster_path = show
+        .pointer("/image/medium")
+        .and_then(Value::as_str)
+        .filter(|url| url.starts_with(POSTER_ORIGIN))?
+        .to_owned();
+    if title.is_empty() {
+        return None;
+    }
+    let genres: Vec<&str> = show
+        .get("genres")
+        .and_then(Value::as_array)
+        .map(|g| g.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let channel = show
+        .pointer("/webChannel/name")
+        .or_else(|| show.pointer("/network/name"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut item = Recommendation {
+        id,
+        title,
+        poster_path,
+        is_show: true,
+        year: show
+            .get("premiered")
             .and_then(Value::as_str)
             .map(|d| d.chars().take(4).collect::<String>())
             .filter(|y| y.len() == 4)
-            .unwrap_or_default();
-        // Anime/cartoon detection from the trending genre_ids.
-        let is_anime = item
-            .get("genre_ids")
-            .and_then(Value::as_array)
-            .map(|ids| ids.iter().any(|g| g.as_i64() == Some(ANIMATION_GENRE)))
-            .unwrap_or(false);
-        // Quality signal for sorting "the best": rating gated by a minimum vote count.
-        let votes = item.get("vote_count").and_then(Value::as_i64).unwrap_or(0);
-        let rating = item
-            .get("vote_average")
+            .unwrap_or_default(),
+        genre: genres.first().map(|g| g.to_string()).unwrap_or_default(),
+        detail: show
+            .pointer("/rating/average")
             .and_then(Value::as_f64)
-            .unwrap_or(0.);
-        let score = if votes >= 200 { rating } else { 0. };
-        out.push((
-            score,
-            Recommendation {
-                id,
-                title,
-                poster_path,
-                is_show: as_show,
-                year,
-                is_anime,
-                ..Default::default()
-            },
-        ));
+            .map(|r| format!("★ {r:.1}"))
+            .unwrap_or_default(),
+        is_anime: show.get("type").and_then(Value::as_str) == Some("Animation")
+            || genres.contains(&"Anime"),
+        detailed: true,
+        ..Default::default()
+    };
+    if let Some(service) = service_for(channel) {
+        item.services.push(service.name.to_owned());
+        if let Some(app) = app_for(service, installed) {
+            item.app_id = app.id.clone();
+            item.service_name = service.name.to_owned();
+        }
     }
-    // Best first: higher rating (with enough votes) leads; trending order breaks ties.
-    out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    out.into_iter().map(|(_, rec)| rec).collect()
+    let weight = show.get("weight").and_then(Value::as_i64).unwrap_or(0);
+    Some((weight, item))
 }
 
-const LIMIT: usize = 512 * 1024;
+/// The shows of TVmaze schedule replies (`/schedule/web` embeds them, `/schedule` nests them),
+/// most popular first, without repeats.
+pub fn parse_schedules(replies: &[Value], installed: &[InstalledApp]) -> Vec<Recommendation> {
+    let mut shows: Vec<(i64, Recommendation)> = Vec::new();
+    for entry in replies.iter().filter_map(Value::as_array).flatten() {
+        let Some(show) = entry
+            .pointer("/_embedded/show")
+            .or_else(|| entry.get("show"))
+        else {
+            continue;
+        };
+        if let Some((weight, item)) = parse_show(show, installed)
+            && !shows.iter().any(|(_, seen)| seen.id == item.id)
+        {
+            shows.push((weight, item));
+        }
+    }
+    // Stable, so equally popular shows keep their schedule order.
+    shows.sort_by_key(|(weight, _)| std::cmp::Reverse(*weight));
+    shows.into_iter().map(|(_, item)| item).collect()
+}
 
-/// TMDB client. One per worker; cloning shares the underlying ureq agent config cheaply.
+const LIMIT: usize = 2 * 1024 * 1024;
+
+/// TVmaze client. One per worker; cloning shares the underlying ureq agent config cheaply.
 #[derive(Clone)]
 pub struct Client {
     agent: ureq::Agent,
@@ -271,7 +290,7 @@ impl Client {
     pub fn new(test_server: Option<&str>) -> Self {
         let base = match test_server {
             Some(server) => server.trim_end_matches('/').to_string(),
-            None => "https://api.themoviedb.org/3".to_string(),
+            None => "https://api.tvmaze.com".to_string(),
         };
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(std::time::Duration::from_secs(8)))
@@ -295,10 +314,10 @@ impl Client {
         }
         let mut response = request
             .call()
-            .map_err(|_| "TMDB is unavailable. Check the API key and network.".to_string())?;
+            .map_err(|_| "TVmaze is unavailable. Check the network.".to_string())?;
         if !response.status().is_success() {
             return Err(format!(
-                "TMDB returned status {}",
+                "TVmaze returned status {}",
                 response.status().as_u16()
             ));
         }
@@ -308,343 +327,61 @@ impl Client {
             .as_reader()
             .take(LIMIT as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| "The TMDB response could not be read".to_string())?;
+            .map_err(|_| "The TVmaze response could not be read".to_string())?;
         if bytes.len() > LIMIT {
-            return Err("The TMDB response is too large".into());
+            return Err("The TVmaze response is too large".into());
         }
-        serde_json::from_slice(&bytes).map_err(|_| "TMDB returned unreadable data".into())
+        serde_json::from_slice(&bytes).map_err(|_| "TVmaze returned unreadable data".into())
     }
 
-    /// The TMDB provider ids for the streaming apps installed on this TV, in the region. Mirrors
-    /// Free My TV's `fetchList` first step: ask TMDB which providers exist, keep those we have an
-    /// app for. Used to filter `discover` so the feed only holds watchable titles.
-    fn installed_provider_ids(
-        &self,
-        key: &str,
-        language: &str,
-        region: &str,
-        installed: &[InstalledApp],
-    ) -> Vec<i64> {
-        let Ok(value) = self.request(
-            "/watch/providers/movie",
-            &[
-                ("api_key", key),
-                ("language", language),
-                ("watch_region", region),
-            ],
-        ) else {
-            return Vec::new();
-        };
-        let Some(results) = value.get("results").and_then(Value::as_array) else {
-            return Vec::new();
-        };
-        let mut ids = Vec::new();
-        for provider in results {
-            let matched = provider
-                .get("provider_name")
-                .and_then(Value::as_str)
-                .and_then(service_for)
-                .is_some_and(|service| usable(service, installed));
-            if matched
-                && let Some(id) = provider.get("provider_id").and_then(Value::as_i64)
-                && !ids.contains(&id)
-            {
-                ids.push(id);
-            }
-        }
-        ids
-    }
-
-    /// The recommendations list: Free My TV's blend of what's trending this week and recent
-    /// releases, kept only when an installed streaming app provides it. `trending/week` candidates
-    /// are confirmed by their details; `discover` is pre-filtered by the installed providers.
-    /// Movies and shows are interleaved so a `Both` row mixes them. Returns at most `limit` items.
-    #[allow(clippy::too_many_arguments)]
+    /// The shows streaming in the week up to today (page 1) or a week earlier per further page,
+    /// from TVmaze's streaming schedule, plus today's TV schedule in `region`. Only shows an
+    /// installed app plays are kept, most popular first. At most `limit`.
     pub fn trending(
         &self,
-        key: &str,
-        kind: RecType,
-        language: &str,
         region: &str,
         installed: &[InstalledApp],
-        labels: &DetailLabels,
         page: u32,
         limit: usize,
     ) -> Result<Vec<Recommendation>, String> {
-        let key = key.trim();
-        if key.is_empty() {
-            return Err("Add a TMDB API key in Settings to see recommendations.".into());
-        }
         if installed.is_empty() {
             return Err("No streaming apps are installed to recommend from.".into());
         }
-        // TMDB pages are 1-based; the Refresh card bumps this to pull a fresh batch.
-        let page_str = page.max(1).to_string();
-
-        let want_movies = matches!(kind, RecType::Movies | RecType::Both);
-        let want_shows = matches!(kind, RecType::Shows | RecType::Both);
-
-        // Pre-filter discover by the TV's providers (empty = none matched on TMDB).
-        let provider_ids = self.installed_provider_ids(key, language, region, installed);
-
-        // "Hot": trending this week, kept only when its details resolve an installed app.
-        let hot = |me: &Self, as_show: bool| -> Vec<Recommendation> {
-            let path = if as_show {
-                "/trending/tv/week"
-            } else {
-                "/trending/movie/week"
-            };
-            let Ok(value) = me.request(
-                path,
-                &[
-                    ("api_key", key),
-                    ("language", language),
-                    ("page", page_str.as_str()),
-                ],
-            ) else {
-                return Vec::new();
-            };
-            let mut candidates = parse_results(&value, as_show);
-            candidates.truncate(16);
-            candidates
-                .into_iter()
-                .filter_map(|mut item| {
-                    me.detail(&mut item, key, language, region, installed, labels);
-                    (!item.app_id.is_empty()).then_some(item)
-                })
-                .collect()
-        };
-
-        // "Fresh": recent releases per installed provider, so every service is represented (a
-        // single mixed query ranked by popularity would always be dominated by the big services,
-        // hiding e.g. Crunchyroll). We fetch each provider's top titles, then interleave them.
-        let fresh = |me: &Self, as_show: bool| -> Vec<Recommendation> {
-            if provider_ids.is_empty() {
-                return Vec::new();
+        let today = time::OffsetDateTime::now_utc().date();
+        let last = today - time::Duration::days(SCHEDULE_DAYS * (page.max(1) as i64 - 1));
+        let mut replies = Vec::new();
+        let mut error = None;
+        for day in 0..SCHEDULE_DAYS {
+            let date = (last - time::Duration::days(day)).to_string();
+            match self.request("/schedule/web", &[("date", &date)]) {
+                Ok(value) => replies.push(value),
+                Err(message) => error = Some(message),
             }
-            let (path, votes): (&str, &str) = if as_show {
-                ("/discover/tv", "20")
-            } else {
-                ("/discover/movie", "30")
-            };
-            // One list per provider, each already a popularity-ranked page for THAT service.
-            let mut per_provider: Vec<Vec<Recommendation>> = Vec::new();
-            for id in &provider_ids {
-                let provider = id.to_string();
-                let query: Vec<(&str, &str)> = vec![
-                    ("api_key", key),
-                    ("language", language),
-                    ("watch_region", region),
-                    ("with_watch_monetization_types", "flatrate"),
-                    ("include_adult", "false"),
-                    ("sort_by", "popularity.desc"),
-                    ("vote_count.gte", votes),
-                    ("with_watch_providers", provider.as_str()),
-                    ("page", page_str.as_str()),
-                ];
-                if let Ok(value) = me.request(path, &query) {
-                    let mut list = parse_results(&value, as_show);
-                    list.truncate(6); // cap per service so no single one floods the row
-                    if !list.is_empty() {
-                        per_provider.push(list);
-                    }
-                }
-            }
-            // Round-robin across services: first pick of each, then second pick of each, …
-            let mut out = Vec::new();
-            let mut i = 0;
-            loop {
-                let mut added = false;
-                for list in &per_provider {
-                    if let Some(item) = list.get(i) {
-                        out.push(item.clone());
-                        added = true;
-                    }
-                }
-                if !added {
-                    break;
-                }
-                i += 1;
-            }
-            out
-        };
-
-        let (hot_movies, hot_shows) = (
-            if want_movies {
-                hot(self, false)
-            } else {
-                Vec::new()
-            },
-            if want_shows {
-                hot(self, true)
-            } else {
-                Vec::new()
-            },
-        );
-        let (fresh_movies, fresh_shows) = (
-            if want_movies {
-                fresh(self, false)
-            } else {
-                Vec::new()
-            },
-            if want_shows {
-                fresh(self, true)
-            } else {
-                Vec::new()
-            },
-        );
-
-        // Trending first (already watchable), then recent releases; movies/shows interleaved,
-        // de-duplicated by TMDB id+kind so a title doesn't appear twice.
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let mut push_unique = |item: Recommendation, out: &mut Vec<Recommendation>| {
-            if seen.insert((item.id, item.is_show)) {
-                out.push(item);
-            }
-        };
-        for item in interleave(hot_movies, hot_shows) {
-            push_unique(item, &mut out);
         }
-        for item in interleave(fresh_movies, fresh_shows) {
-            push_unique(item, &mut out);
-        }
-        out.truncate(limit);
-        Ok(out)
-    }
-
-    /// Fill `genre`, `detail` (seasons/runtime), the `services` list, and resolve the installed
-    /// `app_id`/`service_name` for one item. Mirrors Free My TV's `details`: the first flatrate
-    /// provider that maps to an installed app wins, so clicking the card always opens something.
-    #[allow(clippy::too_many_arguments)]
-    fn detail(
-        &self,
-        item: &mut Recommendation,
-        key: &str,
-        language: &str,
-        region: &str,
-        installed: &[InstalledApp],
-        labels: &DetailLabels,
-    ) {
-        let path = if item.is_show {
-            format!("/tv/{}", item.id)
-        } else {
-            format!("/movie/{}", item.id)
-        };
-        let Ok(value) = self.request(
-            &path,
-            &[
-                ("api_key", key),
-                ("language", language),
-                ("append_to_response", "watch/providers"),
-            ],
-        ) else {
-            return;
-        };
-        // Primary genre: prefer our localized override by TMDB genre id (fixes the composite TV
-        // genres TMDB leaves in English), falling back to the name TMDB already localized.
-        if let Some(first) = value
-            .get("genres")
-            .and_then(Value::as_array)
-            .and_then(|g| g.first())
+        if page <= 1
+            && let Ok(value) = self.request(
+                "/schedule",
+                &[("country", region), ("date", &today.to_string())],
+            )
         {
-            let id = first.get("id").and_then(Value::as_i64).unwrap_or(0);
-            if let Some(localized) = labels.genres.get(&id) {
-                item.genre = localized.trim().chars().take(40).collect();
-            } else if let Some(name) = first.get("name").and_then(Value::as_str) {
-                item.genre = name.trim().chars().take(40).collect();
-            }
+            replies.push(value);
         }
-        // Streaming provider for the region (flatrate = subscription), mapped to an installed app.
-        // The first provider we both recognize AND have an app for resolves the launch target.
-        if let Some(flatrate) = value
-            .get("watch/providers")
-            .and_then(|w| w.get("results"))
-            .and_then(|r| r.get(region))
-            .and_then(|c| c.get("flatrate"))
-            .and_then(Value::as_array)
-        {
-            for provider in flatrate {
-                let Some(service) = provider
-                    .get("provider_name")
-                    .and_then(Value::as_str)
-                    .and_then(service_for)
-                else {
-                    continue;
-                };
-                let name = service.name.to_string();
-                if !item.services.contains(&name) {
-                    item.services.push(name);
-                }
-                // Resolve the installed app the first time a provider maps to one.
-                if item.app_id.is_empty()
-                    && let Some(app) = app_for(service, installed)
-                {
-                    item.app_id = app.id.clone();
-                    item.service_name = service.name.to_string();
-                }
-            }
+        if replies.is_empty() {
+            return Err(error.unwrap_or_else(|| "TVmaze is unavailable.".into()));
         }
-        // Seasons (show) or runtime (movie).
-        if item.is_show {
-            if let Some(n) = value
-                .get("number_of_seasons")
-                .and_then(Value::as_i64)
-                .filter(|n| *n > 0)
-            {
-                let label = if n == 1 {
-                    &labels.season
-                } else {
-                    &labels.seasons
-                };
-                item.detail = format!("{n} {label}");
-            }
-        } else if let Some(minutes) = value
-            .get("runtime")
-            .and_then(Value::as_i64)
-            .filter(|m| *m > 0)
-        {
-            let (h, m) = (minutes / 60, minutes % 60);
-            item.detail = if h > 0 {
-                format!("{h}h {m}min")
-            } else {
-                format!("{m}min")
-            };
+        let mut shows: Vec<Recommendation> = parse_schedules(&replies, installed)
+            .into_iter()
+            .filter(|item| !item.app_id.is_empty())
+            .collect();
+        if shows.is_empty() {
+            return Err("No shows from your streaming apps this week.".into());
         }
-        item.detailed = true;
+        shows.truncate(limit);
+        Ok(shows)
     }
 }
 
-/// Localized labels for seasons (singular/plural); runtime uses h/min literally.
-/// `genres` maps a TMDB genre id to a localized name, used to override the composite TV genres
-/// that TMDB leaves in English (e.g. "Sci-Fi & Fantasy") so they read correctly in every language.
-#[derive(Clone, Default)]
-pub struct DetailLabels {
-    pub season: String,
-    pub seasons: String,
-    /// TMDB genre id -> localized display name (filled from the UI's i18n table).
-    pub genres: std::collections::HashMap<i64, String>,
-}
-
-/// Alternate two lists (a, b, a, b, …), appending any remainder, so a mixed row isn't all movies first.
-fn interleave(a: Vec<Recommendation>, b: Vec<Recommendation>) -> Vec<Recommendation> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
-    let (mut ai, mut bi) = (a.into_iter(), b.into_iter());
-    loop {
-        match (ai.next(), bi.next()) {
-            (Some(x), Some(y)) => {
-                out.push(x);
-                out.push(y);
-            }
-            (Some(x), None) => out.push(x),
-            (None, Some(y)) => out.push(y),
-            (None, None) => break,
-        }
-    }
-    out
-}
-
-/// The cached TMDB list plus when it was fetched, persisted so the widget shows something at once.
+/// The cached list plus when it was fetched, persisted so the widget shows something at once.
 /// Mirrors Free My TV: the full list is fetched at most once per interval, and the visible row
 /// rotates through that cached list on each interval tick — the API is not hit on every rotation.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -707,7 +444,6 @@ use std::sync::{
 };
 use std::thread;
 
-const POSTER_WIDTH: &str = "w342"; // TMDB bucket: small enough for the TV, sharp as a card
 const POSTER_LIMIT: usize = 2 * 1024 * 1024;
 /// Max posters fetched per refresh (keeps a row reasonable and bounds network/memory).
 /// Also the upper bound for the rotating window the UI shows (see `view`/`state`/`accept`).
@@ -715,14 +451,9 @@ pub const MAX_ITEMS: usize = 24;
 
 pub struct Request {
     pub id: u64,
-    pub key: String,
-    pub kind: RecType,
-    pub language: String,
     pub region: String,
     /// Directory where downloaded posters are cached on disk.
     pub cache_dir: PathBuf,
-    /// Localized "season"/"seasons" labels for show detail lines.
-    pub labels: DetailLabels,
     /// The TV's installed apps (id/title), used to filter and resolve launchable titles.
     pub installed: Vec<InstalledApp>,
     /// Leave cartoons/anime (TMDB's Animation genre) out of the feed.
@@ -820,32 +551,12 @@ fn load(
     job: &Request,
     generation: &AtomicU64,
 ) -> Result<(Vec<Recommendation>, usize), String> {
-    let items = client.trending(
-        &job.key,
-        job.kind,
-        &job.language,
-        &job.region,
-        &job.installed,
-        &job.labels,
-        job.page,
-        MAX_ITEMS,
-    )?;
+    let items = client.trending(&job.region, &job.installed, job.page, MAX_ITEMS)?;
     let mut kept = Vec::new();
     let mut saved = 0usize;
-    for mut item in items {
+    for item in items {
         if generation.load(Ordering::SeqCst) != job.id {
             break; // a newer request arrived; stop wasting bandwidth
-        }
-        // "Fresh" (discover) items aren't detailed yet; "hot" (trending) ones already are.
-        if !item.detailed {
-            client.detail(
-                &mut item,
-                &job.key,
-                &job.language,
-                &job.region,
-                &job.installed,
-                &job.labels,
-            );
         }
         // Only keep titles an installed app can actually play.
         if item.app_id.is_empty() {
@@ -863,22 +574,17 @@ fn load(
     Ok((kept, saved))
 }
 
-/// Download one poster from the TMDB image CDN and save it under `cache_dir`.
+/// Download one poster from TVmaze's image CDN and save it under `cache_dir`.
 /// Returns the saved path (the renderer decodes and caches it as a texture when drawing).
 fn download_poster(client: &Client, item: &Recommendation, cache_dir: &Path) -> Option<PathBuf> {
     use std::io::Read;
-    // A stable, path-safe filename from the TMDB poster path (e.g. "/abc.jpg" -> "abc.jpg").
-    let file_name = item.poster_path.trim_start_matches('/').replace('/', "_");
-    if file_name.is_empty() {
-        return None;
-    }
-    let path = cache_dir.join(&file_name);
+    let path = item.poster_file(cache_dir)?;
     // Reuse a cached file if it's already here.
     if path.is_file() {
         return Some(path);
     }
-    let url = item.poster_url(POSTER_WIDTH);
-    let mut response = client.agent.get(&url).call().ok()?;
+    let url = item.poster_url()?;
+    let mut response = client.agent.get(url).call().ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -934,19 +640,16 @@ pub struct Recommendations {
 
 impl Recommendations {
     /// Decide whether to ask the worker to refresh. Returns a `Request` to send, or None.
-    /// `now` is Unix seconds; `count` is how many cards the row shows.
-    #[allow(clippy::too_many_arguments)]
+    /// `now` is Unix seconds.
     pub fn sync(
         &mut self,
         prefs: &crate::model::Preferences,
-        language: &str,
         region: &str,
         cache_dir: &Path,
-        labels: &DetailLabels,
         installed: &[InstalledApp],
         now: i64,
     ) -> Option<Request> {
-        if !prefs.show_recommendations || prefs.tmdb_key.trim().is_empty() || self.loading {
+        if !prefs.show_recommendations || self.loading {
             return None;
         }
         if installed.is_empty() {
@@ -960,12 +663,8 @@ impl Recommendations {
         self.loading = true;
         Some(Request {
             id: self.request_id,
-            key: prefs.tmdb_key.trim().to_string(),
-            kind: prefs.rec_type,
-            language: language.to_string(),
             region: region.to_string(),
             cache_dir: cache_dir.to_path_buf(),
-            labels: labels.clone(),
             installed: installed.to_vec(),
             hide_animation: prefs.rec_hide_animation,
             page: self.page.max(1),
@@ -1074,6 +773,52 @@ mod feed_tests {
             poster_path: format!("/p{n}.jpg"),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn tvmaze_schedules_become_shows_from_installed_apps_most_popular_first() {
+        use serde_json::json;
+        let show = |id: i64, name: &str, weight: i64, channel: &str| {
+            json!({
+                "id": id, "name": name, "weight": weight, "type": "Scripted",
+                "genres": ["Drama", "Thriller"], "premiered": "2024-03-01",
+                "rating": {"average": 8.14},
+                "image": {"medium": format!("https://static.tvmaze.com/uploads/images/medium_portrait/1/{id}.jpg")},
+                "webChannel": {"name": channel}
+            })
+        };
+        let web = json!([
+            {"_embedded": {"show": show(1, "Quiet", 40, "Netflix")}},
+            {"_embedded": {"show": show(2, "Loud", 90, "Netflix")}},
+            {"_embedded": {"show": show(2, "Loud", 90, "Netflix")}},
+            {"_embedded": {"show": show(3, "Elsewhere", 99, "Some Channel")}},
+            {"_embedded": {"show": {"id": 4, "name": "No poster", "image": null}}}
+        ]);
+        let tv = json!([{"show": show(5, "Broadcast", 60, "Disney+")}]);
+        let installed = [InstalledApp {
+            id: "netflix".into(),
+            title: "Netflix".into(),
+        }];
+        let shows = parse_schedules(&[web, tv], &installed);
+        let titles: Vec<&str> = shows.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["Elsewhere", "Loud", "Broadcast", "Quiet"]);
+        let loud = &shows[1];
+        assert_eq!(
+            (loud.app_id.as_str(), loud.service_name.as_str()),
+            ("netflix", "Netflix")
+        );
+        assert_eq!((loud.year.as_str(), loud.genre.as_str()), ("2024", "Drama"));
+        assert_eq!(loud.detail, "★ 8.1");
+        assert!(shows[0].app_id.is_empty() && shows[2].app_id.is_empty());
+        assert!(
+            loud.poster_file(std::path::Path::new("/cache"))
+                .is_some_and(|p| p.ends_with("medium_portrait_1_2.jpg"))
+        );
+        let elsewhere = Recommendation {
+            poster_path: "https://example.com/a.jpg".into(),
+            ..Default::default()
+        };
+        assert!(elsewhere.poster_url().is_none());
     }
 
     #[test]

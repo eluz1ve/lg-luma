@@ -2406,7 +2406,7 @@ fn recommendations_row(
     y: f32,
 ) {
     use crate::state::Target;
-    if !state.preferences.show_recommendations || state.preferences.tmdb_key.trim().is_empty() {
+    if !state.preferences.show_recommendations {
         return;
     }
     let language = state.preferences.language;
@@ -4639,7 +4639,6 @@ fn date_settings(out: &mut Scene, state: &State, assets: &Assets) {
 }
 
 fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
-    use crate::model::RecType;
     let language = state.preferences.language;
     let prefs = &state.preferences;
 
@@ -4664,67 +4663,6 @@ fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
         },
     );
 
-    // TMDB API key (opens the keyboard). Shows the live draft while typing; masked when set.
-    let key_description = if state.text_input_active() && state.keyboard_field == TextField::TmdbKey
-    {
-        format!("{}|", prefs.tmdb_key)
-    } else if prefs.tmdb_key.is_empty() {
-        language.t("stateOff").into()
-    } else {
-        "••••••••".into()
-    };
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::RecommendationsKey,
-            rect: Rect::new(640., 248.8 - state.scroll, 1120., 90.7),
-            title: language.t("tmdbKey"),
-            icon: Some("type"),
-            value: None,
-            description: Some(&key_description),
-            selected: false,
-            chevron: true,
-        },
-    );
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::RecommendationsKeyClear,
-            rect: Rect::new(640., 351.5 - state.scroll, 1120., 72.),
-            title: language.t("clearKey"),
-            icon: Some("refresh"),
-            value: None,
-            description: None,
-            selected: false,
-            chevron: false,
-        },
-    );
-
-    // Type: movies / shows / both (cycles on select).
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::RecommendationsType,
-            rect: Rect::new(640., 435.5 - state.scroll, 1120., 72.),
-            title: language.t("recType"),
-            icon: None,
-            value: Some(language.t(match prefs.rec_type {
-                RecType::Movies => "recTypeMovies",
-                RecType::Shows => "recTypeShows",
-                RecType::Both => "recTypeBoth",
-            })),
-            description: None,
-            selected: false,
-            chevron: false,
-        },
-    );
-
     // Interval: how often the row rotates / the list refreshes (cycles on select).
     row(
         out,
@@ -4732,7 +4670,7 @@ fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::RecommendationsInterval,
-            rect: Rect::new(640., 519.5 - state.scroll, 1120., 72.),
+            rect: Rect::new(640., 248.8 - state.scroll, 1120., 72.),
             title: language.t("recInterval"),
             icon: None,
             value: Some(language.t(prefs.rec_interval.label_key())),
@@ -4750,7 +4688,7 @@ fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::RecommendationsCount,
-            rect: Rect::new(640., 603.5 - state.scroll, 1120., 72.),
+            rect: Rect::new(640., 332.8 - state.scroll, 1120., 72.),
             title: language.t("recCount"),
             icon: None,
             value: Some(&count_value),
@@ -4767,7 +4705,7 @@ fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::RecommendationsHideAnimation,
-            rect: Rect::new(640., 687.5 - state.scroll, 1120., 72.),
+            rect: Rect::new(640., 416.8 - state.scroll, 1120., 72.),
             title: language.t("recHideAnimation"),
             icon: None,
             value: Some(language.t(if prefs.rec_hide_animation {
@@ -4779,6 +4717,13 @@ fn recommendations_settings(out: &mut Scene, state: &State, assets: &Assets) {
             selected: false,
             chevron: false,
         },
+    );
+    out.text(
+        language.t("recSource"),
+        Rect::new(660., 512.8 - state.scroll, 1080., 24.),
+        text(16., 400, 0.),
+        c(0xf5f5f5, 0.55),
+        false,
     );
 }
 
@@ -5425,7 +5370,6 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             TextField::Name => language.t("greetingName"),
             TextField::InputName => language.t("inputName"),
             TextField::Apps => language.t("findApp"),
-            TextField::TmdbKey => language.t("tmdbKey"),
         },
         Rect::new(389., 324., 1000., 44.),
         text(37.6, 500, -0.055).leading(1.1),

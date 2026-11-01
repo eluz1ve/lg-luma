@@ -330,12 +330,9 @@ pub struct Preferences {
     pub wallpaper_changed: u64,
     /// Opt-in: install newer versions of Homebrew apps automatically (homebrew_updates.rs).
     pub homebrew_updates: bool,
-    /// Recommendations widget: a row of trending TMDB posters on Home.
+    /// Recommendations widget: a row of shows streaming this week, from TVmaze.
     #[serde(default)]
     pub show_recommendations: bool,
-    /// TMDB API key (v3) the widget uses; empty disables the feed.
-    #[serde(default)]
-    pub tmdb_key: String,
     /// What the recommendations widget shows: movies, shows, or both.
     #[serde(default)]
     pub rec_type: RecType,
@@ -447,7 +444,6 @@ impl Default for Preferences {
             wallpaper_changed: 0,
             homebrew_updates: false,
             show_recommendations: false,
-            tmdb_key: String::new(),
             rec_type: RecType::Both,
             rec_interval: RecInterval::Hour,
             rec_count: 5,
