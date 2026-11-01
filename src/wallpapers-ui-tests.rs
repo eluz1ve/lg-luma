@@ -537,7 +537,8 @@ fn custom_gallery_navigation_reveals_whole_cards_in_incomplete_rows() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
-    state.set_wallpapers(vec![custom(1), custom(2)]);
+    // With Apple TV last, eleven cards: the last row holds two.
+    state.set_wallpapers(vec![custom(1)]);
     state.focus = Target::Background(8);
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::Background(9));
@@ -720,13 +721,15 @@ fn every_unselected_bundled_background_can_be_removed_and_stays_removed_after_re
         assert!(!(0..state.background_count()).any(|i| state.background_id(i) == Some(id)));
         assert!(controls(&state).iter().any(|c| c.target == state.focus));
     }
-    assert_eq!(state.background_count(), 1);
+    // Apple TV is not packaged; it stays until removed itself.
+    assert_eq!(state.background_count(), 2);
     let mut preferences: crate::model::Preferences =
         serde_json::from_slice(&serde_json::to_vec(&state.preferences).unwrap()).unwrap();
     preferences.sanitize();
     let restored = State::new(preferences);
-    assert_eq!(restored.background_count(), 1);
+    assert_eq!(restored.background_count(), 2);
     assert_eq!(restored.background_id(0), Some("dunes"));
+    assert_eq!(restored.background_id(1), Some(crate::aerials::ID));
 }
 
 #[test]
@@ -879,4 +882,177 @@ fn a_dynamic_wallpaper_shows_the_frame_for_the_sun_and_fades_between_frames() {
     state.preferences.background = "dunes".into();
     state.sync_dynamic_wallpaper(noon);
     assert_eq!(state.background_key(), "dunes");
+}
+
+fn aerial(index: usize) -> Wallpaper {
+    let id = &crate::aerials::catalog().pictures[index].id;
+    Wallpaper {
+        id: id.clone(),
+        directory: PathBuf::from(format!("/preview/aerials/{id}")),
+        has_original: true,
+        frames: Vec::new(),
+    }
+}
+
+fn places() -> usize {
+    crate::aerials::catalog().pictures.len()
+}
+
+/// Chooses a gallery entry the way the remote does: OK on its card, then Use.
+fn choose(state: &mut State, id: &str) {
+    state.open(2);
+    state.section = 1;
+    let index = (0..state.background_count())
+        .position(|index| state.background_id(index) == Some(id))
+        .unwrap();
+    state.focus = Target::Background(index);
+    assert!(state.activate().is_empty());
+    assert_eq!(state.focus, Target::UseBackground);
+    assert_eq!(state.activate(), vec![Effect::Save]);
+}
+
+#[test]
+fn apple_tv_is_the_last_gallery_entry_and_shows_its_place() {
+    let mut state = ready();
+    state.open(2);
+    state.section = 1;
+    state.set_wallpapers(vec![custom(1)]);
+    let last = state.background_count() - 1;
+    assert_eq!(state.background_id(last), Some(crate::aerials::ID));
+    assert_eq!(
+        state.background_id(BACKGROUNDS.len()),
+        Some(custom(1).id.as_str())
+    );
+    let place = aerial(state.preferences.aerials.current(places()));
+    state.aerial_ready(place.clone());
+    state.preferences.language = crate::i18n::Language::Ru;
+    let gallery = scene(&state);
+    assert!(
+        gallery
+            .draw
+            .iter()
+            .any(|draw| matches!(draw, Draw::Image(path, ..) if path == &place.thumbnail()))
+    );
+    let name = crate::aerials::catalog().pictures[state.preferences.aerials.current(places())]
+        .name(crate::i18n::Language::Ru);
+    let texts: Vec<_> = gallery
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            Draw::Text(text, ..) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&crate::aerials::LABEL), "{texts:?}");
+    assert!(texts.contains(&name), "{texts:?}");
+}
+
+#[test]
+fn choosing_apple_tv_keeps_the_last_picture_until_its_still_arrives_then_fades_to_it() {
+    let mut state = ready();
+    choose(&mut state, "forest");
+    state.previous_background = None;
+    choose(&mut state, crate::aerials::ID);
+    assert_eq!(state.preferences.background, crate::aerials::ID);
+    // The splash stays a packaged picture, and the rotation starts now.
+    assert_eq!(state.preferences.splash_background(), "forest");
+    let rotation = state.preferences.aerials;
+    assert!(rotation.changed > 0);
+    assert!(std::mem::take(&mut state.aerials_request));
+    let current = aerial(rotation.current(places()));
+    let next = aerial(rotation.next(places()));
+    assert_eq!(
+        state.aerial_ids(),
+        vec![current.id.clone(), next.id.clone()]
+    );
+    // Nothing on the TV yet: the last picture stays.
+    assert_eq!(state.background_key(), "forest");
+    state.previous_background = None;
+    state.aerial_ready(next.clone());
+    assert_eq!(state.background_key(), "forest");
+    assert!(state.previous_background.is_none());
+    state.aerial_ready(current.clone());
+    assert_eq!(state.background_key(), format!("aerials#{}", current.id));
+    assert!(matches!(&state.previous_background, Some((key, _)) if key == "forest"));
+    state.previous_background = None;
+    assert!(matches!(&scene(&state).draw[0], Draw::Image(path, ..) if path == &current.image()));
+    state.preferences.wallpaper_gradient = false;
+    assert!(
+        matches!(&scene(&state).draw[0], Draw::Image(path, ..) if path == &current.unshaded_image())
+    );
+}
+
+#[test]
+fn apple_tv_moves_on_every_fifteen_minutes_once_the_next_still_is_on_the_tv() {
+    let mut state = ready();
+    state.preferences.background = crate::aerials::ID.into();
+    state.preferences.aerials = crate::aerials::Rotation::start(1000);
+    let rotation = state.preferences.aerials;
+    let current = aerial(rotation.current(places()));
+    let next = aerial(rotation.next(places()));
+    state.aerial_ready(current.clone());
+    state.aerials_request = false;
+    assert!(!state.advance_aerials(1000 + crate::aerials::INTERVAL - 1));
+    // Due, but the next still has not arrived (offline): the place stays.
+    assert!(!state.advance_aerials(1000 + crate::aerials::INTERVAL));
+    assert_eq!(state.preferences.aerials, rotation);
+    state.aerial_ready(next.clone());
+    assert!(state.advance_aerials(1000 + crate::aerials::INTERVAL));
+    assert_eq!(
+        state.preferences.aerials.changed,
+        1000 + crate::aerials::INTERVAL
+    );
+    assert_eq!(state.background_key(), format!("aerials#{}", next.id));
+    assert!(
+        matches!(&state.previous_background, Some((key, _)) if *key == format!("aerials#{}", current.id))
+    );
+    assert!(state.aerials_request);
+    let after = aerial(state.preferences.aerials.next(places()));
+    // The still fading out stays until the next change.
+    assert_eq!(state.aerial_ids(), vec![next.id, after.id, current.id]);
+}
+
+#[test]
+fn rotating_through_the_gallery_skips_apple_tv_which_rotates_on_its_own() {
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    let lake = custom(1);
+    state.set_wallpapers(vec![lake.clone()]);
+    state.preferences.background = lake.id.clone();
+    assert!(state.cycle_wallpaper(100));
+    assert_eq!(state.preferences.background, "slate");
+    state.preferences.background = crate::aerials::ID.into();
+    assert!(!state.cycle_wallpaper(200));
+    assert_eq!(state.preferences.background, crate::aerials::ID);
+}
+
+#[test]
+fn apple_tv_survives_a_restart_and_can_be_removed_from_the_gallery() {
+    let mut preferences = Preferences {
+        background: crate::aerials::ID.into(),
+        splash_background: Some(crate::aerials::ID.into()),
+        ..Preferences::default()
+    };
+    preferences.sanitize();
+    assert_eq!(preferences.background, crate::aerials::ID);
+    assert_eq!(preferences.splash_background(), crate::aerials::ID);
+    assert_eq!(preferences.splash_background, None);
+    let mut state = ready();
+    choose(&mut state, "summit");
+    let index = state.background_count() - 1;
+    state.focus = Target::Background(index);
+    state.activate();
+    state.focus = Target::DeleteBackground;
+    state.activate();
+    state.focus = Target::ConfirmDelete;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(
+        (0..state.background_count()).all(|i| state.background_id(i) != Some(crate::aerials::ID))
+    );
+    let mut preferences = state.preferences.clone();
+    preferences.sanitize();
+    assert_eq!(
+        preferences.deleted_backgrounds,
+        vec![crate::aerials::ID.to_owned()]
+    );
 }

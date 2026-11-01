@@ -170,7 +170,7 @@ fn random_id() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn real_directory(path: &Path) -> bool {
+pub(crate) fn real_directory(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
@@ -264,7 +264,7 @@ fn delete_wallpaper(directory: &Path, id: &str, selected: &str) -> Result<(), St
 }
 
 /// Root Home creates files readable by the same app user after takeover is disabled.
-fn create_directory(path: &Path) -> Result<(), String> {
+pub(crate) fn create_directory(path: &Path) -> Result<(), String> {
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
@@ -306,7 +306,7 @@ fn inherit_owner(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -321,7 +321,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     inherit_owner(path)
 }
 
-fn decode(bytes: &[u8]) -> Result<image::RgbImage, String> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<image::RgbImage, String> {
     if bytes.len() > MAX_BODY {
         return Err("Image exceeds 12 MiB".into());
     }
@@ -362,7 +362,7 @@ fn decode(bytes: &[u8]) -> Result<image::RgbImage, String> {
     }))
 }
 
-fn shade(image: &mut image::RgbImage) {
+pub(crate) fn shade(image: &mut image::RgbImage) {
     // Same base, image opacity and gradients as tools/assets.mjs. Only source-specific
     // saturation adjustments are omitted for owner-supplied photographs.
     let stops = [
@@ -389,7 +389,7 @@ fn shade(image: &mut image::RgbImage) {
     }
 }
 
-fn jpeg(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>, String> {
+pub(crate) fn jpeg(image: &image::RgbImage, quality: u8) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)
         .encode_image(image)

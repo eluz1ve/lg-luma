@@ -1,3 +1,4 @@
+mod aerials;
 mod app_artwork;
 mod dynamic_wallpaper;
 // Used by the TV build's Home lifecycle; the host build compiles it for its tests.
@@ -854,6 +855,19 @@ fn run() -> Result<(), String> {
     let mut wallpaper_service =
         wallpapers::Service::new(&preferences_path, !webos && !options.script.is_empty())?;
     let mut tile_editor_service = tile_editor::Service::new(!webos && !options.script.is_empty())?;
+    // Each TV shuffles Apple TV's places its own way. Its stills come from Apple, so scripted
+    // desktop captures stay offline with the stills already downloaded.
+    if state.preferences.aerials == aerials::Rotation::default() {
+        state.preferences.aerials = aerials::Rotation::start(state::unix_now());
+        if let Err(error) = storage::save(&preferences_path, &state.preferences) {
+            eprintln!("{error}");
+        }
+    }
+    let aerials_service =
+        aerials::Service::new(&preferences_path, !webos && !options.script.is_empty())
+            .inspect_err(|error| eprintln!("{error}"))
+            .ok();
+    state.aerials_request = true;
     state.home_takeover = options.webos_home || platform::runs_as_lg_home();
     if options.test_extra_apps > 0 {
         eprintln!(
@@ -1201,6 +1215,14 @@ fn run() -> Result<(), String> {
                 _ => {}
             }
         }
+        if let Some(service) = &aerials_service {
+            while let Ok(aerials::Event::Ready(still)) = service.receiver.try_recv() {
+                state.aerial_ready(still);
+            }
+            if std::mem::take(&mut state.aerials_request) {
+                service.want(state.aerial_ids());
+            }
+        }
         tile_editor_service.set_active(
             focused && visible && matches!(state.overlay, Some(Overlay::TileEditor)),
             &state.preferences.custom_tiles,
@@ -1244,6 +1266,16 @@ fn run() -> Result<(), String> {
         }
         state.dirty |= assets.artwork.poll();
         let unix = state::unix_now();
+        if focused
+            && visible
+            && state.overlay.is_none()
+            && state.moving.is_none()
+            && !state.animating()
+            && state.advance_aerials(unix)
+            && let Err(error) = storage::save(&preferences_path, &state.preferences)
+        {
+            eprintln!("{error}");
+        }
         let startup_cycle = wallpaper_cycle::startup_due(
             state.preferences.wallpaper_cycle,
             startup_cycle_pending,

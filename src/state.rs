@@ -306,6 +306,12 @@ pub struct State {
     pub dynamic_frame: Option<(String, usize, i64)>,
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
+    /// Apple TV stills on the TV (aerials.rs).
+    pub aerials: Vec<crate::wallpapers::Wallpaper>,
+    /// Set when the Apple TV worker should be told which stills to keep (`aerial_ids`).
+    pub aerials_request: bool,
+    /// The place shown before the last change, kept while it fades out.
+    aerials_previous: Option<String>,
     pub deleting_wallpaper: Option<String>,
     pub wallpaper_upload: Option<Result<crate::wallpapers::Session, String>>,
     pub tile_editor: Option<Result<crate::companion::Session, String>>,
@@ -361,6 +367,9 @@ impl State {
             dynamic_frame: None,
             background_fade: BACKGROUND_FADE,
             wallpapers: vec![],
+            aerials: vec![],
+            aerials_request: false,
+            aerials_previous: None,
             deleting_wallpaper: None,
             wallpaper_upload: None,
             tile_editor: None,
@@ -1009,6 +1018,19 @@ impl State {
     /// The background to draw: the chosen one, with its frame when it is a dynamic wallpaper
     /// (`id#frame`).
     pub fn background_key(&self) -> String {
+        if self.preferences.background == crate::aerials::ID {
+            let place = &self.aerial_place().id;
+            if self.aerials.iter().any(|still| still.id == *place) {
+                return format!("{}#{place}", crate::aerials::ID);
+            }
+            // Until its still arrives, the last packaged picture chosen stays.
+            let splash = self.preferences.splash_background();
+            return if splash == crate::aerials::ID {
+                "dunes".into()
+            } else {
+                splash.to_owned()
+            };
+        }
         match &self.dynamic_frame {
             Some((id, frame, _)) if *id == self.preferences.background => format!("{id}#{frame}"),
             _ => self.preferences.background.clone(),
@@ -1065,9 +1087,79 @@ impl State {
         self.dynamic_frame = Some((id.clone(), frame, unix));
     }
 
+    /// The Apple TV place the rotation is on, shown or not.
+    pub fn aerial_place(&self) -> &'static crate::aerials::Picture {
+        let pictures = &crate::aerials::catalog().pictures;
+        &pictures[self.preferences.aerials.current(pictures.len())]
+    }
+
+    /// The Apple TV stills to keep on the TV: the place the gallery card shows and, while it is the
+    /// background, the next one and the one fading out.
+    pub fn aerial_ids(&self) -> Vec<String> {
+        let pictures = &crate::aerials::catalog().pictures;
+        let rotation = self.preferences.aerials;
+        let mut ids = vec![self.aerial_place().id.clone()];
+        if self.preferences.background == crate::aerials::ID {
+            ids.push(pictures[rotation.next(pictures.len())].id.clone());
+            if let Some(previous) = &self.aerials_previous
+                && !ids.contains(previous)
+            {
+                ids.push(previous.clone());
+            }
+        }
+        ids
+    }
+
+    /// An Apple TV still is on the TV; when it is the place waited for, fade to it.
+    pub fn aerial_ready(&mut self, still: crate::wallpapers::Wallpaper) {
+        let shown = self.background_key();
+        let wanted = self.aerial_ids();
+        self.aerials
+            .retain(|known| known.id != still.id && wanted.contains(&known.id));
+        if wanted.contains(&still.id) {
+            self.aerials.push(still);
+        }
+        let key = self.background_key();
+        if key != shown && !self.preferences.reduced_motion {
+            self.previous_background = Some((shown, Instant::now()));
+            self.background_fade = CYCLE_FADE;
+        }
+        self.dirty = true;
+    }
+
+    /// Moves Apple TV to its next place when one is due and its still has arrived.
+    pub fn advance_aerials(&mut self, now: u64) -> bool {
+        let pictures = &crate::aerials::catalog().pictures;
+        let rotation = self.preferences.aerials;
+        if self.preferences.background != crate::aerials::ID || !rotation.due(now) {
+            return false;
+        }
+        let next = &pictures[rotation.next(pictures.len())].id;
+        if !self.aerials.iter().any(|still| still.id == *next) {
+            return false;
+        }
+        let shown = self.background_key();
+        self.aerials_previous = Some(self.aerial_place().id.clone());
+        self.preferences.aerials = rotation.advanced(pictures.len(), now);
+        if self.preferences.reduced_motion {
+            self.previous_background = None;
+        } else {
+            self.previous_background = Some((shown, Instant::now()));
+            self.background_fade = CYCLE_FADE;
+        }
+        self.aerials_request = true;
+        self.dirty = true;
+        true
+    }
+
     pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
+        // Apple TV changes its own place (advance_aerials).
+        if self.preferences.background == crate::aerials::ID {
+            return false;
+        }
         let ids: Vec<_> = self
             .background_ids()
+            .filter(|id| *id != crate::aerials::ID)
             .filter(|id| self.deleting_wallpaper.as_deref() != Some(*id))
             .map(str::to_owned)
             .collect();
@@ -1134,6 +1226,14 @@ impl State {
                         .any(|deleted| deleted == id)
             })
             .chain(self.wallpapers.iter().map(|item| item.id.as_str()))
+            .chain(std::iter::once(crate::aerials::ID).filter(|id| {
+                *id == self.preferences.background
+                    || !self
+                        .preferences
+                        .deleted_backgrounds
+                        .iter()
+                        .any(|deleted| deleted == id)
+            }))
     }
 
     pub fn can_delete_background(&self, id: &str) -> bool {
@@ -1171,7 +1271,7 @@ impl State {
             _ => None,
         };
         self.wallpapers.retain(|item| item.id != id);
-        if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
+        if BACKGROUNDS.iter().any(|(known, _)| *known == id) || id == crate::aerials::ID {
             self.preferences.deleted_backgrounds.push(id.to_owned());
         }
         if matches!(&self.overlay, Some(Overlay::BackgroundOptions { id: current, .. } | Overlay::BackgroundDelete { id: current, .. }) if current == id)
@@ -2748,11 +2848,19 @@ impl State {
                     self.previous_background = Some((self.background_key(), Instant::now()));
                     self.background_fade = BACKGROUND_FADE;
                 }
-                self.preferences.splash_background = Some(if crate::wallpapers::valid_id(&id) {
-                    self.preferences.splash_background().to_owned()
-                } else {
-                    id.clone()
-                });
+                // The TV's splash can only be a packaged picture.
+                self.preferences.splash_background = Some(
+                    if crate::wallpapers::valid_id(&id) || id == crate::aerials::ID {
+                        self.preferences.splash_background().to_owned()
+                    } else {
+                        id.clone()
+                    },
+                );
+                if id == crate::aerials::ID {
+                    self.preferences.aerials.changed = unix_now();
+                    self.aerials_previous = None;
+                    self.aerials_request = true;
+                }
                 self.preferences.background = id;
                 self.preferences.wallpaper_changed = unix_now();
                 self.back();

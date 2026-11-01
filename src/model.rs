@@ -369,6 +369,8 @@ pub struct Preferences {
     pub wallpaper_gradient: bool,
     /// Unix seconds of the last automatic or chosen wallpaper change, for the timed modes.
     pub wallpaper_changed: u64,
+    /// Where the Apple TV wallpaper is in its shuffled places (aerials.rs).
+    pub aerials: crate::aerials::Rotation,
     /// Opt-in: install newer versions of Homebrew apps automatically (homebrew_updates.rs).
     pub homebrew_updates: bool,
 }
@@ -411,6 +413,7 @@ impl Default for Preferences {
             wallpaper_cycle: false,
             wallpaper_gradient: true,
             wallpaper_changed: 0,
+            aerials: crate::aerials::Rotation::default(),
             homebrew_updates: false,
         }
     }
@@ -514,13 +517,14 @@ impl Preferences {
         }
         if !BACKGROUNDS.iter().any(|(id, _)| *id == self.background)
             && !crate::wallpapers::valid_id(&self.background)
+            && self.background != crate::aerials::ID
         {
             self.background = "dunes".into();
         }
         let mut seen = HashSet::new();
         self.deleted_backgrounds.retain(|id| {
             id != &self.background
-                && BACKGROUNDS.iter().any(|(known, _)| *known == id)
+                && (BACKGROUNDS.iter().any(|(known, _)| *known == id) || id == crate::aerials::ID)
                 && seen.insert(id.clone())
         });
         fn clean(ids: &mut Vec<String>) {

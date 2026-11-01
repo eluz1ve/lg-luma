@@ -51,7 +51,41 @@ impl Assets {
         self.root.join(path).to_string_lossy().into_owned()
     }
 
+    /// A gallery card's picture; none for Apple TV until its place's still arrives.
+    fn background_thumbnail(&self, state: &State, id: &str) -> Option<String> {
+        if id == crate::aerials::ID {
+            let place = &state.aerial_place().id;
+            return state
+                .aerials
+                .iter()
+                .find(|still| still.id == *place)
+                .map(|still| still.thumbnail());
+        }
+        Some(
+            state
+                .wallpapers
+                .iter()
+                .find(|item| item.id == id)
+                .map_or_else(
+                    || self.path(format!("thumbnails/{id}.jpg")),
+                    |item| item.thumbnail(),
+                ),
+        )
+    }
+
     fn background(&self, state: &State, id: &str) -> String {
+        // An Apple TV still: `aerials#place`.
+        if let Some(place) = id
+            .strip_prefix(crate::aerials::ID)
+            .and_then(|rest| rest.strip_prefix('#'))
+            && let Some(still) = state.aerials.iter().find(|still| still.id == place)
+        {
+            return if state.preferences.wallpaper_gradient {
+                still.image()
+            } else {
+                still.unshaded_image()
+            };
+        }
         // A dynamic wallpaper's frame: `id#frame`.
         if let Some((id, frame)) = id.split_once('#')
             && let Some(item) = state.wallpapers.iter().find(|item| item.id == id)
@@ -483,6 +517,49 @@ fn c(rgb: u32, alpha: f32) -> Color {
         alpha,
     ]
 }
+/// A gallery card's picture, or Apple TV's night-sky placeholder until its first still arrives.
+fn background_card(out: &mut Scene, assets: &Assets, state: &State, id: &str, rect: Rect) {
+    match assets.background_thumbnail(state, id) {
+        Some(path) => out.image(path, rect, 16., false),
+        None => out.draw.push(Draw::RoundedGradient(
+            rect,
+            16.,
+            c(0x23344a, 1.),
+            c(0x0b1119, 1.),
+        )),
+    }
+}
+
+/// Apple TV's card says what it is and which place it is on, over a shade at its foot.
+fn aerials_caption(out: &mut Scene, assets: &Assets, state: &State, rect: Rect) {
+    let shade = Rect::new(rect.x, rect.y + rect.h * 0.42, rect.w, rect.h * 0.58);
+    out.draw.push(Draw::RoundedGradient(
+        shade,
+        16.,
+        c(0x000000, 0.),
+        c(0x000000, 0.66),
+    ));
+    // Clear of the check mark a chosen card carries in its corner.
+    let width = rect.w - 36. - 34.;
+    let place = state.aerial_place().name(state.preferences.language);
+    let label = assets.fit_text(crate::aerials::LABEL, text(20., 600, -0.01), width);
+    out.text(
+        crate::aerials::LABEL,
+        Rect::new(rect.x + 18., rect.y + rect.h - 66., width, 26.),
+        label,
+        WHITE,
+        false,
+    );
+    let name = assets.fit_text(place, text(16., 450, 0.), width);
+    out.text(
+        place,
+        Rect::new(rect.x + 18., rect.y + rect.h - 38., width, 22.),
+        name,
+        c(0xffffff, 0.78),
+        false,
+    );
+}
+
 fn text(size: f32, weight: u16, tracking: f32) -> TextStyle {
     TextStyle::new(size).weight(weight).tracking(tracking)
 }
@@ -4182,7 +4259,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             let actions = out.draw.split_off(actions_start);
             for index in 0..state.background_count() {
                 let id = state.background_id(index).unwrap();
-                let custom = state.wallpapers.iter().find(|item| item.id == id);
                 let rect = Rect::new(
                     640. + (index % 3) as f32 * 380.,
                     252.8 + (index / 3) as f32 * 226.5 - s,
@@ -4190,15 +4266,10 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     202.5,
                 );
                 out.shadow(rect, 16., 15., 3., 0.13);
-                out.image(
-                    custom.map_or_else(
-                        || assets.path(format!("thumbnails/{id}.jpg")),
-                        |item| item.thumbnail(),
-                    ),
-                    rect,
-                    16.,
-                    false,
-                );
+                background_card(out, assets, state, id, rect);
+                if id == crate::aerials::ID {
+                    aerials_caption(out, assets, state, rect);
+                }
                 out.border(rect, 16., 1., c(0xffffff, 0.086));
                 if state.preferences.background == id {
                     out.border(rect.inset(-2.), 18., 2., c(0xdedede, 1.));
@@ -4957,15 +5028,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     let panel = Rect::new(x, card.y.clamp(164., 974. - height), 520., height);
     // Lift the selected card out of the dimmed grid without moving its hit region.
     if background {
-        let path = state
-            .wallpapers
-            .iter()
-            .find(|item| item.id == id)
-            .map_or_else(
-                || assets.path(format!("thumbnails/{id}.jpg")),
-                |item| item.thumbnail(),
-            );
-        out.image(path, card, 16., false);
+        background_card(out, assets, state, id, card);
         out.border(card, 16., 1., c(0xffffff, 0.086));
     } else if let Some(app) = app.filter(|_| !shortcut) {
         let favorite_color = app_face(out, assets, app, card, language, 19.2);
