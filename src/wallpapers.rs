@@ -21,6 +21,8 @@ use std::{
 };
 
 const MAX_BODY: usize = 12 * 1024 * 1024;
+/// A dynamic wallpaper's frames arrive in one request.
+const MAX_PACK: usize = 32 * 1024 * 1024;
 const MAX_WALLPAPERS: usize = 20;
 const SESSION_TIME: Duration = Duration::from_secs(600);
 const SESSION_REQUEST_LIMIT: usize = 64;
@@ -34,6 +36,9 @@ pub struct Wallpaper {
     pub directory: PathBuf,
     #[serde(skip)]
     pub has_original: bool,
+    /// A dynamic wallpaper's frames, in `frame-NN.jpg`, by where each belongs in the day.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<crate::dynamic_wallpaper::Frame>,
 }
 
 impl Wallpaper {
@@ -51,6 +56,16 @@ impl Wallpaper {
     pub fn image(&self) -> String {
         self.directory
             .join("wallpaper.jpg")
+            .to_string_lossy()
+            .into_owned()
+    }
+    /// A dynamic wallpaper's frame, shaded like `image` or plain like `unshaded_image`.
+    pub fn frame(&self, index: usize, shaded: bool) -> String {
+        self.directory
+            .join(format!(
+                "frame-{index:02}{}.jpg",
+                if shaded { "" } else { "-original" }
+            ))
             .to_string_lossy()
             .into_owned()
     }
@@ -188,7 +203,7 @@ fn catalog(directory: &Path) -> Vec<Wallpaper> {
         if !valid_id(&id) || !real_directory(&path) {
             continue;
         }
-        let Some(bytes) = small_file(&path.join("metadata.json"), 2048) else {
+        let Some(bytes) = small_file(&path.join("metadata.json"), 8192) else {
             continue;
         };
         let Ok(mut item) = serde_json::from_slice::<Wallpaper>(&bytes) else {
@@ -207,6 +222,17 @@ fn catalog(directory: &Path) -> Vec<Wallpaper> {
         }
         item.has_original = fs::symlink_metadata(path.join("original.jpg"))
             .is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_BODY as u64);
+        // A dynamic wallpaper missing a frame is shown as its still picture.
+        if item.frames.len() > crate::dynamic_wallpaper::MAX_FRAMES
+            || (0..item.frames.len()).any(|index| {
+                [false, true].iter().any(|shaded| {
+                    !fs::symlink_metadata(item_frame(&path, index, *shaded))
+                        .is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_BODY as u64)
+                })
+            })
+        {
+            item.frames.clear();
+        }
         item.directory = path;
         result.push(item);
         if result.len() == MAX_WALLPAPERS {
@@ -215,6 +241,13 @@ fn catalog(directory: &Path) -> Vec<Wallpaper> {
     }
     result.sort_by(|a, b| a.id.cmp(&b.id));
     result
+}
+
+fn item_frame(directory: &Path, index: usize, shaded: bool) -> PathBuf {
+    directory.join(format!(
+        "frame-{index:02}{}.jpg",
+        if shaded { "" } else { "-original" }
+    ))
 }
 
 fn delete_wallpaper(directory: &Path, id: &str, selected: &str) -> Result<(), String> {
@@ -375,6 +408,51 @@ fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wal
     shade(&mut image);
     let image = jpeg(&image, 94)?;
     let thumbnail = jpeg(&thumbnail, 82)?;
+    commit(directory, image, original, thumbnail, Vec::new(), valid)
+}
+
+/// Stores a dynamic wallpaper pack: each frame shaded and plain, with the frame for the middle
+/// of the day as its still picture and thumbnail.
+fn store_dynamic(
+    directory: &Path,
+    bytes: &[u8],
+    valid: impl Fn() -> bool,
+) -> Result<Wallpaper, String> {
+    if catalog(directory).len() >= MAX_WALLPAPERS {
+        return Err("The wallpaper gallery is full (20 images)".into());
+    }
+    let pack = crate::dynamic_wallpaper::parse(bytes)?;
+    let positions: Vec<_> = pack.iter().map(|(frame, _)| *frame).collect();
+    let still = crate::dynamic_wallpaper::choose(&positions, (60., 180.), 0.5).unwrap_or(0);
+    let mut frames = Vec::new();
+    let mut thumbnail = Vec::new();
+    for (index, (position, bytes)) in pack.into_iter().enumerate() {
+        if !valid() {
+            return Err("Upload session ended".into());
+        }
+        let mut image = decode(bytes)?;
+        let original = jpeg(&image, 90)?;
+        if index == still {
+            thumbnail = jpeg(
+                &image::imageops::resize(&image, 480, 270, image::imageops::FilterType::Triangle),
+                82,
+            )?;
+        }
+        shade(&mut image);
+        frames.push((position, jpeg(&image, 90)?, original));
+    }
+    let (image, original) = (frames[still].1.clone(), frames[still].2.clone());
+    commit(directory, image, original, thumbnail, frames, valid)
+}
+
+fn commit(
+    directory: &Path,
+    image: Vec<u8>,
+    original: Vec<u8>,
+    thumbnail: Vec<u8>,
+    frames: Vec<(crate::dynamic_wallpaper::Frame, Vec<u8>, Vec<u8>)>,
+    valid: impl Fn() -> bool,
+) -> Result<Wallpaper, String> {
     if !valid() {
         return Err("Upload session ended".into());
     }
@@ -395,11 +473,16 @@ fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wal
         id: id.clone(),
         directory: directory.join(&id),
         has_original: true,
+        frames: frames.iter().map(|(position, _, _)| *position).collect(),
     };
     let result = (|| {
         write_new(&staging.join("wallpaper.jpg"), &image)?;
         write_new(&staging.join("original.jpg"), &original)?;
         write_new(&staging.join("thumbnail.jpg"), &thumbnail)?;
+        for (index, (_, shaded, plain)) in frames.iter().enumerate() {
+            write_new(&item_frame(&staging, index, true), shaded)?;
+            write_new(&item_frame(&staging, index, false), plain)?;
+        }
         write_new(
             &staging.join("metadata.json"),
             &serde_json::to_vec(&item).map_err(|e| e.to_string())?,
@@ -418,6 +501,10 @@ fn store(directory: &Path, bytes: &[u8], valid: impl Fn() -> bool) -> Result<Wal
             "metadata.json",
         ] {
             let _ = fs::remove_file(staging.join(file));
+        }
+        for index in 0..frames.len() {
+            let _ = fs::remove_file(item_frame(&staging, index, true));
+            let _ = fs::remove_file(item_frame(&staging, index, false));
         }
         let _ = fs::remove_dir(&staging);
     }
@@ -529,7 +616,7 @@ fn request(
     valid: &impl Fn() -> bool,
     deadline: Instant,
 ) -> Result<Request, String> {
-    crate::companion::request(reader, valid, deadline, MAX_BODY, "Image exceeds 12 MiB")
+    crate::companion::request(reader, valid, deadline, MAX_PACK, "Upload exceeds 32 MiB")
 }
 
 fn serve(
@@ -611,17 +698,24 @@ fn serve(
         return Ok(false);
     }
     if request.method != "POST"
-        || route != "upload"
+        || !matches!(route, "upload" | "dynamic")
         || request.headers.get("x-luma-upload").map(String::as_str) != Some(token)
     {
         error_response(stream, "403 Forbidden", "Invalid upload request")?;
         return Ok(false);
     }
-    if !request
-        .headers
-        .get("content-type")
-        .is_some_and(|value| matches!(value.as_str(), "image/jpeg" | "image/png" | "image/webp"))
-    {
+    let dynamic = route == "dynamic";
+    if !dynamic && request.length > MAX_BODY {
+        error_response(stream, "413 Content Too Large", "Image exceeds 12 MiB")?;
+        return Ok(false);
+    }
+    if !request.headers.get("content-type").is_some_and(|value| {
+        if dynamic {
+            value == "application/x-luma-dynamic"
+        } else {
+            matches!(value.as_str(), "image/jpeg" | "image/png" | "image/webp")
+        }
+    }) {
         error_response(
             stream,
             "415 Unsupported Media Type",
@@ -632,7 +726,12 @@ fn serve(
     let mut body = vec![0; request.length];
     read_exact(&mut reader, &mut body, &valid, deadline)?;
     drop(reader);
-    match store(directory, &body, valid) {
+    let stored = if dynamic {
+        store_dynamic(directory, &body, valid)
+    } else {
+        store(directory, &body, valid)
+    };
+    match stored {
         Ok(item) => {
             // The commit succeeded even if the phone disconnects before receiving its reply.
             let _ = response(

@@ -41,9 +41,50 @@ function draw(target = canvas) {
   context.drawImage(image, x, y, w, h, 0, 0, target.width, target.height);
 }
 
+// A dynamic wallpaper (made by tools/lumadyn.swift) goes to the TV as it is: its frames are
+// already 1920 × 1080.
+async function sendDynamic(selected) {
+  const destination = await storageReady;
+  busy = true;
+  file.disabled = true;
+  message('Sending the dynamic wallpaper to your TV…');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    if (selected.size > 32 * 1024 * 1024) throw new Error('Choose a dynamic wallpaper under 32 MiB.');
+    const token = location.pathname.split('/')[1];
+    const response = await fetch('dynamic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-luma-dynamic', 'X-Luma-Upload': token },
+      body: selected,
+      signal: controller.signal,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'The TV could not save this wallpaper.');
+    element('success-path').textContent = destination || '';
+    picker.hidden = true;
+    element('success').hidden = false;
+    element('storage-footer').hidden = true;
+    message('');
+  } catch (error) {
+    message(
+      error.name === 'AbortError'
+        ? 'The TV did not respond in time. Check the TV gallery before retrying.'
+        : error.message || 'The TV could not save this wallpaper.',
+      true,
+    );
+  } finally {
+    clearTimeout(timeout);
+    busy = false;
+    file.disabled = false;
+    file.value = '';
+  }
+}
+
 file.addEventListener('change', async () => {
   const selected = file.files[0];
   if (!selected || busy) return;
+  if (selected.name.toLowerCase().endsWith('.lumadyn')) return sendDynamic(selected);
   const generation = ++loading;
   message('Opening your image…');
   try {

@@ -239,6 +239,7 @@ fn gallery_capacity_is_checked_before_decoding_or_creating_another_upload() {
                 id,
                 directory: directory.clone(),
                 has_original: false,
+                frames: Vec::new(),
             })
             .unwrap(),
         )
@@ -283,7 +284,7 @@ fn protocol_rejects_oversized_ambiguous_and_chunked_requests() {
     for request_text in [
         format!(
             "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
-            MAX_BODY + 1
+            MAX_PACK + 1
         ),
         "POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n".into(),
         "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".into(),
@@ -546,4 +547,35 @@ fn cancelling_a_slow_request_releases_the_worker_without_waiting_for_the_body() 
         Event::Ended(_)
     ));
     assert!(catalog(&fixture.wallpapers()).is_empty());
+}
+
+#[test]
+fn dynamic_packs_store_every_frame_and_the_middle_of_the_day_as_their_picture() {
+    let fixture = Fixture::new();
+    let frame = image(1920, 1080);
+    let mut pack = b"LUMADYN1\n".to_vec();
+    pack.extend_from_slice(
+        format!(
+            r#"{{"frames":[{{"altitude":-20,"azimuth":0,"length":{0}}},{{"altitude":55,"azimuth":180,"length":{0}}}]}}"#,
+            frame.len()
+        )
+        .as_bytes(),
+    );
+    pack.push(b'\n');
+    pack.extend_from_slice(&frame);
+    pack.extend_from_slice(&frame);
+    let item = store_dynamic(&fixture.wallpapers(), &pack, || true).unwrap();
+    assert_eq!(item.frames.len(), 2);
+    let listed = catalog(&fixture.wallpapers());
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].frames, item.frames);
+    for index in 0..2 {
+        for shaded in [true, false] {
+            assert!(Path::new(&listed[0].frame(index, shaded)).is_file());
+        }
+    }
+    // A missing frame leaves the wallpaper as a still picture rather than broken.
+    fs::remove_file(listed[0].frame(1, false)).unwrap();
+    assert!(catalog(&fixture.wallpapers())[0].frames.is_empty());
+    assert!(store_dynamic(&fixture.wallpapers(), &frame, || true).is_err());
 }

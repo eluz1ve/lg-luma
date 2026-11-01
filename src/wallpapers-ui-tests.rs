@@ -6,6 +6,7 @@ fn custom(index: u32) -> Wallpaper {
         id: format!("custom-{index:032x}"),
         directory: PathBuf::from(format!("/preview/wallpapers/custom-{index:032x}")),
         has_original: true,
+        frames: Vec::new(),
     }
 }
 
@@ -826,4 +827,56 @@ fn removed_popup_entry_closes_safely_and_preference_sanitizing_protects_the_sele
             .any(|id| id == "dunes" || id == "../bad")
     );
     assert!(state.preferences.deleted_backgrounds.len() <= 1);
+}
+
+#[test]
+fn a_dynamic_wallpaper_shows_the_frame_for_the_sun_and_fades_between_frames() {
+    use crate::dynamic_wallpaper::Frame;
+    let mut state = ready();
+    let mut item = custom(7);
+    item.frames = vec![
+        Frame {
+            altitude: Some(-30.),
+            azimuth: Some(0.),
+            time: None,
+        },
+        Frame {
+            altitude: Some(60.),
+            azimuth: Some(180.),
+            time: None,
+        },
+    ];
+    state.set_wallpapers(vec![item.clone()]);
+    state.preferences.background = item.id.clone();
+    // Kyiv: midday in June, then the night after.
+    state.preferences.weather_location = Some(crate::weather::Location {
+        name: "Kyiv".into(),
+        region: String::new(),
+        country: "Ukraine".into(),
+        latitude: 50.45,
+        longitude: 30.52,
+        id: None,
+    });
+    let noon = time::OffsetDateTime::from_unix_timestamp(1_782_036_000).unwrap();
+    state.sync_dynamic_wallpaper(noon);
+    assert_eq!(state.background_key(), format!("{}#1", item.id));
+    assert!(
+        state.previous_background.is_none(),
+        "the first frame does not fade in"
+    );
+    state.sync_dynamic_wallpaper(noon + time::Duration::seconds(10));
+    assert_eq!(state.background_key(), format!("{}#1", item.id));
+    state.sync_dynamic_wallpaper(noon + time::Duration::hours(12));
+    assert_eq!(state.background_key(), format!("{}#0", item.id));
+    assert_eq!(
+        state
+            .previous_background
+            .as_ref()
+            .map(|(key, _)| key.clone()),
+        Some(format!("{}#1", item.id))
+    );
+    // Another wallpaper drops the frame.
+    state.preferences.background = "dunes".into();
+    state.sync_dynamic_wallpaper(noon);
+    assert_eq!(state.background_key(), "dunes");
 }

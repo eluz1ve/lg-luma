@@ -351,6 +351,28 @@ Verify the QR code, phone drag/zoom, upload,
 TV selection/restart, normal/takeover access, cancellation and timeout on real hardware; desktop
 checks do not establish webOS jail networking permissions or TV/browser behavior.
 
+### Dynamic wallpapers
+
+A dynamic wallpaper follows the sun like macOS's Dynamic Desktop. `tools/lumadyn.swift` (macOS,
+system frameworks only) turns a Dynamic Desktop `.heic` into a `.lumadyn` pack:
+
+```sh
+swift tools/lumadyn.swift "The Desert.heic"
+```
+
+macOS downloads its Dynamic Desktop pictures when one is chosen in System Settings › Wallpaper,
+into `/System/Library/AssetsV2/com_apple_MobileAsset_DesktopPicture/*/AssetData/`. They are
+Apple's: convert your own copy for your own TV; nothing of them is part of Luma. The upload page
+takes the `.lumadyn` as it is and posts it to `/<token>/dynamic` (`application/x-luma-dynamic`,
+up to 32 MiB, 1–32 frames of exactly 1920 × 1080). The pack is `LUMADYN1`, a line of JSON
+(`{"frames":[{"altitude":…,"azimuth":…,"length":…}|{"time":…,"length":…}]}`), then the JPEGs back
+to back. Each frame is stored shaded and plain (`frame-NN.jpg`, `frame-NN-original.jpg`) beside
+the usual files, the frame for midday being the still picture and thumbnail; a wallpaper missing
+a frame is shown as its still picture. While it is the background, Luma checks every half minute
+for the frame whose sun altitude and azimuth are nearest the sun's at the weather location (NOAA's
+approximation; without a location, the time zone's meridian at 45°N), or for time-of-day frames
+the latest one begun, and fades to it over six seconds. Reduced motion switches at once.
+
 ## Shortcut editing on a phone or computer
 
 **Settings → Widgets → Shortcuts → Configure** opens the same QR modal as the wallpaper

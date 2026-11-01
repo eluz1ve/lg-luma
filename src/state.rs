@@ -302,6 +302,8 @@ pub struct State {
     pub pointer: bool,
     pub pressed: Option<Target>,
     pub previous_background: Option<(String, Instant)>,
+    /// The frame a dynamic wallpaper shows, for the wallpaper it was chosen for, and when.
+    pub dynamic_frame: Option<(String, usize, i64)>,
     pub background_fade: f32,
     pub wallpapers: Vec<crate::wallpapers::Wallpaper>,
     pub deleting_wallpaper: Option<String>,
@@ -356,6 +358,7 @@ impl State {
             pointer: false,
             pressed: None,
             previous_background: None,
+            dynamic_frame: None,
             background_fade: BACKGROUND_FADE,
             wallpapers: vec![],
             deleting_wallpaper: None,
@@ -1003,6 +1006,65 @@ impl State {
         self.background_ids().count()
     }
 
+    /// The background to draw: the chosen one, with its frame when it is a dynamic wallpaper
+    /// (`id#frame`).
+    pub fn background_key(&self) -> String {
+        match &self.dynamic_frame {
+            Some((id, frame, _)) if *id == self.preferences.background => format!("{id}#{frame}"),
+            _ => self.preferences.background.clone(),
+        }
+    }
+
+    /// Follows the sun with a dynamic wallpaper: at most every half minute, the frame nearest the
+    /// sun at the weather location (else the time zone's meridian), or the time of day, fading
+    /// slowly to it. A newly chosen wallpaper starts at its frame without a fade of its own.
+    pub fn sync_dynamic_wallpaper(&mut self, now: time::OffsetDateTime) {
+        use crate::dynamic_wallpaper::{FADE, choose, sun};
+        let unix = now.unix_timestamp();
+        let id = &self.preferences.background;
+        let Some(item) = self.wallpapers.iter().find(|item| item.id == *id) else {
+            self.dynamic_frame = None;
+            return;
+        };
+        if item.frames.is_empty() {
+            self.dynamic_frame = None;
+            return;
+        }
+        let same = self
+            .dynamic_frame
+            .as_ref()
+            .filter(|(chosen, _, _)| chosen == id)
+            .cloned();
+        if same
+            .as_ref()
+            .is_some_and(|(_, _, checked)| (unix - checked).abs() < 30)
+        {
+            return;
+        }
+        let (latitude, longitude) = self
+            .preferences
+            .weather_location
+            .as_ref()
+            .map_or((45., now.offset().whole_seconds() as f64 / 240.), |place| {
+                (place.latitude, place.longitude)
+            });
+        let day =
+            (now.hour() as f32 * 3600. + now.minute() as f32 * 60. + now.second() as f32) / 86400.;
+        let frame = choose(&item.frames, sun(latitude, longitude, unix), day).unwrap_or(0);
+        if let Some((_, previous, _)) = &same
+            && *previous != frame
+            && !self.preferences.reduced_motion
+            && self.previous_background.is_none()
+        {
+            self.previous_background = Some((self.background_key(), Instant::now()));
+            self.background_fade = FADE;
+        }
+        self.dirty |= same
+            .as_ref()
+            .is_none_or(|(_, previous, _)| *previous != frame);
+        self.dynamic_frame = Some((id.clone(), frame, unix));
+    }
+
     pub fn cycle_wallpaper(&mut self, now: u64) -> bool {
         let ids: Vec<_> = self
             .background_ids()
@@ -1018,7 +1080,7 @@ impl State {
         if self.preferences.reduced_motion {
             self.previous_background = None;
         } else {
-            self.previous_background = Some((self.preferences.background.clone(), Instant::now()));
+            self.previous_background = Some((self.background_key(), Instant::now()));
             self.background_fade = CYCLE_FADE;
         }
         self.preferences.background = id;
@@ -2683,8 +2745,7 @@ impl State {
                     return self.back();
                 }
                 if !self.preferences.reduced_motion && self.preferences.background != id {
-                    self.previous_background =
-                        Some((self.preferences.background.clone(), Instant::now()));
+                    self.previous_background = Some((self.background_key(), Instant::now()));
                     self.background_fade = BACKGROUND_FADE;
                 }
                 self.preferences.splash_background = Some(if crate::wallpapers::valid_id(&id) {

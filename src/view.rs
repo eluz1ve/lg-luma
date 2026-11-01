@@ -52,6 +52,15 @@ impl Assets {
     }
 
     fn background(&self, state: &State, id: &str) -> String {
+        // A dynamic wallpaper's frame: `id#frame`.
+        if let Some((id, frame)) = id.split_once('#')
+            && let Some(item) = state.wallpapers.iter().find(|item| item.id == id)
+            && let Ok(frame) = frame.parse::<usize>()
+            && frame < item.frames.len()
+        {
+            return item.frame(frame, state.preferences.wallpaper_gradient);
+        }
+        let id = id.split_once('#').map_or(id, |(id, _)| id);
         if let Some(item) = state.wallpapers.iter().find(|item| item.id == id) {
             return if state.preferences.wallpaper_gradient {
                 item.image()
@@ -520,7 +529,7 @@ pub fn scene_with_pill(
         );
         let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
         out.draw.push(Draw::TintedImage(
-            assets.background(state, &state.preferences.background),
+            assets.background(state, &state.background_key()),
             Rect::new(0., 0., 1920., 1080.),
             0.,
             false,
@@ -528,7 +537,7 @@ pub fn scene_with_pill(
         ));
     } else {
         out.image(
-            assets.background(state, &state.preferences.background),
+            assets.background(state, &state.background_key()),
             Rect::new(0., 0., 1920., 1080.),
             0.,
             false,

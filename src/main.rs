@@ -1,4 +1,5 @@
 mod app_artwork;
+mod dynamic_wallpaper;
 // Used by the TV build's Home lifecycle; the host build compiles it for its tests.
 #[cfg(all(feature = "webos", target_os = "linux"))]
 #[cfg_attr(not(target_arch = "arm"), allow(dead_code))]
@@ -1160,6 +1161,7 @@ fn run() -> Result<(), String> {
         let now = options
             .time
             .unwrap_or_else(|| OffsetDateTime::now_utc().to_offset(local_offset));
+        state.sync_dynamic_wallpaper(now);
         // Redraw once per minute, or once per second while seconds are shown.
         let clock_slot = if state.preferences.show_seconds {
             now.unix_timestamp()
