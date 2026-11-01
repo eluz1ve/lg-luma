@@ -804,10 +804,10 @@ fn remote_can_clear_a_saved_greeting_name_without_moving_the_controls() {
 fn app_name_settings_use_independent_defaults_including_with_legacy_preferences() {
     let old: Preferences = serde_json::from_value(json!({"show_names": true})).unwrap();
     assert!(!old.show_home_names);
-    assert!(old.show_app_names);
+    assert_eq!(old.app_names, crate::model::AppNames::Focus);
     let mut state = ready();
     assert!(!state.preferences.show_home_names);
-    assert!(state.preferences.show_app_names);
+    assert_eq!(state.preferences.app_names, crate::model::AppNames::Focus);
     state.open(2);
     state.focus = Target::Setting(0);
     assert!(
@@ -819,17 +819,17 @@ fn app_name_settings_use_independent_defaults_including_with_legacy_preferences(
     assert_eq!(state.focus, Target::AppNamesHome);
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(state.preferences.show_home_names);
-    assert!(state.preferences.show_app_names);
+    assert_eq!(state.preferences.app_names, crate::model::AppNames::Focus);
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::AppNamesApps);
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(state.preferences.show_home_names);
-    assert!(!state.preferences.show_app_names);
+    assert_eq!(state.preferences.app_names, crate::model::AppNames::Always);
     assert_eq!(state.subpage, Some(crate::state::Subpage::AppNames));
     let restored: Preferences =
         serde_json::from_value(serde_json::to_value(&state.preferences).unwrap()).unwrap();
     assert!(restored.show_home_names);
-    assert!(!restored.show_app_names);
+    assert_eq!(restored.app_names, crate::model::AppNames::Always);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::Setting(0));
     assert!(state.subpage.is_none());
@@ -840,7 +840,11 @@ fn home_and_apps_render_only_their_own_caption_preference() {
     let mut state = ready();
     for (home, apps) in [(false, true), (true, false), (true, true), (false, false)] {
         state.preferences.show_home_names = home;
-        state.preferences.show_app_names = apps;
+        state.preferences.app_names = if apps {
+            crate::model::AppNames::Always
+        } else {
+            crate::model::AppNames::Off
+        };
         for (page, expected) in [(0, home), (1, apps)] {
             state.open(page);
             // Home names only its focused card.
@@ -1331,7 +1335,11 @@ fn opening_side_popup_preserves_card_artwork_geometry_with_or_without_captions()
     for page in [0, 1] {
         for names in [false, true] {
             let mut state = ready();
-            state.preferences.show_app_names = names;
+            state.preferences.app_names = if names {
+                crate::model::AppNames::Always
+            } else {
+                crate::model::AppNames::Off
+            };
             state.preferences.show_home_names = names;
             state.open(page);
             state.focus = Target::App("netflix".into());
@@ -1609,6 +1617,8 @@ fn remote_toolbar_focus_normalizes_scroll_but_hover_does_not() {
 #[test]
 fn long_captions_expand_rows_without_overlapping_the_next_row() {
     let mut state = ready();
+    // Every card is named only in the Always mode.
+    state.preferences.app_names = crate::model::AppNames::Always;
     state.open(1);
     state.inventory.apps.iter_mut().find(|app| app.id == "netflix").unwrap().title = "A very long installed application title that needs more than two lines to remain fully readable".into();
     let targets = controls(&state);
@@ -4064,4 +4074,64 @@ fn the_focus_glow_colour_is_chosen_in_general_settings() {
         .filter(|draw| matches!(draw, crate::renderer::Draw::Shadow(_, _, blur, _) if *blur == 32.))
         .count();
     assert_eq!(glows, 0, "Off draws no glow");
+}
+
+#[test]
+fn app_names_default_to_focus_and_old_preferences_migrate() {
+    use crate::model::AppNames;
+    let names = |value| {
+        serde_json::from_value::<Preferences>(value)
+            .unwrap()
+            .app_names
+    };
+    assert_eq!(names(json!({})), AppNames::Focus);
+    assert_eq!(names(json!({"show_app_names": false})), AppNames::Off);
+    assert_eq!(names(json!({"show_app_names": true})), AppNames::Focus);
+    assert_eq!(names(json!({"app_names": "always"})), AppNames::Always);
+    assert_eq!(names(json!({"app_names": 7})), AppNames::Focus);
+    assert_eq!(AppNames::Focus.next(), AppNames::Always);
+    assert_eq!(AppNames::Always.next(), AppNames::Off);
+    assert_eq!(AppNames::Off.next(), AppNames::Focus);
+}
+
+#[test]
+fn apps_name_only_the_focused_card_by_default() {
+    use crate::model::AppNames;
+    let mut state = ready();
+    state.open(1);
+    let first: Vec<String> = state
+        .apps()
+        .iter()
+        .take(6)
+        .map(|app| app.title.clone())
+        .collect();
+    state.focus = Target::App(state.apps()[0].id.clone());
+    let named = |state: &State| {
+        let texts: Vec<String> = scene(state)
+            .draw
+            .iter()
+            .filter_map(|draw| match draw {
+                crate::renderer::Draw::Text(label, ..) => Some(label.clone()),
+                _ => None,
+            })
+            .collect();
+        first.iter().filter(|title| texts.contains(title)).count()
+    };
+    assert_eq!(named(&state), 1);
+    state.preferences.app_names = AppNames::Always;
+    assert_eq!(named(&state), 6);
+    state.preferences.app_names = AppNames::Off;
+    assert_eq!(named(&state), 0);
+}
+
+#[test]
+fn options_anchor_sits_on_the_card_when_names_show_on_focus() {
+    let mut state = ready();
+    state.open(1);
+    state.focus = Target::App("netflix".into());
+    let card = controls(&state)
+        .into_iter()
+        .find(|c| c.target == Target::App("netflix".into()))
+        .unwrap();
+    assert!(card.rect.h < 160., "no room for a name in the hit target");
 }

@@ -2663,7 +2663,7 @@ impl State {
                 return vec![Effect::Save];
             }
             Target::AppNamesApps => {
-                self.preferences.show_app_names = !self.preferences.show_app_names;
+                self.preferences.app_names = self.preferences.app_names.next();
                 return vec![Effect::Save];
             }
             Target::ClockFormat | Target::ClockTimeFormat => {

@@ -3,6 +3,45 @@ use crate::weather::{Location, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+/// The Apps page's card names: as on Apple TV, only the focused card's by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppNames {
+    #[default]
+    Focus,
+    Always,
+    Off,
+}
+impl AppNames {
+    /// The next choice, for the setting's OK.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Focus => Self::Always,
+            Self::Always => Self::Off,
+            Self::Off => Self::Focus,
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Focus => "namesFocus",
+            Self::Always => "namesAlways",
+            Self::Off => "stateOff",
+        }
+    }
+}
+
+/// Reads the names mode, or the former `show_app_names` switch: on was the default, so it becomes
+/// names on focus; off stays off. Anything malformed is the default.
+fn deserialize_app_names<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<AppNames, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Bool(false) => AppNames::Off,
+        value @ serde_json::Value::String(_) => serde_json::from_value(value).unwrap_or_default(),
+        _ => AppNames::Focus,
+    })
+}
+
 /// The focused card's glow on Home, chosen in Settings › General.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -315,7 +354,9 @@ pub struct Preferences {
     pub splash_background: Option<String>,
     pub deleted_backgrounds: Vec<String>,
     pub show_home_names: bool,
-    pub show_app_names: bool,
+    /// Names under the Apps page's cards: the focused card's only, every card's, or none.
+    #[serde(alias = "show_app_names", deserialize_with = "deserialize_app_names")]
+    pub app_names: AppNames,
     pub hour_24: bool,
     pub reduced_motion: bool,
     /// The colour of the focused card's glow on Home.
@@ -389,7 +430,7 @@ impl Default for Preferences {
             splash_background: None,
             deleted_backgrounds: vec![],
             show_home_names: false,
-            show_app_names: true,
+            app_names: AppNames::default(),
             hour_24: false,
             reduced_motion: false,
             focus_glow: FocusGlow::default(),

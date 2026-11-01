@@ -1829,6 +1829,36 @@
     "nl": "Tonen in Apps",
     "sv": "Visa i Appar"
   },
+  "namesFocus": {
+    "zh-tw": "焦點時",
+    "en": "On focus",
+    "de": "Bei Fokus",
+    "es": "Al enfocar",
+    "zh": "聚焦时",
+    "pt": "Ao focar",
+    "it": "Con focus",
+    "ru": "При фокусе",
+    "pl": "Przy zaznaczeniu",
+    "fr": "À la sélection",
+    "vi": "Khi chọn",
+    "nl": "Bij focus",
+    "sv": "Vid fokus"
+  },
+  "namesAlways": {
+    "zh-tw": "一律",
+    "en": "Always",
+    "de": "Immer",
+    "es": "Siempre",
+    "zh": "始终",
+    "pt": "Sempre",
+    "it": "Sempre",
+    "ru": "Всегда",
+    "pl": "Zawsze",
+    "fr": "Toujours",
+    "vi": "Luôn luôn",
+    "nl": "Altijd",
+    "sv": "Alltid"
+  },
   "clock24": {
     "zh-tw": "24 小時制",
     "en": "24-hour clock",

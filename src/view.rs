@@ -733,7 +733,8 @@ pub fn scene_with_pill(
                     // full hit region here stretches the lifted card vertically.
                     let mut rect = control.rect;
                     // Home names only its focused card, outside the hit region.
-                    let names = state.page != Page::Home && state.preferences.show_app_names;
+                    let names = state.page != Page::Home
+                        && state.preferences.app_names == crate::model::AppNames::Always;
                     if names
                         && let Some(app) = state.inventory.apps.iter().find(|app| &app.id == id)
                     {
@@ -936,6 +937,28 @@ fn lift_edge(out: &mut Scene, rect: Rect, radius: f32, amount: f32) {
     if amount > 0. {
         out.border(rect, radius, 1.4, c(0xffffff, 0.5 * amount));
     }
+}
+
+/// As on Apple TV, the focused card is named on one line below it, centred, as wide as a
+/// column and its gutters; other cards go unnamed.
+fn focused_name(out: &mut Scene, state: &State, assets: &Assets, app: &App, rect: Rect) {
+    if state.focus != Target::App(app.id.clone()) {
+        return;
+    }
+    let style = text(type_scale::CAPTION * caption_scale(state), 600, -0.01).shadow();
+    let room = rect.w + 2. * GUTTER;
+    out.text(
+        &app.title,
+        Rect::new(
+            rect.x + (rect.w - room) / 2.,
+            rect.y + rect.h + 14.,
+            room,
+            style.size * 1.2,
+        ),
+        assets.fit_text(&app.title, style, room),
+        WHITE,
+        true,
+    );
 }
 
 fn tile(
@@ -1484,25 +1507,17 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             HOME_FACE_HEIGHT,
         );
         tile(out, state, assets, app, rect, false, false);
-        // As on Apple TV, only the focused card is named, on one line below it.
-        if names && state.focus == Target::App(app.id.clone()) {
+        if names {
             let x = rect.x + state.home_scroll
                 - state
                     .motion
                     .shown(crate::motion::Lane::Favorites, state.home_scroll);
-            let style = text(type_scale::CAPTION * caption_scale(state), 600, -0.01).shadow();
-            let room = HOME_TILE_PITCH + GUTTER;
-            out.text(
-                &app.title,
-                Rect::new(
-                    x + (rect.w - room) / 2.,
-                    rect.y + rect.h + 14.,
-                    room,
-                    style.size * 1.2,
-                ),
-                assets.fit_text(&app.title, style, room),
-                WHITE,
-                true,
+            focused_name(
+                out,
+                state,
+                assets,
+                app,
+                Rect::new(x, rect.y, rect.w, rect.h),
             );
         }
     }
@@ -3376,7 +3391,8 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
         );
     }
     let mut y = 270.4;
-    let names = state.preferences.show_app_names;
+    let names = state.preferences.app_names == crate::model::AppNames::Always;
+    let on_focus = state.preferences.app_names == crate::model::AppNames::Focus;
     for row in apps.chunks(APPS_COLUMNS) {
         let row_height = FACE_HEIGHT
             + if names {
@@ -3397,6 +3413,15 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
                 names,
                 favorites.contains(&app.id),
             );
+            if on_focus {
+                focused_name(
+                    out,
+                    state,
+                    assets,
+                    app,
+                    Rect::new(84. + column as f32 * GRID_PITCH, y - s, 270., FACE_HEIGHT),
+                );
+            }
         }
         y += row_height + 38.4;
     }
@@ -4909,12 +4934,17 @@ fn app_name_settings(out: &mut Scene, state: &State, assets: &Assets) {
         (
             Target::AppNamesApps,
             "showOnApps",
-            state.preferences.show_app_names,
+            state.preferences.app_names != crate::model::AppNames::Off,
         ),
     ]
     .into_iter()
     .enumerate()
     {
+        let value = if target == Target::AppNamesApps {
+            language.t(state.preferences.app_names.key())
+        } else {
+            language.t(if enabled { "stateOn" } else { "stateOff" })
+        };
         row(
             out,
             state,
@@ -4924,7 +4954,7 @@ fn app_name_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 rect: Rect::new(640., 164.8 + index as f32 * 84. - state.scroll, 1120., 72.),
                 title: language.t(title),
                 icon: None,
-                value: Some(language.t(if enabled { "stateOn" } else { "stateOff" })),
+                value: Some(value),
                 description: None,
                 selected: false,
                 chevron: false,
