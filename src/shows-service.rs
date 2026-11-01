@@ -20,7 +20,8 @@ const LIMIT: usize = 2 * 1024 * 1024;
 const POSTER_LIMIT: usize = 1024 * 1024;
 /// Posters are drawn about 256 px wide; a little more keeps them sharp when the card lifts.
 const POSTER_WIDTH: u32 = 320;
-/// Days of the streaming schedule read, up to today.
+/// Days of the streaming schedule read, up to today; tomorrow's is read too, since west of UTC
+/// this evening's episodes are on tomorrow's.
 const DAYS: i64 = 7;
 
 #[derive(Clone)]
@@ -58,11 +59,11 @@ impl Client {
         }
         Ok(bytes)
     }
-    /// The week's streaming schedule up to today, and today's TV in `country`.
+    /// The week's streaming schedule up to tomorrow, and today's TV in `country`.
     pub fn shows(&self, command: &Command) -> Result<Vec<Show>, String> {
         let today = time::OffsetDateTime::now_utc().date();
         let mut replies = Vec::new();
-        let mut requests: Vec<(String, Vec<(&str, String)>)> = (0..DAYS)
+        let mut requests: Vec<(String, Vec<(&str, String)>)> = (-1..DAYS)
             .map(|day| {
                 let date = (today - time::Duration::days(day)).to_string();
                 (format!("{API}/schedule/web"), vec![("date", date)])

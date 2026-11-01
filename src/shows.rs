@@ -110,6 +110,59 @@ pub struct Show {
     pub service: Option<&'static str>,
     /// The installed app that plays it.
     pub app: Option<String>,
+    /// Its airings on the schedules read, earliest first.
+    pub episodes: Vec<Episode>,
+}
+
+/// One airing of a show on a schedule.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Episode {
+    /// Unix seconds.
+    pub airs: i64,
+    pub season: Option<u32>,
+    pub number: Option<u32>,
+}
+
+/// Airings kept per show: a week of a daily show and the day after.
+const EPISODES: usize = 8;
+
+impl Show {
+    /// Its first airing from `from` until before `to`.
+    pub fn airing(&self, from: i64, to: i64) -> Option<&Episode> {
+        self.episodes
+            .iter()
+            .find(|episode| (from..to).contains(&episode.airs))
+    }
+
+    fn add(&mut self, episode: Episode) {
+        if self.episodes.contains(&episode) {
+            return;
+        }
+        self.episodes.push(episode);
+        self.episodes.sort_by_key(|episode| episode.airs);
+        self.episodes.truncate(EPISODES);
+    }
+}
+
+/// A schedule entry's airing; entries without an air time have none.
+fn episode(entry: &Value) -> Option<Episode> {
+    let airs = time::OffsetDateTime::parse(
+        entry.get("airstamp")?.as_str()?,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok()?
+    .unix_timestamp();
+    let count = |key| {
+        entry
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|count| u32::try_from(count).ok())
+    };
+    Some(Episode {
+        airs,
+        season: count("season"),
+        number: count("number"),
+    })
 }
 
 fn text(value: &Value, limit: usize) -> String {
@@ -175,13 +228,14 @@ fn show(value: &Value, installed: &[(String, String)]) -> Option<(i64, Show)> {
             meta,
             service: service.map(|service| service.name),
             app,
+            episodes: Vec::new(),
         },
     ))
 }
 
 /// The shows of TVmaze schedule replies (`/schedule/web` embeds them, `/schedule` nests them),
 /// without repeats or posterless ones: those an installed app plays first, each group the most
-/// popular first. At most `SHOWN`.
+/// popular first, each with its airings. At most `SHOWN`.
 pub fn parse_schedules(replies: &[Value], installed: &[(String, String)]) -> Vec<Show> {
     let mut shows: Vec<(i64, Show)> = Vec::new();
     for entry in replies.iter().filter_map(Value::as_array).flatten() {
@@ -191,11 +245,19 @@ pub fn parse_schedules(replies: &[Value], installed: &[(String, String)]) -> Vec
         else {
             continue;
         };
-        if let Some((weight, show)) = show(value, installed)
-            && show.poster.is_some()
-            && !shows.iter().any(|(_, seen)| seen.id == show.id)
-        {
-            shows.push((weight, show));
+        let Some((weight, show)) = show(value, installed).filter(|(_, show)| show.poster.is_some())
+        else {
+            continue;
+        };
+        let index = match shows.iter().position(|(_, seen)| seen.id == show.id) {
+            Some(index) => index,
+            None => {
+                shows.push((weight, show));
+                shows.len() - 1
+            }
+        };
+        if let Some(episode) = episode(entry) {
+            shows[index].1.add(episode);
         }
     }
     // Stable, so equally popular shows keep their schedule order.

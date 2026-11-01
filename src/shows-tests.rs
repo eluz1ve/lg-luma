@@ -104,3 +104,49 @@ fn posters_are_wanted_once_around_the_row() {
     assert!(shows.accept_poster(first[0].clone(), None));
     assert!(!shows.accept_poster(first[0].clone(), None));
 }
+
+#[test]
+fn schedule_entries_keep_each_episodes_air_time() {
+    let web = json!([
+        {"airstamp": "2026-11-08T21:00:00+00:00", "season": 2, "number": 6,
+         "_embedded": {"show": entry(1, "Loud", 90, "Netflix")}},
+        {"airstamp": "2026-11-01T21:00:00+00:00", "season": 2, "number": 5,
+         "_embedded": {"show": entry(1, "Loud", 90, "Netflix")}},
+        {"airstamp": "2026-11-01T21:00:00+00:00", "season": 2, "number": 5,
+         "_embedded": {"show": entry(1, "Loud", 90, "Netflix")}},
+        {"_embedded": {"show": entry(2, "Undated", 40, "Netflix")}}
+    ]);
+    let shows = parse_schedules(&[web], &installed());
+    let loud = &shows[0];
+    assert_eq!(
+        loud.episodes,
+        [
+            Episode {
+                airs: 1_793_566_800,
+                season: Some(2),
+                number: Some(5)
+            },
+            Episode {
+                airs: 1_793_566_800 + 7 * 86_400,
+                season: Some(2),
+                number: Some(6)
+            },
+        ]
+    );
+    // An entry without its air time keeps the show, with no episodes.
+    assert_eq!(shows[1].title, "Undated");
+    assert!(shows[1].episodes.is_empty());
+}
+
+#[test]
+fn an_episode_airing_this_local_evening_counts_even_on_the_next_utc_date() {
+    let tv = json!([
+        {"airstamp": "2026-11-02T01:00:00+00:00", "season": 1, "number": 3,
+         "show": entry(7, "Late", 50, "Netflix")}
+    ]);
+    let show = &parse_schedules(&[tv], &installed())[0];
+    // 1 November in UTC−5: 05:00Z on the 1st to 05:00Z on the 2nd.
+    let day = (1_793_509_200, 1_793_509_200 + 86_400);
+    assert_eq!(show.airing(day.0, day.1).map(|e| e.number), Some(Some(3)));
+    assert!(show.airing(day.1, day.1 + 86_400).is_none());
+}

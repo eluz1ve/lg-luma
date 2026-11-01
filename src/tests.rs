@@ -3970,6 +3970,7 @@ fn tv_shows_slide_six_at_a_time_and_open_their_app() {
             meta: "Drama · 2024".into(),
             service: Some("Netflix"),
             app: (index != 3).then(|| "netflix".to_owned()),
+            episodes: Vec::new(),
         })
         .collect();
     let shows = |state: &State| {
@@ -4009,6 +4010,7 @@ fn carousels_slide_the_same_way_left_and_right() {
             meta: String::new(),
             service: None,
             app: None,
+            episodes: Vec::new(),
         })
         .collect();
     let drawn_x = |state: &State| {
