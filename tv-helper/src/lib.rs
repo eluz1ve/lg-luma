@@ -4,6 +4,7 @@ pub mod app_update;
 pub mod files;
 pub mod home;
 pub mod input;
+pub mod running;
 pub mod system;
 pub mod uninstall;
 

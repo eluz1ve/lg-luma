@@ -57,6 +57,7 @@ pub enum Target {
     Recent(String),
     RecentEmpty,
     RecentRetry,
+    RecentCloseAll,
     App(String),
     Input(String),
     Browse,
@@ -1961,6 +1962,7 @@ impl State {
             return match self.focus.clone() {
                 Target::Recent(id) => self.recent_request(Command::Launch(id)),
                 Target::RecentRetry => self.recent_request(Command::List),
+                Target::RecentCloseAll => self.close_all_recents(),
                 _ => vec![],
             };
         }

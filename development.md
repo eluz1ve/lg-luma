@@ -198,6 +198,16 @@ An isolated, opt-in firmware overlay diagnostic is documented in
 [`docs/overlay-probe.md`](docs/overlay-probe.md). It uses a separate QML app and does
 not change the native launcher or make Recent apps available above other apps.
 
+The Close all button snapshots displayed app IDs and uses the same serialized close operation
+as Up. Down reaches the button; Up returns to the selected card. A failure or dismissal stops
+the remaining queue. Each close is validated against current running state, and a final read
+reconciles the list. New apps launched during a batch are not added to it.
+
+Rooted Home uses `tv-helper::running` on the platform worker for list/close, bypassing service
+and JavaScript startup. Calls remain bounded. Direct termination requires an eligible card,
+successful close request, unique PID and unchanged process start time. Other installations keep
+the existing Homebrew recent-history path.
+
 Press Back on Home to open Recent apps, or hold Back (Escape on desktop) for 600 ms from any page.
 Short Back navigates on release. Back in an overlay, the system keyboard or
 move mode keeps its immediate dismissal behavior; Backspace keeps its editing/navigation role.
@@ -1116,3 +1126,7 @@ synchronization, copied recovery files, protected uninstall rejection, and compl
 new disposable test app through status 31. The previous build, preferences and integration policy
 were restored after testing. Manifest takeover on webOS 10/11 is covered by fixtures, but was not
 tested on hardware in this run; standby and cold boot were not tested.
+
+## AirPlay input (local extension)
+
+On TVs with built-in AirPlay, Widgets → Inputs includes AirPlay with the same Auto/On/Off and rename controls as HDMI. Auto follows the receiver enabled state; On shows the card, and Off hides it. Selecting the Home card calls the native AirPlay page service. HDMI discovery and launch requests are unchanged.
