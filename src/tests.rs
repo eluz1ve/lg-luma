@@ -14,6 +14,8 @@ mod recent_tests;
 mod crypto_tests;
 #[path = "cs2-ui-tests.rs"]
 mod cs2_ui_tests;
+#[path = "home-layout-tests.rs"]
+mod home_layout_tests;
 #[path = "wallpapers-ui-tests.rs"]
 mod wallpaper_tests;
 
@@ -314,14 +316,14 @@ fn favorites_edge_fragments_share_draw_hit_and_wheel_viewports() {
         .collect();
     state.preferences.favorites = Some(favorites.clone());
     assert_eq!(
-        state.hit_test(&controls(&state), 1860., 600.),
+        state.hit_test(&controls(&state), 1900., 600.),
         Some(Target::App(favorites[6].clone()))
     );
-    assert!(state.wheel_scroll(&controls(&state), Some((1860., 600.)), 0, -1));
+    assert!(state.wheel_scroll(&controls(&state), Some((1900., 600.)), 0, -1));
     assert!((state.home_scroll - crate::state::HOME_TILE_PITCH).abs() < 0.01);
     assert_eq!(state.scroll, 0.);
     assert_eq!(
-        state.hit_test(&controls(&state), 40., 600.),
+        state.hit_test(&controls(&state), 20., 600.),
         Some(Target::App(favorites[0].clone()))
     );
     let scroll = state.home_scroll;
@@ -333,7 +335,7 @@ fn favorites_edge_fragments_share_draw_hit_and_wheel_viewports() {
     let scene = scene(&state);
     let viewport = state.favorites_viewport();
     assert!(scene.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Clip(Some(rect)) if rect.x == viewport.x && rect.w == viewport.w)));
-    assert!(state.wheel_scroll(&scene.controls, Some((40., 600.)), 0, 1));
+    assert!(state.wheel_scroll(&scene.controls, Some((20., 600.)), 0, 1));
     assert_eq!(state.home_scroll, 0.);
     assert_eq!(state.scroll, 0.);
 }
@@ -839,6 +841,8 @@ fn home_and_apps_render_only_their_own_caption_preference() {
         state.preferences.show_app_names = apps;
         for (page, expected) in [(0, home), (1, apps)] {
             state.open(page);
+            // Home names only its focused card.
+            state.focus = Target::App("netflix".into());
             let scene = scene(&state);
             let caption = scene.draw.iter().any(
                 |draw| matches!(draw, crate::renderer::Draw::Text(value, ..) if value == "Netflix"),
@@ -851,8 +855,8 @@ fn home_and_apps_render_only_their_own_caption_preference() {
                 .unwrap();
             assert_eq!(
                 card.rect.h > 154.4,
-                expected,
-                "Hidden captions must not reserve space"
+                page == 1 && expected,
+                "Only Apps' captions are part of the card"
             );
         }
     }
@@ -3121,7 +3125,7 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
                 ),
                 24.,
             ),
-            (language.date(now), 18.4),
+            (language.date(now), 22.),
         ] {
             assert!(rendered.draw.iter().any(|draw| matches!(draw,
                 Draw::Text(text, rect, style, ..) if text == &label && style.size == size && rect.h >= size
@@ -3134,7 +3138,7 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
             language,
         );
         assert!(rendered.draw.iter().any(|draw| matches!(draw,
-            Draw::Text(text, rect, style, ..) if text == &description && style.size == 16.8 && rect.h == 25.2
+            Draw::Text(text, rect, style, ..) if text == &description && style.size > 16.8 && style.size <= 22. && rect.h >= 22. * 1.2
         )));
     }
 }
@@ -3150,7 +3154,9 @@ fn tv_settings_button_is_centered_alongside_navigation() {
     assert!((button.rect.y + button.rect.h / 2. - (42.5 + 68.6 / 2.)).abs() < 0.01);
     assert_eq!(button.rect.h, 60.);
     assert_eq!(button.rect.w, button.rect.h);
-    assert_eq!(button.rect.x + button.rect.w, 1836.);
+    assert_eq!(button.rect.x + button.rect.w, 1840.);
+    // The clock opposite it starts at the same safe area.
+    assert!(rendered.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(text, rect, ..) if text.contains(':') && rect.x == 80. && rect.y < 100.)));
     let (x, y) = button.rect.center();
     assert_eq!(
         ready().hit_test(&rendered.controls, x, y),

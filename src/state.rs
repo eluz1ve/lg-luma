@@ -25,12 +25,12 @@ pub const APPS_COLUMNS: usize = 6;
 /// Automatic inventory retries before the error shows: with the 6.5 s Luna timeout about 50 s.
 pub const INVENTORY_RETRIES: u32 = 5;
 pub const INVENTORY_RETRY_DELAY: Duration = Duration::from_secs(2);
-pub const HOME_STRIP_LEFT: f32 = 84.;
+pub const HOME_STRIP_LEFT: f32 = crate::layout::SAFE_X;
 // Six favourites in full and the seventh cut off and fading out at the right (Apple TV rows):
 // the strip ends after the sixth tile, so a focused tile never sits in the fade.
-pub const HOME_STRIP_RIGHT: f32 = 1748.;
-pub const HOME_TILE_WIDTH: f32 = 256.;
-pub const HOME_TILE_PITCH: f32 = 281.6;
+pub const HOME_STRIP_RIGHT: f32 = crate::layout::SAFE_X + crate::layout::WIDTH;
+pub const HOME_TILE_WIDTH: f32 = 260.;
+pub const HOME_TILE_PITCH: f32 = HOME_TILE_WIDTH + crate::layout::GUTTER;
 pub const HOME_FADE_LEFT: f32 = 8.;
 pub const HOME_FADE_RIGHT: f32 = 1910.;
 pub const BACKGROUND_FADE: f32 = 0.4;

@@ -16,6 +16,10 @@ use std::{
 };
 use time::OffsetDateTime;
 
+use crate::layout::{
+    CONTENT_TOP, GUTTER, HEADER_BOTTOM, SAFE_X, WIDTH, column as column_width, type_scale,
+};
+
 const MAIN_TOP: f32 = 108.8;
 const FACE_HEIGHT: f32 = 154.4;
 const GRID_PITCH: f32 = 296.4;
@@ -739,11 +743,8 @@ pub fn scene_with_pill(
                     // Hit regions include captions, artwork does not. Reusing the
                     // full hit region here stretches the lifted card vertically.
                     let mut rect = control.rect;
-                    let names = if state.page == Page::Home {
-                        state.preferences.show_home_names
-                    } else {
-                        state.preferences.show_app_names
-                    };
+                    // Home names only its focused card, outside the hit region.
+                    let names = state.page != Page::Home && state.preferences.show_app_names;
                     if names
                         && let Some(app) = state.inventory.apps.iter().find(|app| &app.id == id)
                     {
@@ -839,7 +840,7 @@ fn header(
     let k = state.preferences.ui_scale.scale();
     out.text(
         clock,
-        Rect::new(84., 76.8 - 14.4 * k, 300. * k, 28.8 * k),
+        Rect::new(SAFE_X, 76.8 - 14.4 * k, 300. * k, 28.8 * k),
         text(24. * k, 500, -0.03).shadow(),
         WHITE,
         false,
@@ -878,7 +879,7 @@ fn header(
     }
     let button_size = 60.;
     let rect = Rect::new(
-        1836. - button_size,
+        SAFE_X + WIDTH - button_size,
         nav.y + (nav.h - button_size) / 2.,
         button_size,
         button_size,
@@ -1315,56 +1316,90 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
     }
 }
 
+/// Where the card beside the greeting sits: the header's right columns, from the fifth's gutter.
+pub(crate) const TODAY_RECT: Rect =
+    Rect::new(1160., CONTENT_TOP, 680., HEADER_BOTTOM - CONTENT_TOP);
+/// A row's heading, then its cards this far below the heading's top.
+const ROW_HEADING_GAP: f32 = 50.;
+/// Between one row's bottom and the next row's heading.
+const ROW_GAP: f32 = 48.;
+/// Room under the favorites for the focused card's name.
+const CAPTION_ROOM: f32 = 40.;
+const HOME_FACE_HEIGHT: f32 = 150.;
+/// Inputs and crypto prices: four chips a row.
+const CHIP_HEIGHT: f32 = 96.;
+const CHIP_ROW_PITCH: f32 = 120.;
+
+/// A Home row's heading, straight on the wallpaper.
+fn row_heading(out: &mut Scene, label: &str, y: f32) -> TextStyle {
+    let style = text(type_scale::ROW_TITLE, 600, -0.02).shadow();
+    out.text(
+        label,
+        Rect::new(SAFE_X, y, 1000., type_scale::ROW_TITLE * 1.2),
+        style,
+        WHITE,
+        false,
+    );
+    style
+}
+
 fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
     let s = state.page_scroll();
+    // The header's left column yields to the card beside it.
+    let column = if crypto_block_shown(state) {
+        TODAY_RECT.x - GUTTER - SAFE_X
+    } else {
+        WIDTH
+    };
     let summary = state
         .preferences
         .show_weather
-        .then(|| weather_summary_layout(state, assets));
-    let shift = summary
-        .as_ref()
-        .map_or(0., |summary| (summary.height + 18.4) / 2.);
-    let top = 223.2 - shift - s;
+        .then(|| weather_summary_layout(state, assets, column));
     let date_height = if state.preferences.show_date {
-        41.8
+        type_scale::EYEBROW * 1.2 + 14.
     } else {
         0.
     };
+    let greeting_line = (type_scale::GREETING * 1.05).ceil();
+    let greeting_height = if state.preferences.show_greeting {
+        greeting_line + 16.
+    } else {
+        0.
+    };
+    // Centred in the header, whose height is fixed: the favorites stay put.
+    let block = date_height + greeting_height + summary.as_ref().map_or(0., |s| s.height);
+    let top = CONTENT_TOP + ((HEADER_BOTTOM - CONTENT_TOP - block) / 2.).max(0.) - s;
     if state.preferences.show_date {
         out.text(
             state.preferences.date_format.format(language, now),
-            Rect::new(84., top, 1200., 24.),
-            text(18.4, 600, 0.12).shadow(),
+            Rect::new(SAFE_X, top, column, type_scale::EYEBROW * 1.2),
+            text(type_scale::EYEBROW, 600, 0.12).shadow(),
             c(0xf5f5f5, 0.72),
             false,
         );
     }
     if state.preferences.show_greeting {
         let greeting = language.greeting(now.hour(), &state.preferences.greeting_name);
-        let greeting_style = text(90.4, 500, -0.065).leading(1.05).shadow();
-        // Beside the crypto block, long greetings shrink before reaching it.
-        let width = if crypto_block_shown(state) {
-            CRYPTO_BLOCK_X - 84. - 48.
-        } else {
-            1500.
-        };
-        let fitted = assets.fit_text(&greeting, greeting_style, width);
-        let height = 95. * fitted.size / greeting_style.size;
+        let style = text(type_scale::GREETING, 600, -0.04)
+            .leading(1.05)
+            .shadow();
+        let fitted = assets.fit_text(&greeting, style, column);
+        let height = greeting_line * fitted.size / style.size;
         out.text(
             &greeting,
-            Rect::new(84., top + date_height + (95. - height) / 2., 1500., height),
+            Rect::new(
+                SAFE_X,
+                top + date_height + (greeting_line - height) / 2.,
+                column,
+                height,
+            ),
             fitted,
             WHITE,
             false,
         );
     }
     if let Some(summary) = summary {
-        let greeting_height = if state.preferences.show_greeting {
-            94.92 + 18.4
-        } else {
-            0.
-        };
         weather_summary(
             out,
             state,
@@ -1373,33 +1408,29 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             top + date_height + greeting_height,
         );
     }
-    out.text(
-        language.t("favorites"),
-        Rect::new(84., 478.5 - s, 1000., 31.),
-        text(23.2, 550, -0.035).leading(1.3).shadow(),
-        WHITE,
-        false,
-    );
+    let heading_y = HEADER_BOTTOM + 16. - s;
+    row_heading(out, language.t("favorites"), heading_y);
     if state.moving.is_some() {
         out.text(
             language.t("moveApps"),
-            Rect::new(1686., 485. - s, 150., 24.),
-            text(14.4, 400, 0.).shadow(),
+            Rect::new(SAFE_X + WIDTH - 600., heading_y + 4., 600., 28.),
+            text(type_scale::CAPTION, 450, 0.).right().shadow(),
             c(0xdedede, 1.),
-            true,
+            false,
         );
     }
+    let cards_y = heading_y + ROW_HEADING_GAP;
     let apps = state.apps();
     let names = state.preferences.show_home_names;
-    let mut grid_height = FACE_HEIGHT;
+    let mut grid_height = HOME_FACE_HEIGHT;
     if state.loading && state.inventory.apps.is_empty() {
         for index in 0..6 {
             out.shape(
                 Rect::new(
-                    84. + index as f32 * GRID_PITCH,
-                    544.8 - s,
-                    270.,
-                    FACE_HEIGHT,
+                    SAFE_X + index as f32 * HOME_TILE_PITCH,
+                    cards_y,
+                    HOME_TILE_WIDTH,
+                    HOME_FACE_HEIGHT,
                 ),
                 19.2,
                 c(0xffffff, 0.06),
@@ -1412,7 +1443,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             state,
             assets,
             EmptyState {
-                rect: Rect::new(84., 533.6 - s, 1752., 258.7),
+                rect: Rect::new(SAFE_X, cards_y - 11.2, WIDTH, 258.7),
                 icon: if error { "alert" } else { "heart" },
                 title: if error {
                     language.t("aLittleHelp")
@@ -1429,16 +1460,8 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         );
         grid_height = 247.5;
     }
-    if !apps.is_empty() {
-        grid_height = FACE_HEIGHT
-            + if names {
-                18.4 + apps
-                    .iter()
-                    .map(|app| caption_height(state, assets, app, HOME_TILE_WIDTH))
-                    .fold(58.24 * caption_scale(state), f32::max)
-            } else {
-                0.
-            };
+    if !apps.is_empty() && names {
+        grid_height += CAPTION_ROOM;
     }
     // Like Apple TV's rows, the favourites run to the screen edge: the next tile shows cut off
     // at the right (and a scrolled-away one at the left), so it is clear the row continues.
@@ -1461,24 +1484,38 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         HOME_FADE_RIGHT,
     ])));
     for (index, app) in apps.iter().enumerate() {
-        tile(
-            out,
-            state,
-            assets,
-            app,
-            Rect::new(
-                84. + index as f32 * HOME_TILE_PITCH - state.home_scroll,
-                544.8 - s,
-                HOME_TILE_WIDTH,
-                FACE_HEIGHT,
-            ),
-            names,
-            false,
+        let rect = Rect::new(
+            SAFE_X + index as f32 * HOME_TILE_PITCH - state.home_scroll,
+            cards_y,
+            HOME_TILE_WIDTH,
+            HOME_FACE_HEIGHT,
         );
+        tile(out, state, assets, app, rect, false, false);
+        // As on Apple TV, only the focused card is named, on one line below it.
+        if names && state.focus == Target::App(app.id.clone()) {
+            let x = rect.x + state.home_scroll
+                - state
+                    .motion
+                    .shown(crate::motion::Lane::Favorites, state.home_scroll);
+            let style = text(type_scale::CAPTION * caption_scale(state), 600, -0.01).shadow();
+            let room = HOME_TILE_PITCH + GUTTER;
+            out.text(
+                &app.title,
+                Rect::new(
+                    x + (rect.w - room) / 2.,
+                    rect.y + rect.h + 14.,
+                    room,
+                    style.size * 1.2,
+                ),
+                assets.fit_text(&app.title, style, room),
+                WHITE,
+                true,
+            );
+        }
     }
     out.draw.push(Draw::EdgeFadeX(None));
     out.draw.push(Draw::Clip(Some(state.content_viewport())));
-    let input_y = 544.8 + grid_height + 41.6 - s;
+    let input_y = cards_y + grid_height + ROW_GAP;
     let inputs: Vec<_> = state
         .inventory
         .inputs
@@ -1486,20 +1523,15 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         .filter(|input| state.preferences.input_visible(input))
         .collect();
     if !inputs.is_empty() {
-        out.text(
-            language.t("inputsHeading"),
-            Rect::new(84., input_y + 3.3, 1000., 31.),
-            text(23.2, 550, -0.035).leading(1.3).shadow(),
-            WHITE,
-            false,
-        );
+        row_heading(out, language.t("inputsHeading"), input_y);
     }
+    let chip_width = column_width(4);
     for (index, input) in inputs.iter().enumerate() {
         let rect = Rect::new(
-            84. + (index % 3) as f32 * 591.45,
-            input_y + 58.4 + (index / 3) as f32 * 126.4,
-            569.1,
-            104.,
+            SAFE_X + (index % 4) as f32 * (chip_width + GUTTER),
+            input_y + ROW_HEADING_GAP + (index / 4) as f32 * CHIP_ROW_PITCH,
+            chip_width,
+            CHIP_HEIGHT,
         );
         let focused = state.focus == Target::Input(input.id.clone());
         let hit = rect;
@@ -1524,7 +1556,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             1.,
             c(0xffffff, if focused { 0.24 } else { 0.063 }),
         );
-        let art = Rect::new(rect.x + 21., rect.y + 24., 56., 56.);
+        let art = Rect::new(rect.x + 20., rect.y + 20., 56., 56.);
         out.draw.push(Draw::RoundedGradient(
             art,
             12.8,
@@ -1548,45 +1580,52 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         // The status line grows with the setting, the larger title by half as much.
         let k = state.preferences.ui_scale.scale();
         let title_k = 1. + (k - 1.) / 2.;
-        let top = 24.3 - (28.8 * (title_k - 1.) + 25.2 * (k - 1.)) / 2.;
+        let title_line = type_scale::BODY * 1.2 * title_k;
+        let status_line = type_scale::CAPTION * 1.2 * k;
+        let top = (CHIP_HEIGHT - title_line - status_line - 2.) / 2.;
+        let width = rect.w - 92. - 20.;
+        let title = state.preferences.input_title(input);
+        let title_style = text(type_scale::BODY * title_k, 550, -0.02);
         out.text(
-            state.preferences.input_title(input),
-            Rect::new(rect.x + 93., rect.y + top, 450., 28.8 * title_k),
-            text(24. * title_k, 500, -0.03),
+            title,
+            Rect::new(rect.x + 92., rect.y + top, width, title_line),
+            assets.fit_text(title, title_style, width),
             WHITE,
             false,
         );
+        let status = input_status(input, name.is_some(), language);
+        let status_style = text(type_scale::CAPTION * k, 450, 0.);
         out.text(
-            input_status(input, name.is_some(), language),
+            &status,
             Rect::new(
-                rect.x + 93.,
-                rect.y + top + 28.8 * title_k + 4.3,
-                450.,
-                25.2 * k,
+                rect.x + 92.,
+                rect.y + top + title_line + 2.,
+                width,
+                status_line,
             ),
-            text(16.8 * k, 400, 0.).leading(1.5),
-            c(0xe8e8e8, if k > 1. { 0.62 } else { 0.48 }),
+            assets.fit_text(&status, status_style, width),
+            c(0xe8e8e8, 0.62),
             false,
         );
         lift_edge(out, rect, 18.4, lift_amount);
         out.control(Target::Input(input.id.clone()), hit, true);
     }
     // Crypto prices, CS2 Score and TV Shows, stacked below the inputs.
-    let rows = inputs.len().div_ceil(3) as f32;
+    let rows = inputs.len().div_ceil(4) as f32;
     let mut y = if inputs.is_empty() {
         input_y
     } else {
-        input_y + 58.4 + (rows - 1.) * 126.4 + 104. + 41.6
+        input_y + ROW_HEADING_GAP + (rows - 1.) * CHIP_ROW_PITCH + CHIP_HEIGHT + ROW_GAP
     };
     if crypto_block_shown(state) {
         crypto_block(out, state);
     } else if state.preferences.show_crypto && !state.preferences.crypto_coins.is_empty() {
         crypto_row(out, state, y);
-        y += 58.4 + 104. + 41.6;
+        y += ROW_HEADING_GAP + CHIP_HEIGHT + ROW_GAP;
     }
     if state.preferences.show_cs2 {
         cs2_row(out, state, assets, y, now);
-        y += 58.4 + CS2_CARD_HEIGHT + 41.6;
+        y += ROW_HEADING_GAP + CS2_CARD_HEIGHT + ROW_GAP;
     }
     if state.preferences.show_shows {
         shows_row(out, state, assets, y);
@@ -1601,18 +1640,16 @@ const SHOW_POSTER_HEIGHT: f32 = HOME_TILE_WIDTH * 1.5;
 fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
     let language = state.preferences.language;
     let heading = language.t("shows");
-    let style = text(23.2, 550, -0.035).leading(1.3).shadow();
-    out.text(
-        heading,
-        Rect::new(84., y + 3.3, 1000., 31.),
-        style,
-        WHITE,
-        false,
-    );
+    let style = row_heading(out, heading, y);
     out.text(
         "TVmaze",
-        Rect::new(84. + assets.width(heading, style) + 20., y + 9.6, 600., 20.),
-        text(14.4, 400, 0.).shadow(),
+        Rect::new(
+            SAFE_X + assets.width(heading, style) + 20.,
+            y + 5.,
+            600.,
+            27.,
+        ),
+        text(type_scale::CAPTION, 400, 0.).shadow(),
         c(0xf5f5f5, 0.5),
         false,
     );
@@ -1624,8 +1661,8 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
             } else {
                 "showsLoading"
             }),
-            Rect::new(84., y + 58.4, 1200., 25.),
-            text(18.4, 400, 0.),
+            Rect::new(SAFE_X, y + ROW_HEADING_GAP, 1200., 29.),
+            text(type_scale::SECONDARY, 400, 0.).shadow(),
             c(0xf5f5f5, 0.6),
             false,
         );
@@ -1641,8 +1678,8 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
                 (first + visible).min(list.len()),
                 list.len()
             ),
-            Rect::new(1436., y + 9.6, 400., 20.),
-            text(15.2, 500, 0.02).right(),
+            Rect::new(SAFE_X + WIDTH - 400., y + 5., 400., 27.),
+            text(type_scale::CAPTION, 500, 0.02).right().shadow(),
             c(0xf5f5f5, 0.6),
             false,
         );
@@ -1656,7 +1693,7 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
             count: list.len(),
             visible,
             pitch: HOME_TILE_PITCH,
-            card: Rect::new(84., y + 58.4, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
+            card: Rect::new(SAFE_X, y + ROW_HEADING_GAP, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
             below: 60.,
         },
         |out, index, rect, hit| show_card(out, state, assets, &list[index], index, rect, hit),
@@ -1869,18 +1906,16 @@ fn crypto_block(out: &mut Scene, state: &State) {
 /// coin, its price in US dollars and the 24-hour change.
 fn crypto_row(out: &mut Scene, state: &State, y: f32) {
     let language = state.preferences.language;
-    out.text(
-        language.t("crypto"),
-        Rect::new(84., y + 3.3, 1000., 31.),
-        text(23.2, 550, -0.035).leading(1.3).shadow(),
-        WHITE,
-        false,
-    );
-    let gap = 22.35;
-    let width =
-        (1752. - gap * (crate::crypto::MAX_COINS - 1) as f32) / crate::crypto::MAX_COINS as f32;
+    row_heading(out, language.t("crypto"), y);
+    let gap = GUTTER;
+    let width = column_width(crate::crypto::MAX_COINS);
     for (index, symbol) in state.preferences.crypto_coins.iter().enumerate() {
-        let rect = Rect::new(84. + index as f32 * (width + gap), y + 58.4, width, 104.);
+        let rect = Rect::new(
+            SAFE_X + index as f32 * (width + gap),
+            y + ROW_HEADING_GAP,
+            width,
+            CHIP_HEIGHT,
+        );
         let focused = state.focus == Target::Coin(index) && !state.pointer;
         let hit = rect;
         let (rect, lift_amount) = lift(out, state, &Target::Coin(index), rect, 18.4);
@@ -1911,15 +1946,15 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
         let half = rect.w / 2. - 24.;
         out.text(
             symbol,
-            Rect::new(rect.x + 24., rect.y + 24.3, half, 28.8),
-            text(24., 550, -0.02),
+            Rect::new(rect.x + 24., rect.y + 16., half, 31.2),
+            text(type_scale::BODY, 550, -0.02),
             WHITE,
             false,
         );
         out.text(
             name,
-            Rect::new(rect.x + 24., rect.y + 57.4, half, 25.2),
-            text(16.8, 400, 0.).leading(1.5),
+            Rect::new(rect.x + 24., rect.y + 51., half, 26.4),
+            text(type_scale::CAPTION, 450, 0.),
             c(0xe8e8e8, 0.55),
             false,
         );
@@ -1932,15 +1967,15 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
         {
             out.text(
                 crate::crypto::format_price(quote.price),
-                Rect::new(right.x, rect.y + 24.3, right.w, 28.8),
-                text(24., 550, -0.02).right(),
+                Rect::new(right.x, rect.y + 16., right.w, 31.2),
+                text(type_scale::BODY, 550, -0.02).right(),
                 WHITE,
                 false,
             );
             out.text(
                 crate::crypto::format_change(quote.change),
-                Rect::new(right.x, rect.y + 57.4, right.w, 25.2),
-                text(16.8, 550, 0.).leading(1.5).right(),
+                Rect::new(right.x, rect.y + 51., right.w, 26.4),
+                text(type_scale::CAPTION, 550, 0.).right(),
                 if quote.change < -0.005 {
                     c(0xff8a80, 0.95)
                 } else {
@@ -1955,8 +1990,8 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
                 } else {
                     "cryptoLoading"
                 }),
-                Rect::new(right.x, rect.y + 40.8, right.w, 25.2),
-                text(16.8, 400, 0.).leading(1.5).right(),
+                Rect::new(right.x, rect.y + 35., right.w, 26.4),
+                text(type_scale::CAPTION, 400, 0.).right(),
                 c(0xe8e8e8, 0.55),
                 false,
             );
@@ -1967,27 +2002,20 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
 }
 
 const CS2_CARD_HEIGHT: f32 = 150.;
-const CS2_CARD_PITCH: f32 = 591.45;
+const CS2_CARD_PITCH: f32 = 600.;
 
 /// Home's CS2 Score: a heading crediting Liquipedia, then up to three match cards in the inputs'
 /// style, live ones first.
 fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetDateTime) {
     let language = state.preferences.language;
     let heading = language.t("cs2Score");
-    let style = text(23.2, 550, -0.035).leading(1.3).shadow();
-    out.text(
-        heading,
-        Rect::new(84., y + 3.3, 1000., 31.),
-        style,
-        WHITE,
-        false,
-    );
+    let style = row_heading(out, heading, y);
     let credit = language.t("cs2Credit");
-    let credit_x = 84. + assets.width(heading, style) + 20.;
-    let credit_style = text(14.4, 400, 0.).shadow();
+    let credit_x = SAFE_X + assets.width(heading, style) + 20.;
+    let credit_style = text(type_scale::CAPTION, 400, 0.).shadow();
     out.text(
         credit,
-        Rect::new(credit_x, y + 9.6, 600., 20.),
+        Rect::new(credit_x, y + 5., 600., 27.),
         credit_style,
         c(0xf5f5f5, 0.5),
         false,
@@ -2002,11 +2030,11 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
             format!("·  {updated}"),
             Rect::new(
                 credit_x + assets.width(credit, credit_style) + 10.,
-                y + 9.6,
+                y + 5.,
                 600.,
-                20.,
+                27.,
             ),
-            text(14.4, 550, 0.),
+            text(type_scale::CAPTION, 550, 0.).shadow(),
             c(0xf2c27a, 0.9),
             false,
         );
@@ -2020,8 +2048,8 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
                     "cs2Unavailable"
                 },
             ),
-            Rect::new(84., y + 58.4, 1200., 25.),
-            text(18.4, 400, 0.),
+            Rect::new(SAFE_X, y + ROW_HEADING_GAP, 1200., 29.),
+            text(type_scale::SECONDARY, 400, 0.).shadow(),
             c(0xf5f5f5, 0.6),
             false,
         );
@@ -2035,8 +2063,8 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
             } else {
                 "cs2None"
             }),
-            Rect::new(84., y + 58.4, 1200., 25.),
-            text(18.4, 400, 0.),
+            Rect::new(SAFE_X, y + ROW_HEADING_GAP, 1200., 29.),
+            text(type_scale::SECONDARY, 400, 0.).shadow(),
             c(0xf5f5f5, 0.6),
             false,
         );
@@ -2049,8 +2077,8 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
         let last = (first + visible).min(matches.len());
         out.text(
             format!("{}–{} / {}", first + 1, last, matches.len()),
-            Rect::new(1436., y + 9.6, 400., 20.),
-            text(15.2, 500, 0.02).right(),
+            Rect::new(SAFE_X + WIDTH - 400., y + 5., 400., 27.),
+            text(type_scale::CAPTION, 500, 0.02).right().shadow(),
             c(0xf5f5f5, 0.6),
             false,
         );
@@ -2064,7 +2092,12 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
             count: matches.len(),
             visible,
             pitch: CS2_CARD_PITCH,
-            card: Rect::new(84., y + 58.4, 569.1, CS2_CARD_HEIGHT),
+            card: Rect::new(
+                SAFE_X,
+                y + ROW_HEADING_GAP,
+                column_width(3),
+                CS2_CARD_HEIGHT,
+            ),
             below: 0.,
         },
         |out, index, rect, hit| cs2_card(out, state, assets, matches[index], rect, hit, index, now),
@@ -2892,6 +2925,10 @@ fn cs2_start(state: &State, begins: i64, now: OffsetDateTime) -> String {
     }
 }
 
+const WEATHER_TEXT: f32 = 28.;
+const WEATHER_ICON: f32 = 30.;
+/// The weather's text starts past its icon.
+const WEATHER_INDENT: f32 = WEATHER_ICON + 12.;
 struct WeatherSummary {
     height: f32,
     width: f32,
@@ -2899,9 +2936,10 @@ struct WeatherSummary {
     parts: Vec<(String, TextStyle, Color, Rect)>,
 }
 type WeatherPart = (String, TextStyle, Color, f32, f32);
-fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
+/// The header's weather line, wrapping within `column` (the left column's width).
+fn weather_summary_layout(state: &State, assets: &Assets, column: f32) -> WeatherSummary {
     let language = state.preferences.language;
-    let base = text(23.2, 400, -0.025).leading(1.5);
+    let base = text(WEATHER_TEXT, 400, -0.02).leading(1.5);
     let mut parts = Vec::new();
     let mut icon = "location".to_owned();
     if let Some(place) = &state.preferences.weather_location {
@@ -2922,7 +2960,7 @@ fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
             if state.weather.failed {
                 parts.push((
                     language.t("lastReading").into(),
-                    text(15.08, 400, 0.).leading(1.5),
+                    text(type_scale::CAPTION, 400, 0.).leading(1.5),
                     c(0xf2d5a5, 0.65),
                 ));
             }
@@ -2949,7 +2987,7 @@ fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
     let mut used = 0.;
     for (label, style, color) in parts {
         let measured_width = assets.width(&label, style);
-        let width = measured_width.min(1714.4);
+        let width = measured_width.min(column - WEATHER_INDENT);
         // Use the same extra pixel as the rendered text rectangle. Counting
         // lines at the exact advance width can round into a phantom second
         // line even though the renderer displays the label on one line.
@@ -2960,7 +2998,7 @@ fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
             assets.lines(&label, style, text_width)
         };
         let height = lines as f32 * style.size * style.line_height;
-        if used > 0. && used + 11.2 + width > 1714.4 {
+        if used > 0. && used + 11.2 + width > column - WEATHER_INDENT {
             rows.push(Vec::new());
             used = 0.;
         }
@@ -2973,8 +3011,11 @@ fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
     let mut top = 1.6;
     let mut right: f32 = 0.;
     for row in rows {
-        let height = row.iter().map(|part| part.4).fold(34.8, f32::max);
-        let mut x = 121.6;
+        let height = row
+            .iter()
+            .map(|part| part.4)
+            .fold(WEATHER_TEXT * 1.5, f32::max);
+        let mut x = SAFE_X + WEATHER_INDENT;
         for (label, style, color, width, item_height) in row {
             positioned.push((
                 label,
@@ -2994,7 +3035,7 @@ fn weather_summary_layout(state: &State, assets: &Assets) -> WeatherSummary {
     }
     WeatherSummary {
         height: top - 11.2 + 1.6,
-        width: right - 84.,
+        width: right - SAFE_X,
         icon,
         parts: positioned,
     }
@@ -3021,7 +3062,12 @@ fn weather_summary(
     out.shadowed_icon(
         assets,
         &summary.icon,
-        Rect::new(84., y + 5.8, 26.4, 26.4),
+        Rect::new(
+            SAFE_X,
+            y + (WEATHER_TEXT * 1.5 - WEATHER_ICON) / 2. + 1.6,
+            WEATHER_ICON,
+            WEATHER_ICON,
+        ),
         c(0xdedede, 0.83),
     );
     for (label, style, color, rect) in summary.parts {
@@ -3034,7 +3080,7 @@ fn weather_summary(
         );
     }
     if state.preferences.weather_location.is_none() {
-        let rect = Rect::new(84., y, summary.width, summary.height);
+        let rect = Rect::new(SAFE_X, y, summary.width, summary.height);
         if state.focus == Target::WeatherConfigure
             && !state.pointer
             && let Some(label) = label_focus
@@ -5615,10 +5661,14 @@ mod tests {
                     _ => None,
                 })
                 .unwrap();
-            assert_eq!((rect.x, rect.y, rect.w, rect.h), (84., 265., 1500., 95.));
-            assert_eq!(style.size, 90.4);
-            assert_eq!(style.weight, 500);
-            assert_eq!(style.tracking, -0.065);
+            // Date and greeting, centred in the header's 150–400.
+            let block = 22. * 1.2 + 14. + 80. + 16.;
+            let top = 150. + (250. - block) / 2.;
+            assert_eq!((rect.x, rect.w, rect.h), (80., 1760., 80.));
+            assert!((rect.y - (top + 22. * 1.2 + 14.)).abs() < 0.001, "{rect:?}");
+            assert_eq!(style.size, 76.);
+            assert_eq!(style.weight, 600);
+            assert_eq!(style.tracking, -0.04);
         }
     }
 
@@ -5732,9 +5782,10 @@ mod tests {
                 state.preferences.show_greeting = show_greeting;
                 let mut rendered = Scene::new();
                 home(&mut rendered, &state, &assets, OffsetDateTime::UNIX_EPOCH);
-                let removed = if show_date { 0. } else { 41.8 }
-                    + if show_greeting { 0. } else { 94.92 + 18.4 };
-                assert!((weather_y(&rendered) - (original_y - removed)).abs() < 0.001);
+                let removed = if show_date { 0. } else { 22. * 1.2 + 14. }
+                    + if show_greeting { 0. } else { 80. + 16. };
+                // The header keeps its height and centres what is left in it.
+                assert!((weather_y(&rendered) - (original_y - removed / 2.)).abs() < 0.001);
                 for control in original
                     .controls
                     .iter()

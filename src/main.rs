@@ -22,6 +22,7 @@ mod homebrew_updates;
 mod i18n;
 #[path = "input-refresh.rs"]
 mod input_refresh;
+mod layout;
 #[cfg(all(feature = "webos", target_os = "linux", target_arch = "arm"))]
 mod luna;
 mod model;
