@@ -22,7 +22,6 @@ use crate::layout::{
 
 const MAIN_TOP: f32 = 108.8;
 const FACE_HEIGHT: f32 = 154.4;
-const GRID_PITCH: f32 = 296.4;
 const RECENTS_BACKDROP_OPACITY: f32 = 0.86;
 
 #[path = "recents-view.rs"]
@@ -3230,13 +3229,21 @@ fn library(out: &mut Scene, state: &State, assets: &Assets) {
 }
 
 /// The toolbar stays centred on the line it sits on at normal scale, clear of the grid.
-const TOOLBAR_CENTER: f32 = 192.8;
+/// The Apps page: one row of filters and search from y 150, then six 260 px columns of cards,
+/// rows 206 apart, so four rows fit the screen.
+const APPS_TOOLBAR_TOP: f32 = 150.;
+const TOOLBAR_HEIGHT: f32 = 60.;
+const TOOLBAR_CENTER: f32 = APPS_TOOLBAR_TOP + TOOLBAR_HEIGHT / 2.;
+const APPS_GRID_TOP: f32 = APPS_TOOLBAR_TOP + TOOLBAR_HEIGHT + GUTTER;
+const APPS_FACE_HEIGHT: f32 = 150.;
+const APPS_ROW_PITCH: f32 = 206.;
 
 fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
     let k = state.preferences.ui_scale.scale();
-    let x = category_chips(out, state, assets, 84., TOOLBAR_CENTER);
+    let x = category_chips(out, state, assets, SAFE_X, TOOLBAR_CENTER);
     if state.filter != 0 {
-        let rect = Rect::new(x, TOOLBAR_CENTER - 28. * k, 56. * k, 56. * k);
+        let h = TOOLBAR_HEIGHT * k;
+        let rect = Rect::new(x, TOOLBAR_CENTER - h / 2., h, h);
         let focused = state.focus == Target::ClearFilter;
         out.pill(rect, focused, false);
         out.icon(
@@ -3251,15 +3258,33 @@ fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
         );
         out.control(Target::ClearFilter, rect, false);
     }
-    search_field(out, state, assets, 1836., TOOLBAR_CENTER, true);
+    search_field(out, state, assets, SAFE_X + WIDTH, TOOLBAR_CENTER, true);
 }
 
 /// The category filter chips from `x`, centred on `y`; returns where the row ends.
 fn category_chips(out: &mut Scene, state: &State, assets: &Assets, mut x: f32, y: f32) -> f32 {
     let language = state.preferences.language;
     let k = state.preferences.ui_scale.scale();
-    let style = text(20.8 * k, 550, -0.02);
-    let h = 56. * k;
+    let style = text(24. * k, 550, -0.02);
+    let h = TOOLBAR_HEIGHT * k;
+    // All, with how many apps there are.
+    let count = state
+        .inventory
+        .apps
+        .iter()
+        .filter(|app| !state.preferences.hidden.contains(&app.id))
+        .count();
+    let all = language.format("allApps", &[("count", &count.to_string())]);
+    let width = assets.width(&all, style) + 40. * k;
+    filter(
+        out,
+        state,
+        Target::Filter(0),
+        Rect::new(x, y - h / 2., width, h),
+        &all,
+        state.filter == 0,
+    );
+    x += width + 7.2 * k;
     for (index, label) in CATEGORIES.into_iter().enumerate() {
         let label = language.category(label);
         let width = assets.width(label, style) + 40. * k;
@@ -3293,7 +3318,8 @@ fn category_chips(out: &mut Scene, state: &State, assets: &Assets, mut x: f32, y
 fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: f32, live: bool) {
     let language = state.preferences.language;
     let k = state.preferences.ui_scale.scale();
-    let search = Rect::new(right - 304. * k, y - 28. * k, 304. * k, 56. * k);
+    let h = TOOLBAR_HEIGHT * k;
+    let search = Rect::new(right - 320. * k, y - h / 2., 320. * k, h);
     let focused = live && matches!(state.focus, Target::Search | Target::ClearSearch);
     let query = if live { state.query.as_str() } else { "" };
     out.shape(
@@ -3317,7 +3343,12 @@ fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: 
     out.icon(
         assets,
         "search",
-        Rect::new(search.x + 19.4 * k, search.y + 18.4 * k, 19.2 * k, 19.2 * k),
+        Rect::new(
+            search.x + 19.4 * k,
+            search.y + (search.h - 19.2 * k) / 2.,
+            19.2 * k,
+            19.2 * k,
+        ),
         c(0xeeeeee, 0.73),
     );
     out.text(
@@ -3328,11 +3359,11 @@ fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: 
         },
         Rect::new(
             search.x + 49.8 * k,
-            search.y + (search.h - 29.12 * k) / 2.,
-            if query.is_empty() { 234. * k } else { 202. * k },
-            29.12 * k,
+            search.y + (search.h - 33.6 * k) / 2.,
+            if query.is_empty() { 250. * k } else { 218. * k },
+            33.6 * k,
         ),
-        text(20.8 * k, 550, -0.02).leading(1.4),
+        text(24. * k, 550, -0.02).leading(1.4),
         c(0xeeeeee, if query.is_empty() { 0.73 } else { 1. }),
         false,
     );
@@ -3382,7 +3413,7 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
             state,
             assets,
             EmptyState {
-                rect: Rect::new(84., 259.2 - s, 1752., 304.),
+                rect: Rect::new(SAFE_X, APPS_GRID_TOP - s, WIDTH, 304.),
                 icon: "grid",
                 title,
                 hint: &hint,
@@ -3390,59 +3421,58 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
             },
         );
     }
-    let mut y = 270.4;
+    let mut y = APPS_GRID_TOP;
     let names = state.preferences.app_names == crate::model::AppNames::Always;
     let on_focus = state.preferences.app_names == crate::model::AppNames::Focus;
+    let width = crate::layout::column(APPS_COLUMNS);
     for row in apps.chunks(APPS_COLUMNS) {
-        let row_height = FACE_HEIGHT
-            + if names {
-                18.4 + row
+        // Names under every card need their room; the focused card's name fits the gap.
+        let row_height = if names {
+            APPS_FACE_HEIGHT
+                + 18.4
+                + row
                     .iter()
-                    .map(|app| caption_height(state, assets, app, 270.))
+                    .map(|app| caption_height(state, assets, app, width))
                     .fold(58.24 * caption_scale(state), f32::max)
-            } else {
-                0.
-            };
+                + 38.4
+        } else {
+            APPS_ROW_PITCH
+        };
         for (column, app) in row.iter().enumerate() {
+            let rect = Rect::new(
+                SAFE_X + column as f32 * (width + GUTTER),
+                y - s,
+                width,
+                APPS_FACE_HEIGHT,
+            );
             tile(
                 out,
                 state,
                 assets,
                 app,
-                Rect::new(84. + column as f32 * GRID_PITCH, y - s, 270., FACE_HEIGHT),
+                rect,
                 names,
                 favorites.contains(&app.id),
             );
             if on_focus {
-                focused_name(
-                    out,
-                    state,
-                    assets,
-                    app,
-                    Rect::new(84. + column as f32 * GRID_PITCH, y - s, 270., FACE_HEIGHT),
-                );
+                focused_name(out, state, assets, app, rect);
             }
         }
-        y += row_height + 38.4;
+        y += row_height;
     }
 }
 
 fn filter(out: &mut Scene, state: &State, target: Target, rect: Rect, label: &str, selected: bool) {
     let focused = state.focus == target;
-    let k = rect.h / 56.;
+    let k = rect.h / TOOLBAR_HEIGHT;
     out.pill(rect, focused, selected);
     if selected && !focused {
         out.border(rect, rect.h / 2., 1.5, c(0xffffff, 0.35));
     }
     out.text(
         label,
-        Rect::new(
-            rect.x,
-            rect.y + (rect.h - 29.12 * k) / 2.,
-            rect.w,
-            29.12 * k,
-        ),
-        text(20.8 * k, 550, -0.02).leading(1.4),
+        Rect::new(rect.x, rect.y + (rect.h - 33.6 * k) / 2., rect.w, 33.6 * k),
+        text(24. * k, 550, -0.02).leading(1.4),
         if focused {
             c(0x2c2c2c, 1.)
         } else {

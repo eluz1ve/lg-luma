@@ -684,7 +684,8 @@ impl State {
 
     pub fn apps_viewport(&self) -> Rect {
         let content = self.content_viewport();
-        Rect::new(content.x, 244.8, content.w, content.y + content.h - 244.8)
+        // Below the filters, with room for the focused card's lift.
+        Rect::new(content.x, 236., content.w, content.y + content.h - 236.)
     }
 
     pub fn backgrounds_viewport(&self) -> Rect {
@@ -883,7 +884,7 @@ impl State {
                 .apps()
                 .first()
                 .map(|app| Target::App(app.id.clone()))
-                .unwrap_or(Target::Filter(1)),
+                .unwrap_or(Target::Filter(0)),
             Page::Settings => Target::Sidebar(0),
         }
     }
@@ -1898,7 +1899,7 @@ impl State {
                     // Its grid index still defines the route; reveal_focus then
                     // scrolls it into view, without letting the fixed nav steal Up.
                     let next = match direction {
-                        Direction::Up if index < APPS_COLUMNS => Some(Target::Filter(1)),
+                        Direction::Up if index < APPS_COLUMNS => Some(Target::Filter(0)),
                         Direction::Up => Some(Target::App(apps[index - APPS_COLUMNS].id.clone())),
                         Direction::Down
                             if (index / APPS_COLUMNS + 1) * APPS_COLUMNS < apps.len() =>
@@ -2543,7 +2544,7 @@ impl State {
             }
             Target::ClearFilter => {
                 self.filter = 0;
-                self.focus = Target::Filter(1);
+                self.focus = Target::Filter(0);
                 self.scroll = 0.;
             }
             Target::ClearSearch => {

@@ -1225,7 +1225,7 @@ fn categories_and_search_have_clear_actions_and_conditional_hidden_control() {
     state.focus = Target::ClearFilter;
     state.activate();
     assert_eq!(state.filter, 0);
-    assert_eq!(state.focus, Target::Filter(1));
+    assert_eq!(state.focus, Target::Filter(0));
     state.query = "YouTube".into();
     state.focus = Target::ClearSearch;
     state.activate();
@@ -3073,16 +3073,16 @@ fn app_categories_and_search_use_matching_pills_and_larger_heavier_labels() {
         .iter()
         .filter(|control| matches!(control.target, Target::Filter(_) | Target::Search))
     {
-        assert_eq!(control.rect.h, 56.);
-        assert_eq!(control.rect.y, 164.8);
+        assert_eq!(control.rect.h, 60.);
+        assert_eq!(control.rect.y, 150.);
         assert!(rendered.draw.iter().any(|draw| matches!(draw,
             Draw::Shape(rect, radius, _, color) if rect.x == control.rect.x && rect.y == control.rect.y
-                && rect.w == control.rect.w && (*radius == 48. || *radius == 28.) && color[3] >= 0.72
+                && rect.w == control.rect.w && (*radius == 48. || *radius == 30.) && color[3] >= 0.72
         )));
         assert!(rendered.draw.iter().any(|draw| matches!(draw,
             Draw::Text(_, rect, style, ..) if rect.x >= control.rect.x && rect.x < control.rect.x + control.rect.w
                 && rect.y > control.rect.y && rect.y < control.rect.y + control.rect.h
-                && style.size == 20.8 && style.weight == 550
+                && style.size == 24. && style.weight == 550
         )));
     }
 }
@@ -3100,9 +3100,9 @@ fn category_focus_active_and_clear_button_share_the_pill_style() {
         .iter()
         .find(|control| control.target == Target::ClearFilter)
         .unwrap();
-    assert_eq!((clear.rect.w, clear.rect.h), (56., 56.));
+    assert_eq!((clear.rect.w, clear.rect.h), (60., 60.));
     assert!(rendered.draw.iter().any(|draw| matches!(draw,
-        Draw::RoundedGradient(rect, radius, ..) if rect.x == clear.rect.x && rect.y == clear.rect.y && *radius == 28.
+        Draw::RoundedGradient(rect, radius, ..) if rect.x == clear.rect.x && rect.y == clear.rect.y && *radius == 30.
     )));
     let category = rendered
         .controls
@@ -3111,12 +3111,12 @@ fn category_focus_active_and_clear_button_share_the_pill_style() {
         .unwrap();
     assert!(rendered.draw.iter().any(|draw| matches!(draw,
         Draw::Shape(rect, radius, stroke, color) if rect.x == category.rect.x && rect.y == category.rect.y
-            && *radius == 28. && *stroke == 1.5 && color[3] == 0.35
+            && *radius == 30. && *stroke == 1.5 && color[3] == 0.35
     )));
     state.focus = Target::Filter(1);
     let focused = scene(&state);
     assert!(focused.draw.iter().any(|draw| matches!(draw,
-        Draw::RoundedGradient(rect, radius, ..) if rect.x == category.rect.x && rect.y == category.rect.y && *radius == 28.
+        Draw::RoundedGradient(rect, radius, ..) if rect.x == category.rect.x && rect.y == category.rect.y && *radius == 30.
     )));
 }
 
@@ -4134,4 +4134,124 @@ fn options_anchor_sits_on_the_card_when_names_show_on_focus() {
         .find(|c| c.target == Target::App("netflix".into()))
         .unwrap();
     assert!(card.rect.h < 160., "no room for a name in the hit target");
+}
+
+/// The Apps page with `count` apps: the demo's, then copies of them.
+fn apps_page(count: usize) -> State {
+    let mut state = ready();
+    let mut apps = state.inventory.apps.clone();
+    let base = apps.clone();
+    let mut index = 0;
+    while apps.len() < count {
+        let mut app = base[index % base.len()].clone();
+        app.id = format!("{}.copy{index}", app.id);
+        app.title = format!("{} {index}", app.title);
+        apps.push(app);
+        index += 1;
+    }
+    apps.truncate(count);
+    state.inventory.apps = apps;
+    state.open(1);
+    state
+}
+
+fn card(state: &State, index: usize) -> crate::state::Rect {
+    let id = state.apps()[index].id.clone();
+    controls(state)
+        .into_iter()
+        .find(|c| c.target == Target::App(id.clone()))
+        .unwrap()
+        .rect
+}
+
+#[test]
+fn apps_fit_four_rows_on_the_tvos_grid() {
+    let state = apps_page(30);
+    let first = card(&state, 0);
+    assert_eq!(
+        (first.x, first.y, first.w, first.h),
+        (80., 250., 260., 150.)
+    );
+    assert_eq!(card(&state, 1).x, 380.);
+    let fourth_row = card(&state, 18);
+    assert_eq!(fourth_row.y, 250. + 3. * 206.);
+    assert!(fourth_row.y + fourth_row.h <= 1020.);
+}
+
+#[test]
+fn the_all_filter_counts_the_apps_and_clears_the_category() {
+    let mut state = apps_page(30);
+    let all = state.apps().len();
+    let label = format!("All · {all}");
+    assert!(
+        scene(&state)
+            .draw
+            .iter()
+            .any(|draw| matches!(draw, crate::renderer::Draw::Text(text, ..) if *text == label)),
+        "{label}"
+    );
+    assert!(
+        controls(&state)
+            .iter()
+            .any(|c| c.target == Target::Filter(0))
+    );
+    state.focus = Target::Filter(2);
+    state.activate();
+    assert_eq!(state.filter, 2);
+    state.focus = Target::Filter(0);
+    state.activate();
+    assert_eq!(state.filter, 0);
+    // Up from the first row reaches All.
+    state.focus = Target::App(state.apps()[2].id.clone());
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Filter(0));
+}
+
+#[test]
+fn long_filters_stay_clear_of_search() {
+    let mut state = apps_page(30);
+    state.preferences.language = crate::i18n::Language::De;
+    state.preferences.hidden = state
+        .apps()
+        .iter()
+        .take(3)
+        .map(|app| app.id.clone())
+        .collect();
+    let scene = scene(&state);
+    let search = scene
+        .controls
+        .iter()
+        .find(|c| c.target == Target::Search)
+        .unwrap()
+        .rect;
+    let last = scene
+        .controls
+        .iter()
+        .filter(|c| matches!(c.target, Target::Filter(_)))
+        .map(|c| c.rect.x + c.rect.w)
+        .fold(0., f32::max);
+    assert!(
+        last <= search.x - 16.,
+        "filters end at {last}, search at {}",
+        search.x
+    );
+}
+
+#[test]
+fn empty_states_sit_below_the_filters() {
+    let mut state = apps_page(30);
+    state.query = "zzzz-nothing".into();
+    let top = scene(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::Text(text, rect, ..)
+                if *text == state.preferences.language.t("noMatches") =>
+            {
+                Some(rect.y)
+            }
+            _ => None,
+        })
+        .fold(f32::MAX, f32::min);
+    assert!((250. ..1020.).contains(&top), "{top}");
 }

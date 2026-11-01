@@ -2579,6 +2579,21 @@
     "nl": "Locaties zoeken is niet beschikbaar. Controleer je verbinding en probeer het opnieuw.",
     "sv": "Platssökningen är inte tillgänglig. Kontrollera anslutningen och försök igen."
   },
+  "allApps": {
+    "zh-tw": "全部 · {count}",
+    "en": "All · {count}",
+    "de": "Alle · {count}",
+    "es": "Todas · {count}",
+    "zh": "全部 · {count}",
+    "pt": "Todos · {count}",
+    "it": "Tutte · {count}",
+    "ru": "Все · {count}",
+    "pl": "Wszystkie · {count}",
+    "fr": "Toutes · {count}",
+    "vi": "Tất cả · {count}",
+    "nl": "Alle · {count}",
+    "sv": "Alla · {count}"
+  },
   "findApp": {
     "zh-tw": "搜尋應用程式",
     "en": "Find an app",
