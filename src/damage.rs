@@ -119,6 +119,7 @@ fn same(a: &Draw, b: &Draw) -> bool {
                 && s1.tracking == s2.tracking
                 && s1.line_height == s2.line_height
                 && s1.align_right == s2.align_right
+                && s1.shadow == s2.shadow
                 && c1 == c2
                 && x1 == x2
         }

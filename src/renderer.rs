@@ -21,6 +21,8 @@ pub const WHITE: Color = [0.96, 0.96, 0.96, 1.];
 const GLYPH_GEOMETRY_BUDGET: usize = 8 * 1024 * 1024;
 const TEXT_GEOMETRY_BUDGET: usize = 32 * 1024 * 1024;
 const TEXTURE_BUDGET: usize = 48 * 1024 * 1024;
+/// How dark a text shadow is where all its taps overlap, under the glyphs.
+const SHADOW_DEPTH: f32 = 0.38;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
@@ -30,6 +32,8 @@ pub struct TextStyle {
     pub tracking: f32,
     pub line_height: f32,
     pub align_right: bool,
+    /// A soft dark shadow under the glyphs, for text straight on the wallpaper.
+    pub shadow: bool,
 }
 impl TextStyle {
     pub const fn new(size: f32) -> Self {
@@ -39,6 +43,7 @@ impl TextStyle {
             tracking: 0.,
             line_height: 1.2,
             align_right: false,
+            shadow: false,
         }
     }
     pub const fn weight(mut self, weight: u16) -> Self {
@@ -55,6 +60,10 @@ impl TextStyle {
     }
     pub const fn right(mut self) -> Self {
         self.align_right = true;
+        self
+    }
+    pub const fn shadow(mut self) -> Self {
+        self.shadow = true;
         self
     }
 }
@@ -748,7 +757,7 @@ impl Renderer {
                 | (u8::from(self.stats.multisample_samples > 1) << 2),
         };
         if self.text_runs.contains_key(&key) {
-            self.submit_text(key, origin, color);
+            self.submit_shadowed(key, origin, color, style);
             return;
         }
         let rect = Rect::new(0., 0., rect.w, rect.h);
@@ -932,7 +941,21 @@ impl Renderer {
                 frame: self.frame,
             },
         );
-        self.submit_text(key, origin, color);
+        self.submit_shadowed(key, origin, color, style);
+    }
+
+    /// A shadowed run is first drawn faint and dark on rings around a point a little below it:
+    /// the taps add up like a blur, darkest under the glyphs and fading outwards, without
+    /// rendering one. Large text gets more rings so its wider shadow stays smooth.
+    fn submit_shadowed(&mut self, key: TextKey, origin: [f32; 2], tint: Color, style: TextStyle) {
+        if style.shadow && tint[3] > 0. {
+            let (taps, alpha) = shadow_taps(style.size);
+            let shade = [0., 0., 0., alpha * tint[3]];
+            for [dx, dy] in taps {
+                self.submit_text(key.clone(), [origin[0] + dx, origin[1] + dy], shade);
+            }
+        }
+        self.submit_text(key, origin, tint);
     }
 
     fn submit_text(&mut self, key: TextKey, origin: [f32; 2], tint: Color) {
@@ -1915,4 +1938,30 @@ fn link(vertex: &str, fragment: &str, attributes: &[&CStr]) -> Result<GLuint, St
         }
         Ok(program)
     }
+}
+
+/// Offsets for a shadow under text of this size, and each tap's opacity. Large text casts a wide,
+/// soft one; small text a tight one just below, which keeps its letters crisp instead of
+/// blurring them together.
+pub fn shadow_taps(size: f32) -> (Vec<[f32; 2]>, f32) {
+    let (radius, drop, rings, depth): (f32, f32, &[(f32, usize)], f32) = if size >= 40. {
+        let rings = &[(0.33, 6), (0.66, 10), (1., 14)];
+        ((size * 0.2).min(12.), (size * 0.05).min(4.5), rings, SHADOW_DEPTH)
+    } else if size >= 20. {
+        (size * 0.09, size * 0.06, &[(1., 8)], SHADOW_DEPTH)
+    } else {
+        (1.2, 1.2, &[(1., 6)], SHADOW_DEPTH)
+    };
+    let mut taps = vec![[0., drop]];
+    for &(ring, count) in rings {
+        for step in 0..count {
+            let angle = (step as f32 + 0.5 * ring) * std::f32::consts::TAU / count as f32;
+            taps.push([
+                angle.cos() * radius * ring,
+                drop + angle.sin() * radius * ring,
+            ]);
+        }
+    }
+    let alpha = 1. - (1. - depth).powf(1. / taps.len() as f32);
+    (taps, alpha)
 }

@@ -111,6 +111,7 @@ fn text_damages_the_full_width_of_its_line() {
         tracking: 0.,
         line_height: 1.2,
         align_right: false,
+        shadow: false,
     };
     let clock = |value: &str| {
         Draw::Text(

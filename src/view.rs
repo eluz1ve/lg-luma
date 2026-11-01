@@ -230,6 +230,7 @@ impl Scene {
         color: Color,
         center: bool,
     ) {
+        let color = if style.shadow { solid(color) } else { color };
         self.draw
             .push(Draw::Text(text.into(), rect, style, color, center));
     }
@@ -244,6 +245,30 @@ impl Scene {
             true,
             color,
         ));
+    }
+    /// An icon straight on the wallpaper, over a soft shadow like its text's.
+    fn shadowed_icon(&mut self, assets: &Assets, name: &str, rect: Rect, color: Color) {
+        let path = assets.path(format!("ui-icons/{name}.lvec"));
+        let (taps, alpha) = crate::renderer::shadow_taps(rect.h * 0.8);
+        let shade = [0., 0., 0., alpha * color[3]];
+        for [dx, dy] in taps {
+            let rect = Rect::new(rect.x + dx, rect.y + dy, rect.w, rect.h);
+            self.draw
+                .push(Draw::TintedImage(path.clone(), rect, 0., true, shade));
+        }
+        self.draw
+            .push(Draw::TintedImage(path, rect, 0., true, color));
+    }
+    /// Text drawn since `start` sits straight on the wallpaper: it gets a shadow.
+    fn shadow_text(&mut self, start: usize) {
+        for draw in &mut self.draw[start..] {
+            if let Draw::Text(_, _, style, color, _) = draw
+                && !style.shadow
+            {
+                style.shadow = true;
+                *color = solid(*color);
+            }
+        }
     }
     fn control(&mut self, target: Target, rect: Rect, scrollable: bool) {
         self.controls.push(Control {
@@ -509,6 +534,14 @@ fn companion(
     out.control(Target::CloseDialog, close, false);
 }
 
+/// Shadowed text is drawn opaque: through a translucent glyph its own shadow would show, greying
+/// it. It takes the shade it has over the dark foot of a shaded wallpaper.
+fn solid(color: Color) -> Color {
+    const BACKDROP: f32 = 22. / 255.;
+    let [r, g, b, a] = color;
+    let over = |value: f32| value * a + BACKDROP * (1. - a);
+    [over(r), over(g), over(b), 1.]
+}
 fn c(rgb: u32, alpha: f32) -> Color {
     [
         ((rgb >> 16) & 255) as f32 / 255.,
@@ -806,7 +839,7 @@ fn header(
     out.text(
         clock,
         Rect::new(84., 76.8 - 14.4 * k, 300. * k, 28.8 * k),
-        text(24. * k, 500, -0.03),
+        text(24. * k, 500, -0.03).shadow(),
         WHITE,
         false,
     );
@@ -1060,7 +1093,8 @@ fn tile(
                 if focused { 600 } else { 550 },
                 -0.02,
             )
-            .leading(1.4),
+            .leading(1.4)
+            .shadow(),
             if focused {
                 c(0xffffff, 1.)
             } else {
@@ -1300,14 +1334,14 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         out.text(
             state.preferences.date_format.format(language, now),
             Rect::new(84., top, 1200., 24.),
-            text(18.4, 600, 0.12),
+            text(18.4, 600, 0.12).shadow(),
             c(0xf5f5f5, 0.72),
             false,
         );
     }
     if state.preferences.show_greeting {
         let greeting = language.greeting(now.hour(), &state.preferences.greeting_name);
-        let greeting_style = text(90.4, 500, -0.065).leading(1.05);
+        let greeting_style = text(90.4, 500, -0.065).leading(1.05).shadow();
         // Beside the crypto block, long greetings shrink before reaching it.
         let width = if crypto_block_shown(state) {
             CRYPTO_BLOCK_X - 84. - 48.
@@ -1341,7 +1375,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     out.text(
         language.t("favorites"),
         Rect::new(84., 478.5 - s, 1000., 31.),
-        text(23.2, 550, -0.035).leading(1.3),
+        text(23.2, 550, -0.035).leading(1.3).shadow(),
         WHITE,
         false,
     );
@@ -1349,7 +1383,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         out.text(
             language.t("moveApps"),
             Rect::new(1686., 485. - s, 150., 24.),
-            text(14.4, 400, 0.),
+            text(14.4, 400, 0.).shadow(),
             c(0xdedede, 1.),
             true,
         );
@@ -1454,7 +1488,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         out.text(
             language.t("inputsHeading"),
             Rect::new(84., input_y + 3.3, 1000., 31.),
-            text(23.2, 550, -0.035).leading(1.3),
+            text(23.2, 550, -0.035).leading(1.3).shadow(),
             WHITE,
             false,
         );
@@ -1566,7 +1600,7 @@ const SHOW_POSTER_HEIGHT: f32 = HOME_TILE_WIDTH * 1.5;
 fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
     let language = state.preferences.language;
     let heading = language.t("shows");
-    let style = text(23.2, 550, -0.035).leading(1.3);
+    let style = text(23.2, 550, -0.035).leading(1.3).shadow();
     out.text(
         heading,
         Rect::new(84., y + 3.3, 1000., 31.),
@@ -1577,7 +1611,7 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
     out.text(
         "TVmaze",
         Rect::new(84. + assets.width(heading, style) + 20., y + 9.6, 600., 20.),
-        text(14.4, 400, 0.),
+        text(14.4, 400, 0.).shadow(),
         c(0xf5f5f5, 0.5),
         false,
     );
@@ -1747,6 +1781,7 @@ fn crypto_block(out: &mut Scene, state: &State) {
         CRYPTO_BLOCK_RIGHT - CRYPTO_BLOCK_X,
         height,
     );
+    let start = out.draw.len();
     if state.preferences.crypto_card {
         out.shadow(rect, 24., 4., 1., 0.01);
         out.draw.push(Draw::RoundedGradient(
@@ -1824,6 +1859,9 @@ fn crypto_block(out: &mut Scene, state: &State) {
             ),
         }
     }
+    if !state.preferences.crypto_card {
+        out.shadow_text(start);
+    }
 }
 
 /// Home's crypto prices: a heading and up to four cards in the inputs' style, each with the
@@ -1833,7 +1871,7 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
     out.text(
         language.t("crypto"),
         Rect::new(84., y + 3.3, 1000., 31.),
-        text(23.2, 550, -0.035).leading(1.3),
+        text(23.2, 550, -0.035).leading(1.3).shadow(),
         WHITE,
         false,
     );
@@ -1935,7 +1973,7 @@ const CS2_CARD_PITCH: f32 = 591.45;
 fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetDateTime) {
     let language = state.preferences.language;
     let heading = language.t("cs2Score");
-    let style = text(23.2, 550, -0.035).leading(1.3);
+    let style = text(23.2, 550, -0.035).leading(1.3).shadow();
     out.text(
         heading,
         Rect::new(84., y + 3.3, 1000., 31.),
@@ -1945,7 +1983,7 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
     );
     let credit = language.t("cs2Credit");
     let credit_x = 84. + assets.width(heading, style) + 20.;
-    let credit_style = text(14.4, 400, 0.);
+    let credit_style = text(14.4, 400, 0.).shadow();
     out.text(
         credit,
         Rect::new(credit_x, y + 9.6, 600., 20.),
@@ -2979,7 +3017,7 @@ fn weather_summary(
             (rect.h - leading).max(style.size),
         )
     });
-    out.icon(
+    out.shadowed_icon(
         assets,
         &summary.icon,
         Rect::new(84., y + 5.8, 26.4, 26.4),
@@ -2989,7 +3027,7 @@ fn weather_summary(
         out.text(
             label,
             Rect::new(rect.x, rect.y + y, rect.w, rect.h),
-            style,
+            style.shadow(),
             color,
             false,
         );
