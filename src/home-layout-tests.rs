@@ -146,3 +146,21 @@ fn long_greeting_shrinks_to_the_left_column_beside_today() {
     let (_, _, style) = greeting(&state);
     assert_eq!(style.size, 76.);
 }
+
+#[test]
+fn cs2_and_shows_in_today_leave_no_rows_below() {
+    let mut state = ready();
+    state.preferences.show_cs2 = true;
+    state.preferences.show_shows = true;
+    let headings = |state: &State| -> Vec<String> {
+        texts(state)
+            .into_iter()
+            .map(|(text, ..)| text)
+            .filter(|text| text == "CS2 Score" || text == "TV Shows")
+            .collect()
+    };
+    assert!(headings(&state).is_empty(), "{:?}", headings(&state));
+    state.preferences.cs2_today = false;
+    state.preferences.shows_today = false;
+    assert_eq!(headings(&state), ["CS2 Score", "TV Shows"]);
+}

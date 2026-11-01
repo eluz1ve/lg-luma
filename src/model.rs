@@ -332,6 +332,10 @@ pub struct Preferences {
     /// Home's CS2 Score row below the inputs, and what it lists.
     #[serde(deserialize_with = "crate::cs2::deserialize_flag")]
     pub show_cs2: bool,
+    /// CS2 Score's live and coming matches in the Today card instead of a row of their own.
+    pub cs2_today: bool,
+    /// Today's episodes in the Today card instead of TV Shows' own row.
+    pub shows_today: bool,
     /// Liquipedia's tier 1 and 2 events only.
     #[serde(deserialize_with = "crate::cs2::deserialize_enabled")]
     pub cs2_major_only: bool,
@@ -347,7 +351,7 @@ pub struct Preferences {
     /// Up to `crypto::MAX_COINS` Binance coins: `crypto::COINS` in its order, then the others.
     #[serde(deserialize_with = "crate::crypto::deserialize_coins")]
     pub crypto_coins: Vec<String>,
-    /// Shows the prices as a block beside the greeting instead of a row below the inputs.
+    /// Shows the prices in the Today card beside the greeting instead of a row below the inputs.
     #[serde(deserialize_with = "crate::crypto::deserialize_flag")]
     pub crypto_beside: bool,
     /// The block beside the greeting sits on a card; off, straight on the wallpaper.
@@ -396,6 +400,8 @@ impl Default for Preferences {
             date_format: DateFormat::default(),
             show_cs2: false,
             show_shows: false,
+            cs2_today: true,
+            shows_today: true,
             cs2_major_only: true,
             cs2_results: true,
             input_modes: BTreeMap::new(),

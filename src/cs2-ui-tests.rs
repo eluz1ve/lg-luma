@@ -60,6 +60,7 @@ fn cs2_cards_follow_inputs_and_open_their_match() {
     };
     let before = scene(&state);
     state.preferences.show_cs2 = true;
+    state.preferences.cs2_today = false;
     with_feed(&mut state);
     let after = scene(&state);
     assert_eq!(positions(&before), positions(&after));
@@ -148,6 +149,7 @@ fn cs2_cards_follow_inputs_and_open_their_match() {
 fn cs2_cards_scroll_three_at_a_time() {
     let mut state = ready();
     state.preferences.show_cs2 = true;
+    state.preferences.cs2_today = false;
     state.preferences.cs2_major_only = false;
     let matches: Vec<_> = (0..5)
         .map(|i| {
@@ -212,6 +214,7 @@ fn down_from_favorites_reaches_cs2_score_without_inputs() {
     let mut state = ready();
     state.inventory.inputs.clear();
     state.preferences.show_cs2 = true;
+    state.preferences.cs2_today = false;
     with_feed(&mut state);
     let favorite = state.apps()[2].id.clone();
     state.focus = Target::App(favorite);

@@ -42,6 +42,7 @@ mod storage;
 mod text_rendering;
 #[path = "tile-editor.rs"]
 mod tile_editor;
+mod today;
 mod update;
 mod vector;
 mod view;

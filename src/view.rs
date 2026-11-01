@@ -1623,11 +1623,12 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         crypto_row(out, state, y);
         y += ROW_HEADING_GAP + CHIP_HEIGHT + ROW_GAP;
     }
-    if state.preferences.show_cs2 {
+    // Widgets in the Today card have no row of their own.
+    if state.preferences.show_cs2 && !state.preferences.cs2_today {
         cs2_row(out, state, assets, y, now);
         y += ROW_HEADING_GAP + CS2_CARD_HEIGHT + ROW_GAP;
     }
-    if state.preferences.show_shows {
+    if state.preferences.show_shows && !state.preferences.shows_today {
         shows_row(out, state, assets, y);
     }
 }

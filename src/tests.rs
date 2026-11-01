@@ -3962,6 +3962,7 @@ fn tv_shows_slide_six_at_a_time_and_open_their_app() {
     use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
+    state.preferences.shows_today = false;
     state.shows.list = (0..10)
         .map(|index| Show {
             id: index,
@@ -4002,6 +4003,7 @@ fn carousels_slide_the_same_way_left_and_right() {
     use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
+    state.preferences.shows_today = false;
     state.shows.list = (0..12)
         .map(|index| Show {
             id: index,
