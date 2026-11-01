@@ -4092,3 +4092,23 @@ fn crypto_beside_the_greeting_takes_the_weather_details_place() {
     );
     assert!(texts.iter().any(|t| t == "BTC"));
 }
+
+#[test]
+fn favorites_ease_to_their_scroll_unless_motion_is_reduced() {
+    let mut state = ready();
+    state.home_scroll = 300.;
+    assert!(state.animating());
+    state.animate_favorites(1. / 60.);
+    let first = state.home_scroll_shown;
+    assert!(first > 0. && first < 300.);
+    for _ in 0..120 {
+        state.animate_favorites(1. / 60.);
+    }
+    assert_eq!(state.home_scroll_shown, 300.);
+    assert!(!state.animating());
+
+    state.preferences.reduced_motion = true;
+    state.home_scroll = 0.;
+    state.animate_favorites(1. / 60.);
+    assert_eq!(state.home_scroll_shown, 0.);
+}

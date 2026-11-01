@@ -873,6 +873,17 @@ fn tile(
         Rect::new(rect.x, rect.y, rect.w, rect.h + label_height),
         true,
     );
+    // Home's favorites are drawn where their scroll has eased to; hit targets stay put.
+    let rect = if state.page == Page::Home {
+        Rect::new(
+            rect.x + state.home_scroll - state.home_scroll_shown,
+            rect.y,
+            rect.w,
+            rect.h,
+        )
+    } else {
+        rect
+    };
     let viewport = if state.page == Page::Home {
         state.favorites_viewport()
     } else {
@@ -1347,7 +1358,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     out.draw.push(Draw::Clip(Some(state.favorites_viewport())));
     // Soft edges: out to the right from the end of the sixth tile, and in from the left once
     // the row has scrolled.
-    let left = if state.home_scroll > 0. {
+    let left = if state.home_scroll_shown > 0. {
         [HOME_FADE_LEFT, HOME_STRIP_LEFT]
     } else {
         [0., 0.]

@@ -1961,6 +1961,7 @@ fn run() -> Result<(), String> {
         last_frame = Instant::now();
         // Update after input so a focus change starts in this frame, without an idle wait.
         state.animate_home_focus(dt);
+        state.animate_favorites(dt);
         let navigation = view::navigation(&assets, state.preferences.language);
         let target = navigation.items[state.page_index()].x;
         let target_width = navigation.items[state.page_index()].w;

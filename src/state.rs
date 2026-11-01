@@ -292,6 +292,9 @@ pub struct State {
     pub subpage: Option<Subpage>,
     pub scroll: f32,
     pub home_scroll: f32,
+    /// Where the favorites are drawn: eases toward `home_scroll`, which navigation and hit
+    /// targets use, unless motion is reduced.
+    pub home_scroll_shown: f32,
     pub overlay: Option<Overlay>,
     pub moving: Option<String>,
     pub loading: bool,
@@ -346,6 +349,7 @@ impl State {
             subpage: None,
             scroll: 0.,
             home_scroll: 0.,
+            home_scroll_shown: 0.,
             overlay: None,
             moving: None,
             loading: false,
@@ -510,6 +514,22 @@ impl State {
         }
     }
 
+    /// Eases the drawn favorites toward their scroll position; reduced motion jumps there.
+    pub fn animate_favorites(&mut self, dt: f32) {
+        let target = self.home_scroll;
+        let gap = target - self.home_scroll_shown;
+        if gap == 0. {
+            return;
+        }
+        self.home_scroll_shown = if self.preferences.reduced_motion || gap.abs() < 0.5 {
+            target
+        } else {
+            // About 90% of the way in 0.2 s, at any frame rate.
+            self.home_scroll_shown + gap * (1. - (-dt * 11.5).exp())
+        };
+        self.dirty = true;
+    }
+
     pub fn animate_home_focus(&mut self, dt: f32) {
         let selected = match &self.focus {
             Target::App(id) if self.page == Page::Home && self.overlay.is_none() => {
@@ -527,6 +547,7 @@ impl State {
             && (self.recents.visibility != if self.recents_open() { 1. } else { 0. }
                 || self.recents.cards_animating(self.pointer)))
             || self.home_focus.animating()
+            || self.home_scroll_shown != self.home_scroll
             || self.previous_background.is_some()
             || self.panel_started.is_some()
             || (!self.preferences.reduced_motion
