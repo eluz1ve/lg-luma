@@ -210,6 +210,20 @@ pub fn format_price(price: f64) -> String {
     format!("${grouped}.{fraction}")
 }
 
+/// A price short enough for four coins on one line: 77.9K, 2,263, 94.30, else as `format_price`
+/// without its dollar sign.
+pub fn format_compact(price: f64) -> String {
+    if price >= 10_000. {
+        format!("{:.1}K", price / 1000.)
+    } else if price >= 1000. {
+        let whole = format!("{:.0}", price);
+        let (head, tail) = whole.split_at(whole.len() - 3);
+        format!("{head},{tail}")
+    } else {
+        format_price(price).trim_start_matches('$').to_owned()
+    }
+}
+
 /// The 24-hour change with its sign, such as `+1.24%` or `−0.85%`.
 pub fn format_change(change: f64) -> String {
     // Adding zero turns a rounded -0.0 into 0.0, so it does not print as "+-0.00%".

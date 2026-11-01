@@ -118,6 +118,10 @@ pub enum Target {
     ShowsToggle,
     /// A show card in Home's TV Shows row, by position.
     Show(usize),
+    /// A match line of Home's Today card, by the match's id.
+    TodayMatch(String),
+    /// An episode line of Home's Today card, by the show's TVmaze id.
+    TodayShow(i64),
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
@@ -533,6 +537,8 @@ impl State {
                         | Target::Coin(_)
                         | Target::Cs2Match(_)
                         | Target::Show(_)
+                        | Target::TodayMatch(_)
+                        | Target::TodayShow(_)
                 )
             });
         let lanes: Vec<(Lane, f32)> = if home {
@@ -899,6 +905,15 @@ impl State {
     pub fn reveal_focus(&mut self, controls: &[Control]) -> bool {
         let previous = self.scroll;
         let previous_home = self.home_scroll;
+        // A Today line can leave the card (a match ends, the day turns): focus the favorites.
+        if self.page == Page::Home
+            && self.overlay.is_none()
+            && matches!(self.focus, Target::TodayMatch(_) | Target::TodayShow(_))
+            && !controls.iter().any(|c| c.target == self.focus)
+        {
+            self.focus = self.first_content();
+            self.dirty = true;
+        }
         if let Some(control) = controls.iter().find(|c| c.target == self.focus) {
             if self.page == Page::Home && matches!(self.focus, Target::App(_)) {
                 if control.rect.x < HOME_STRIP_LEFT {
@@ -978,6 +993,22 @@ impl State {
             )
             .len()
         })
+    }
+
+    /// Opens the app that plays a show, or says which service has it.
+    fn open_show(&mut self, show: &crate::shows::Show) -> Vec<Effect> {
+        if let Some(app) = show.app.clone() {
+            return vec![Effect::Launch(app)];
+        }
+        let message = match show.service {
+            Some(service) => self
+                .preferences
+                .language
+                .format("showsNoApp", &[("service", service)]),
+            None => self.preferences.language.t("showsNoService").to_owned(),
+        };
+        self.notify(message);
+        vec![]
     }
 
     /// Scrolls the TV Shows row so the card at `index` is in view.
@@ -1443,7 +1474,17 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
-                        Direction::Up => self.focus(Target::Nav(0), controls),
+                        // Up reaches the Today card's last line, else the tabs.
+                        Direction::Up => {
+                            let today = controls
+                                .iter()
+                                .filter(|c| {
+                                    matches!(c.target, Target::TodayMatch(_) | Target::TodayShow(_))
+                                })
+                                .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
+                                .map(|c| c.target.clone());
+                            self.focus(today.unwrap_or(Target::Nav(0)), controls)
+                        }
                         Direction::Down => {
                             let x = controls
                                 .iter()
@@ -1693,6 +1734,29 @@ impl State {
                     self.cs2_reveal(next);
                     self.focus = Target::Cs2Match(next);
                     self.dirty = true;
+                }
+                return vec![];
+            }
+            // The Today card's lines: Up and Down step through them, then reach the tabs above
+            // or the favorites below; Left and Right stay.
+            if matches!(self.focus, Target::TodayMatch(_) | Target::TodayShow(_)) {
+                let mut lines: Vec<&Control> = controls
+                    .iter()
+                    .filter(|c| matches!(c.target, Target::TodayMatch(_) | Target::TodayShow(_)))
+                    .collect();
+                lines.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
+                let index = lines.iter().position(|c| c.target == self.focus);
+                let next = match (direction, index) {
+                    (Direction::Up, Some(0) | None) => Some(Target::Nav(0)),
+                    (Direction::Up, Some(index)) => Some(lines[index - 1].target.clone()),
+                    (Direction::Down, Some(index)) if index + 1 < lines.len() => {
+                        Some(lines[index + 1].target.clone())
+                    }
+                    (Direction::Down, _) => Some(self.first_content()),
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    self.focus(next, controls);
                 }
                 return vec![];
             }
@@ -2516,26 +2580,32 @@ impl State {
                     }
                 }
             }
+            Target::TodayMatch(id) => {
+                if self.cs2.find(&id).is_some() {
+                    self.overlay = Some(Overlay::Cs2Match {
+                        id: id.clone(),
+                        restore: Target::TodayMatch(id),
+                    });
+                    self.focus = Target::Cs2Close;
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
+                }
+            }
+            Target::TodayShow(id) => {
+                if let Some(show) = self.shows.list.iter().find(|show| show.id == id).cloned() {
+                    return self.open_show(&show);
+                }
+            }
             Target::Cs2Close => return self.back(),
             Target::ShowsToggle => {
                 self.preferences.show_shows = !self.preferences.show_shows;
                 return vec![Effect::Save];
             }
             Target::Show(index) => {
-                let Some(show) = self.shows.list.get(index) else {
-                    return vec![];
-                };
-                if let Some(app) = show.app.clone() {
-                    return vec![Effect::Launch(app)];
+                if let Some(show) = self.shows.list.get(index).cloned() {
+                    return self.open_show(&show);
                 }
-                let message = match show.service {
-                    Some(service) => self
-                        .preferences
-                        .language
-                        .format("showsNoApp", &[("service", service)]),
-                    None => self.preferences.language.t("showsNoService").to_owned(),
-                };
-                self.notify(message);
             }
             Target::WeatherConfigure => {
                 self.open(2);

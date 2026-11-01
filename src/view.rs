@@ -263,17 +263,6 @@ impl Scene {
         self.draw
             .push(Draw::TintedImage(path, rect, 0., true, color));
     }
-    /// Text drawn since `start` sits straight on the wallpaper: it gets a shadow.
-    fn shadow_text(&mut self, start: usize) {
-        for draw in &mut self.draw[start..] {
-            if let Draw::Text(_, _, style, color, _) = draw
-                && !style.shadow
-            {
-                style.shadow = true;
-                *color = solid(*color);
-            }
-        }
-    }
     fn control(&mut self, target: Target, rect: Rect, scrollable: bool) {
         self.controls.push(Control {
             target,
@@ -1347,7 +1336,8 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
     let s = state.page_scroll();
     // The header's left column yields to the card beside it.
-    let column = if crypto_block_shown(state) {
+    let today = today_lines(state, now);
+    let column = if !today.lines.is_empty() {
         TODAY_RECT.x - GUTTER - SAFE_X
     } else {
         WIDTH
@@ -1617,9 +1607,12 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     } else {
         input_y + ROW_HEADING_GAP + (rows - 1.) * CHIP_ROW_PITCH + CHIP_HEIGHT + ROW_GAP
     };
-    if crypto_block_shown(state) {
-        crypto_block(out, state);
-    } else if state.preferences.show_crypto && !state.preferences.crypto_coins.is_empty() {
+    today_card(out, state, assets, &today, now);
+    // Prices in the Today card have no row of their own.
+    if state.preferences.show_crypto
+        && !state.preferences.crypto_beside
+        && !state.preferences.crypto_coins.is_empty()
+    {
         crypto_row(out, state, y);
         y += ROW_HEADING_GAP + CHIP_HEIGHT + ROW_GAP;
     }
@@ -1793,113 +1786,196 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
 }
 
-/// The crypto block fills the header's right 30%, beside the greeting.
-const CRYPTO_BLOCK_X: f32 = 1311.;
-const CRYPTO_BLOCK_RIGHT: f32 = 1836.;
-
-/// Whether Home shows the prices as a block beside the greeting rather than a row.
-fn crypto_block_shown(state: &State) -> bool {
-    state.preferences.show_crypto
-        && state.preferences.crypto_beside
-        && !state.preferences.crypto_coins.is_empty()
+/// The Today card's lines for this moment, over the TV's local day.
+fn today_lines(state: &State, now: OffsetDateTime) -> crate::today::Today {
+    let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
+    crate::today::today(state, now.unix_timestamp(), (midnight, midnight + 86_400))
 }
 
-/// Home's crypto prices beside the greeting, on a card: a line per coin with its price and
-/// 24-hour change. Vertically centred on the greeting, clear of the favorites heading.
-fn crypto_block(out: &mut Scene, state: &State) {
+const TODAY_PAD: f32 = 20.;
+const TODAY_EYEBROW: f32 = 28.;
+const TODAY_LINE: f32 = 58.;
+
+/// Home's Today card beside the greeting: live matches, today's episodes and the prices, each
+/// line with its picture, what it is, and when. None without lines; the header keeps its height.
+fn today_card(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    today: &crate::today::Today,
+    now: OffsetDateTime,
+) {
+    use crate::today::Line;
+    if today.lines.is_empty() {
+        return;
+    }
     let language = state.preferences.language;
-    let pad = 26.;
-    let line = 56.;
-    let coins = &state.preferences.crypto_coins;
-    let title = 34.;
-    let height = pad * 2. + title + coins.len() as f32 * line;
-    let top = (300. - height / 2.).clamp(128., 470. - height) - state.page_scroll();
+    let height = TODAY_PAD * 2. + TODAY_EYEBROW + TODAY_LINE * today.lines.len() as f32;
     let rect = Rect::new(
-        CRYPTO_BLOCK_X,
-        top,
-        CRYPTO_BLOCK_RIGHT - CRYPTO_BLOCK_X,
+        TODAY_RECT.x,
+        TODAY_RECT.y + ((TODAY_RECT.h - height) / 2.).max(0.) - state.page_scroll(),
+        TODAY_RECT.w,
         height,
     );
-    let start = out.draw.len();
-    if state.preferences.crypto_card {
-        out.shadow(rect, 24., 4., 1., 0.01);
-        out.draw.push(Draw::RoundedGradient(
-            rect,
-            24.,
-            c(0x20252b, 0.60),
-            c(0x171c22, 0.55),
-        ));
-        out.border(rect, 24., 1., c(0xffffff, 0.063));
+    out.shadow(rect, 24., 4., 1., 0.01);
+    out.draw.push(Draw::RoundedGradient(
+        rect,
+        24.,
+        c(0x20252b, 0.60),
+        c(0x171c22, 0.55),
+    ));
+    out.border(rect, 24., 1., c(0xffffff, 0.063));
+    let x = rect.x + 24.;
+    let inner = rect.w - 48.;
+    let mut eyebrow = language.t("today").to_uppercase();
+    if today.more > 0 {
+        eyebrow = format!(
+            "{eyebrow} · {}",
+            language.format("todayMore", &[("count", &today.more.to_string())])
+        );
     }
-    let x = rect.x + pad;
-    let inner = rect.w - pad * 2.;
     out.text(
-        language.t("crypto"),
-        Rect::new(x, rect.y + pad, inner, 22.),
-        text(15.2, 600, 0.06),
+        eyebrow,
+        Rect::new(x, rect.y + TODAY_PAD, inner, 24.),
+        text(20., 600, 0.12),
         c(0xf5f5f5, 0.6),
         false,
     );
-    for (index, symbol) in coins.iter().enumerate() {
-        let y = rect.y + pad + title + index as f32 * line;
-        if index > 0 {
-            out.shape(Rect::new(x, y - 1., inner, 1.), 0., c(0xffffff, 0.07));
+    let main = text(type_scale::BODY, 550, -0.01);
+    let side = text(type_scale::CAPTION, 450, 0.);
+    let unix = now.unix_timestamp();
+    for (index, line) in today.lines.iter().enumerate() {
+        let row = Rect::new(
+            rect.x + 8.,
+            rect.y + TODAY_PAD + TODAY_EYEBROW + index as f32 * TODAY_LINE,
+            rect.w - 16.,
+            TODAY_LINE,
+        );
+        let icon = Rect::new(x, row.y + 9., 40., 40.);
+        let text_x = icon.x + icon.w + 16.;
+        let target = match line {
+            Line::Match { id } => Some(Target::TodayMatch(id.clone())),
+            Line::Episode { show, .. } => Some(Target::TodayShow(*show)),
+            Line::Crypto => None,
+        };
+        if let Some(target) = &target {
+            let amount = state.motion.focus(target);
+            if amount > 0. {
+                out.shape(row, 14., c(0xffffff, 0.1 * amount));
+                lift_edge(out, row, 14., amount);
+            }
         }
-        let half = inner / 2.;
+        // (what, when, when's colour)
+        let (title, when, tone) = match line {
+            Line::Match { id } => {
+                let Some(item) = state.cs2.find(id) else {
+                    continue;
+                };
+                match item.icon.as_ref().and_then(|url| state.cs2.image(url)) {
+                    Some(image) => out.draw.push(Draw::Picture(image, icon, 0., [1.; 4])),
+                    None => out.icon(assets, "gaming", icon.inset(6.), c(0xf5f5f5, 0.7)),
+                }
+                let side = |index: usize| {
+                    item.teams[index]
+                        .as_ref()
+                        .map_or("TBD", |team| team.short.as_str())
+                        .to_owned()
+                };
+                let live = item.state == crate::cs2::State::Live;
+                let title = match item.score.filter(|_| live) {
+                    Some([a, b]) => format!("{} {a}–{b} {}", side(0), side(1)),
+                    None => format!("{} – {}", side(0), side(1)),
+                };
+                if live {
+                    let map = item.current_map().map(|(_, map)| map.name.clone());
+                    let when = [Some(language.t("cs2Live").to_owned()), map]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    (title, when, c(0xff8a80, 0.95))
+                } else {
+                    (title, cs2_start(state, item.begins, now), c(0xe8e8e8, 0.62))
+                }
+            }
+            Line::Episode { show, airs } => {
+                let Some(show) = state.shows.list.iter().find(|s| s.id == *show) else {
+                    continue;
+                };
+                match state.shows.poster(show) {
+                    Some(poster) => out.draw.push(Draw::Cover(poster, icon, 8., [1.; 4])),
+                    None => out.icon(assets, "tv", icon.inset(6.), c(0xf5f5f5, 0.7)),
+                }
+                let episode = show.episodes.iter().find(|e| e.airs == *airs);
+                let title = match episode.and_then(|e| Some((e.season?, e.number?))) {
+                    Some((season, number)) => format!("{} — S{season}E{number}", show.title),
+                    None => show.title.clone(),
+                };
+                let time = if *airs >= unix {
+                    OffsetDateTime::from_unix_timestamp(*airs)
+                        .map(|t| {
+                            language.clock(
+                                t.to_offset(now.offset()),
+                                state.preferences.hour_24,
+                                false,
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    language.t("aired").to_owned()
+                };
+                let when = match show.service {
+                    Some(service) => format!("{service} · {time}"),
+                    None => time,
+                };
+                (title, when, c(0xe8e8e8, 0.62))
+            }
+            Line::Crypto => {
+                out.icon(assets, "globe", icon.inset(6.), c(0xf5f5f5, 0.7));
+                let coins = &state.preferences.crypto_coins;
+                let slot = (rect.x + rect.w - 24. - text_x) / coins.len().max(1) as f32;
+                for (index, symbol) in coins.iter().enumerate() {
+                    let label = match state.crypto.quotes.iter().find(|q| &q.symbol == symbol) {
+                        Some(quote) => format!(
+                            "{symbol} {} {}{:.1}%",
+                            crate::crypto::format_compact(quote.price),
+                            if quote.change < 0. { "▼" } else { "▲" },
+                            quote.change.abs()
+                        ),
+                        None => symbol.clone(),
+                    };
+                    let style = text(type_scale::CAPTION, 550, 0.);
+                    out.text(
+                        &label,
+                        Rect::new(text_x + index as f32 * slot, row.y + 16., slot - 8., 28.),
+                        assets.fit_text(&label, style, slot - 8.),
+                        WHITE,
+                        false,
+                    );
+                }
+                continue;
+            }
+        };
+        let when_width = assets.width(&when, side).min(inner * 0.45);
+        let right = rect.x + rect.w - 24.;
         out.text(
-            symbol,
-            Rect::new(x, y + 6., half, 26.),
-            text(21.6, 600, -0.01),
+            &when,
+            Rect::new(right - when_width, row.y + 17., when_width, 28.),
+            assets.fit_text(&when, side.right(), when_width),
+            tone,
+            false,
+        );
+        let room = right - when_width - 16. - text_x;
+        out.text(
+            &title,
+            Rect::new(text_x, row.y + 14., room, 32.),
+            assets.fit_text(&title, main, room),
             WHITE,
             false,
         );
-        let name = crate::crypto::name(symbol);
-        if name != symbol {
-            out.text(
-                name,
-                Rect::new(x, y + 31., half, 18.),
-                text(14.4, 400, 0.),
-                c(0xe8e8e8, 0.5),
-                false,
-            );
+        if let Some(target) = target {
+            out.control(target, row, true);
         }
-        let right = Rect::new(x + half, 0., half, 0.);
-        match state.crypto.quotes.iter().find(|q| &q.symbol == symbol) {
-            Some(quote) => {
-                out.text(
-                    crate::crypto::format_price(quote.price),
-                    Rect::new(right.x, y + 6., right.w, 26.),
-                    text(21.6, 600, -0.01).right(),
-                    WHITE,
-                    false,
-                );
-                out.text(
-                    crate::crypto::format_change(quote.change),
-                    Rect::new(right.x, y + 31., right.w, 18.),
-                    text(14.4, 550, 0.).right(),
-                    if quote.change < -0.005 {
-                        c(0xff8a80, 0.95)
-                    } else {
-                        c(0x7ee2a8, 0.95)
-                    },
-                    false,
-                );
-            }
-            None => out.text(
-                language.t(if state.crypto.failed {
-                    "cryptoUnavailable"
-                } else {
-                    "cryptoLoading"
-                }),
-                Rect::new(right.x, y + 15., right.w, 22.),
-                text(16., 400, 0.).right(),
-                c(0xe8e8e8, 0.55),
-                false,
-            ),
-        }
-    }
-    if !state.preferences.crypto_card {
-        out.shadow_text(start);
     }
 }
 

@@ -180,16 +180,18 @@ fn any_binance_coin_is_found_by_search_and_listed_after_the_usual_ones() {
 }
 
 #[test]
-fn crypto_can_sit_beside_the_greeting_instead_of_below_the_inputs() {
+fn crypto_can_sit_in_today_instead_of_below_the_inputs() {
     let mut state = ready();
     state.preferences.show_crypto = true;
-    let heading = |state: &State| {
+    let text_at = |state: &State, wanted: &str| {
         scene(state).draw.iter().find_map(|draw| match draw {
-            crate::renderer::Draw::Text(label, rect, ..) if label == "Crypto" => Some(*rect),
+            crate::renderer::Draw::Text(label, rect, ..) if label.starts_with(wanted) => {
+                Some(*rect)
+            }
             _ => None,
         })
     };
-    assert!(heading(&state).is_some_and(|rect| rect.y > 600.));
+    assert!(text_at(&state, "Crypto").is_some_and(|rect| rect.y > 600.));
     state.open(2);
     state.focus = Target::Widget(5);
     state.activate();
@@ -197,16 +199,11 @@ fn crypto_can_sit_beside_the_greeting_instead_of_below_the_inputs() {
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(state.preferences.crypto_beside);
     state.open(0);
-    let rect = heading(&state).expect("the block keeps its heading");
-    assert!(rect.x > 1300. && rect.y < 470.);
-    let card = |state: &State| {
-        scene(state).draw.iter().any(
-            |draw| matches!(draw, crate::renderer::Draw::RoundedGradient(r, ..) if r.x == 1311.),
-        )
-    };
-    assert!(card(&state));
-    state.preferences.crypto_card = false;
-    assert!(!card(&state), "off, the block sits on the wallpaper");
+    // The prices become the Today card's last line, beside the greeting, and the row is gone.
+    assert!(text_at(&state, "TODAY").is_some_and(|rect| rect.x >= 1160. && rect.y < 400.));
+    let coin = text_at(&state, "BTC").expect("the coins are listed");
+    assert!(coin.x > 1160. && coin.y < 400.);
+    assert!(text_at(&state, "Crypto").is_none());
     assert!(
         !controls(&state)
             .iter()

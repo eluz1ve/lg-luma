@@ -16,6 +16,8 @@ mod crypto_tests;
 mod cs2_ui_tests;
 #[path = "home-layout-tests.rs"]
 mod home_layout_tests;
+#[path = "today-ui-tests.rs"]
+mod today_ui_tests;
 #[path = "wallpapers-ui-tests.rs"]
 mod wallpaper_tests;
 
