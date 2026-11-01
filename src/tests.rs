@@ -4069,3 +4069,26 @@ fn scene_text_of(scene: &view::Scene) -> Vec<String> {
         })
         .collect()
 }
+
+#[test]
+fn crypto_beside_the_greeting_takes_the_weather_details_place() {
+    let mut state = ready();
+    weather_with_details(&mut state);
+    state.preferences.weather_high_low = true;
+    state.preferences.show_crypto = true;
+    state.preferences.crypto_beside = true;
+    let page = scene(&state);
+    let texts = scene_text_of(&page);
+    assert!(!texts.iter().any(|t| t.contains('↑')), "no weather details");
+    let header = |label: &str| {
+        page.draw.iter().any(|draw| {
+            matches!(draw, crate::renderer::Draw::Text(t, rect, ..)
+                if t == label && rect.y < 120. && rect.x > 1150.)
+        })
+    };
+    assert!(
+        header("12°C") && header("Vienna"),
+        "weather moves to the header"
+    );
+    assert!(texts.iter().any(|t| t == "BTC"));
+}
