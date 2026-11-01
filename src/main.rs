@@ -31,6 +31,9 @@ mod renderer;
 #[path = "scroll-preview.rs"]
 mod scroll_preview;
 mod sdl_events;
+mod shows;
+#[path = "shows-service.rs"]
+mod shows_service;
 mod state;
 mod storage;
 mod text_rendering;
@@ -570,6 +573,62 @@ fn crypto_tick(state: &mut State, service: &crypto_service::Service, visible: bo
     }
 }
 
+fn shows_tick(state: &mut State, service: &shows_service::Service, visible: bool) {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let installed: Vec<(String, String)> = state
+        .inventory
+        .apps
+        .iter()
+        .map(|app| (app.id.clone(), app.title.clone()))
+        .collect();
+    let country = shows_country(state.preferences.language);
+    let (command, changed) = state.shows.sync(
+        state.preferences.show_shows,
+        visible && state.page == state::Page::Home,
+        country,
+        &installed,
+        now,
+    );
+    state.dirty |= changed;
+    service.generation(state.shows.generation());
+    if let Some(command) = command {
+        service.send(command);
+    }
+    while let Ok(response) = service.receiver.try_recv() {
+        state.dirty |= match response {
+            shows_service::Response::Shows { id, result } => {
+                let accepted = state.shows.accept(id, result, now);
+                state.shows_first = state
+                    .shows_first
+                    .min(state.shows.list.len().saturating_sub(shows::VISIBLE));
+                accepted
+            }
+            shows_service::Response::Poster { url, image } => state.shows.accept_poster(url, image),
+        };
+    }
+    if state.preferences.show_shows && visible {
+        for url in state.shows.wanted_posters(state.shows_first) {
+            service.poster(url);
+        }
+    }
+}
+
+/// The country whose TV schedule joins the streaming one, from the UI language.
+fn shows_country(language: i18n::Language) -> &'static str {
+    match language.code() {
+        "pt" => "BR",
+        "de" => "DE",
+        "fr" => "FR",
+        "es" => "ES",
+        "it" => "IT",
+        "pl" => "PL",
+        "nl" => "NL",
+        "sv" => "SE",
+        "ru" => "RU",
+        _ => "US",
+    }
+}
+
 fn cs2_tick(state: &mut State, service: &cs2_service::Service, visible: bool) {
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let (command, changed) = state.cs2.sync(
@@ -823,6 +882,7 @@ fn run() -> Result<(), String> {
     let cs2_service = cs2_service::Service::new(cs2_service::Client::new(
         options.cs2_test_server.as_deref(),
     )?);
+    let shows_service = shows_service::Service::new(shows_service::Client::new());
     let updates = update::Worker::new(webos && public_update_checks);
     let homebrew = homebrew_updates::Worker::new(webos && public_update_checks);
     let platform = Platform::new(
@@ -1346,6 +1406,7 @@ fn run() -> Result<(), String> {
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
         cs2_tick(&mut state, &cs2_service, visible);
+        shows_tick(&mut state, &shows_service, visible);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],
@@ -1825,6 +1886,7 @@ fn run() -> Result<(), String> {
             platform.send(Request::RefreshInputs);
         }
         cs2_tick(&mut state, &cs2_service, visible);
+        shows_tick(&mut state, &shows_service, visible);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],

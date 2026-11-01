@@ -1452,7 +1452,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         lift_edge(out, rect, 18.4, lift_amount);
         out.control(Target::Input(input.id.clone()), hit, true);
     }
-    // Crypto prices, then CS2 Score, stacked below the inputs.
+    // Crypto prices, CS2 Score and TV Shows, stacked below the inputs.
     let rows = inputs.len().div_ceil(3) as f32;
     let mut y = if inputs.is_empty() {
         input_y
@@ -1467,7 +1467,172 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     }
     if state.preferences.show_cs2 {
         cs2_row(out, state, assets, y, now);
+        y += 58.4 + CS2_CARD_HEIGHT + 41.6;
     }
+    if state.preferences.show_shows {
+        shows_row(out, state, assets, y);
+    }
+}
+
+/// Show cards share the favorites' width and pitch, with a poster's 2:3 face.
+const SHOW_WIDTH: f32 = HOME_TILE_WIDTH;
+const SHOW_POSTER_HEIGHT: f32 = HOME_TILE_WIDTH * 1.5;
+
+/// Home's TV Shows: a heading crediting TVmaze, then posters in a row that slides six at a time.
+fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
+    let language = state.preferences.language;
+    let heading = language.t("shows");
+    let style = text(23.2, 550, -0.035).leading(1.3);
+    out.text(
+        heading,
+        Rect::new(84., y + 3.3, 1000., 31.),
+        style,
+        WHITE,
+        false,
+    );
+    out.text(
+        "TVmaze",
+        Rect::new(84. + assets.width(heading, style) + 20., y + 9.6, 600., 20.),
+        text(14.4, 400, 0.),
+        c(0xf5f5f5, 0.5),
+        false,
+    );
+    let list = &state.shows.list;
+    if list.is_empty() {
+        out.text(
+            language.t(if state.shows.failed {
+                "showsUnavailable"
+            } else {
+                "showsLoading"
+            }),
+            Rect::new(84., y + 58.4, 1200., 25.),
+            text(18.4, 400, 0.),
+            c(0xf5f5f5, 0.6),
+            false,
+        );
+        return;
+    }
+    let visible = crate::shows::VISIBLE;
+    let first = state.shows_first.min(list.len().saturating_sub(visible));
+    if list.len() > visible {
+        out.text(
+            format!(
+                "{}–{} / {}",
+                first + 1,
+                (first + visible).min(list.len()),
+                list.len()
+            ),
+            Rect::new(1436., y + 9.6, 400., 20.),
+            text(15.2, 500, 0.02).right(),
+            c(0xf5f5f5, 0.6),
+            false,
+        );
+    }
+    // The cards slide to `first` (`motion.rs`); only those in view take focus and clicks.
+    let shown = state
+        .motion
+        .shown(crate::motion::Lane::Shows, state.shows_first as f32)
+        .min(first.max(state.shows_first) as f32);
+    let content = state.content_viewport();
+    let top = (y + 20.).max(content.y);
+    out.draw.push(Draw::Clip(Some(Rect::new(
+        content.x,
+        top,
+        content.w,
+        (y + 58.4 + SHOW_POSTER_HEIGHT + 110. - top).max(0.),
+    ))));
+    for (index, show) in list.iter().enumerate() {
+        let x = |at: f32| 84. + (index as f32 - at) * HOME_TILE_PITCH;
+        let rect = Rect::new(x(shown), y + 58.4, SHOW_WIDTH, SHOW_POSTER_HEIGHT);
+        if rect.x + rect.w < content.x - 40. || rect.x > content.x + content.w + 40. {
+            continue;
+        }
+        let target = Target::Show(index);
+        let (face, lift_amount) = lift(out, state, &target, rect, 18.4);
+        match state.shows.poster(show) {
+            Some(poster) => out.draw.push(Draw::Cover(poster, face, 18.4, [1.; 4])),
+            None => {
+                out.draw.push(Draw::RoundedGradient(
+                    face,
+                    18.4,
+                    c(0x262c33, 0.8),
+                    c(0x171c22, 0.8),
+                ));
+                out.icon(
+                    assets,
+                    "tv",
+                    Rect::new(
+                        face.x + face.w / 2. - 22.,
+                        face.y + face.h / 2. - 22.,
+                        44.,
+                        44.,
+                    ),
+                    c(0xf5f5f5, 0.35),
+                );
+            }
+        }
+        lift_edge(out, face, 18.4, lift_amount);
+        // Below the poster: the title, then genre, year and rating, then the service.
+        let below = rect.y + rect.h + 12.;
+        out.text(
+            &show.title,
+            Rect::new(rect.x, below, rect.w, 26.),
+            assets.fit_text(&show.title, text(19.2, 550, -0.01), rect.w),
+            WHITE,
+            false,
+        );
+        let meta = match show.service {
+            Some(service) if !show.meta.is_empty() => format!("{} · {service}", show.meta),
+            Some(service) => service.to_owned(),
+            None => show.meta.clone(),
+        };
+        out.text(
+            &meta,
+            Rect::new(rect.x, below + 29., rect.w, 20.),
+            assets.fit_text(&meta, text(14.4, 400, 0.), rect.w),
+            c(0xf5f5f5, if show.app.is_some() { 0.6 } else { 0.4 }),
+            false,
+        );
+        if (first..first + visible).contains(&index) {
+            out.control(
+                target,
+                Rect::new(x(first as f32), rect.y, rect.w, rect.h + 60.),
+                true,
+            );
+        }
+    }
+    out.draw.push(Draw::Clip(Some(content)));
+}
+
+fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let s = state.scroll;
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::ShowsToggle,
+            rect: Rect::new(640., 164.8 - s, 1120., 72.),
+            title: language.t("showWidget"),
+            icon: Some("eye"),
+            value: Some(language.t(if state.preferences.show_shows {
+                "stateOn"
+            } else {
+                "stateOff"
+            })),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
+    out.text(
+        language.t("showsSource"),
+        Rect::new(660., 164.8 + 84. + 6. - s, 1080., 24.),
+        text(16., 400, 0.),
+        c(0xf5f5f5, 0.55),
+        false,
+    );
 }
 
 /// The crypto block fills the header's right 30%, beside the greeting.
@@ -3576,6 +3741,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
                 Some(Subpage::Inputs) => language.t("inputs"),
                 Some(Subpage::Clock) => language.t("clock"),
                 Some(Subpage::Cs2) => language.t("cs2Score"),
+                Some(Subpage::Shows) => language.t("shows"),
                 Some(Subpage::Language) => language.t("language"),
                 Some(Subpage::Appearance) => language.t("uiScale"),
                 Some(Subpage::TextRendering) => language.t("textRendering"),
@@ -3654,6 +3820,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             subpage,
             Subpage::WeatherLocation
                 | Subpage::Cs2
+                | Subpage::Shows
                 | Subpage::Weather
                 | Subpage::Shortcuts
                 | Subpage::Inputs
@@ -3666,6 +3833,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             match subpage {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Cs2 => cs2_settings(out, state, assets),
+                Subpage::Shows => shows_settings(out, state, assets),
                 Subpage::Weather => weather_settings(out, state, assets),
                 Subpage::Shortcuts => shortcut_settings(out, state, assets),
                 Subpage::Inputs => inputs_settings(out, state, assets),
@@ -3743,6 +3911,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             ],
             Subpage::WeatherLocation
             | Subpage::Cs2
+            | Subpage::Shows
             | Subpage::Weather
             | Subpage::Shortcuts
             | Subpage::Inputs
@@ -4000,6 +4169,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (5, "crypto", "globe"),
                 // Last, so the rows above keep their places.
                 (6, "cs2Score", "gaming"),
+                (7, "shows", "tv"),
             ]
             .into_iter()
             .enumerate()

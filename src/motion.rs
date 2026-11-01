@@ -58,6 +58,7 @@ pub enum Lane {
     Page,
     Favorites,
     Cs2,
+    Shows,
 }
 
 #[derive(Default)]

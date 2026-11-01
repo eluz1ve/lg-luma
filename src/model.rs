@@ -275,6 +275,9 @@ pub struct Preferences {
     pub show_greeting: bool,
     pub show_date: bool,
     pub date_format: DateFormat,
+    /// Home's TV Shows row: series streaming this week, from TVmaze.
+    #[serde(deserialize_with = "crate::cs2::deserialize_flag")]
+    pub show_shows: bool,
     /// Home's CS2 Score row below the inputs, and what it lists.
     #[serde(deserialize_with = "crate::cs2::deserialize_flag")]
     pub show_cs2: bool,
@@ -338,6 +341,7 @@ impl Default for Preferences {
             show_date: true,
             date_format: DateFormat::default(),
             show_cs2: false,
+            show_shows: false,
             cs2_major_only: true,
             cs2_results: true,
             input_modes: BTreeMap::new(),

@@ -111,6 +111,10 @@ pub enum Target {
     Cs2Match(usize),
     /// The close button of a CS2 Score match's dialog.
     Cs2Close,
+    /// Widgets › TV Shows: show the row.
+    ShowsToggle,
+    /// A show card in Home's TV Shows row, by position.
+    Show(usize),
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
@@ -207,6 +211,7 @@ pub enum Subpage {
     TimeFormat,
     /// Widgets › CS2 Score.
     Cs2,
+    Shows,
     Input(String),
     WeatherLocation,
     Temperature,
@@ -308,6 +313,9 @@ pub struct State {
     pub cs2: crate::cs2::Scores,
     /// The first of the CS2 Score cards in view; Left and Right scroll through the rest.
     pub cs2_first: usize,
+    pub shows: crate::shows::Shows,
+    /// The first of the TV Shows cards in view; Left and Right scroll through the rest.
+    pub shows_first: usize,
     pub keyboard_field: TextField,
     pub greeting_name_draft: String,
     pub input_name: String,
@@ -357,6 +365,8 @@ impl State {
             crypto: crate::crypto::Crypto::default(),
             cs2: crate::cs2::Scores::default(),
             cs2_first: 0,
+            shows: crate::shows::Shows::default(),
+            shows_first: 0,
             keyboard_field: TextField::Apps,
             greeting_name_draft: String::new(),
             input_name: String::new(),
@@ -503,7 +513,11 @@ impl State {
             .filter(|target| {
                 matches!(
                     target,
-                    Target::App(_) | Target::Input(_) | Target::Coin(_) | Target::Cs2Match(_)
+                    Target::App(_)
+                        | Target::Input(_)
+                        | Target::Coin(_)
+                        | Target::Cs2Match(_)
+                        | Target::Show(_)
                 )
             });
         let lanes: Vec<(Lane, f32)> = if home {
@@ -511,6 +525,7 @@ impl State {
                 (Lane::Page, self.scroll),
                 (Lane::Favorites, self.home_scroll),
                 (Lane::Cs2, self.cs2_first as f32),
+                (Lane::Shows, self.shows_first as f32),
             ]
         } else {
             Vec::new()
@@ -950,6 +965,19 @@ impl State {
         })
     }
 
+    /// Scrolls the TV Shows row so the card at `index` is in view.
+    pub fn shows_reveal(&mut self, index: usize) {
+        let visible = crate::shows::VISIBLE;
+        if index < self.shows_first {
+            self.shows_first = index;
+        } else if index >= self.shows_first + visible {
+            self.shows_first = index + 1 - visible;
+        }
+        self.shows_first = self
+            .shows_first
+            .min(self.shows.list.len().saturating_sub(visible));
+    }
+
     /// Scrolls the CS2 Score row so the card at `index` is in view.
     pub fn cs2_reveal(&mut self, index: usize) {
         let visible = crate::cs2::VISIBLE;
@@ -1161,6 +1189,7 @@ impl State {
             }
             Some(Subpage::Weather) => Target::Widget(1),
             Some(Subpage::Cs2) => Target::Widget(6),
+            Some(Subpage::Shows) => Target::Widget(7),
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Crypto) => Target::Widget(5),
@@ -1281,9 +1310,8 @@ impl State {
                             };
                             let next = nearest(|target| matches!(target, Target::Input(_)))
                                 .or_else(|| nearest(|target| matches!(target, Target::Coin(_))))
-                                .or_else(|| {
-                                    nearest(|target| matches!(target, Target::Cs2Match(_)))
-                                });
+                                .or_else(|| nearest(|target| matches!(target, Target::Cs2Match(_))))
+                                .or_else(|| nearest(|target| matches!(target, Target::Show(_))));
                             if let Some(next) = next {
                                 self.focus(next, controls);
                             }
@@ -1420,6 +1448,7 @@ impl State {
                 Target::TileEditor
                     | Target::Tile(_)
                     | Target::Cs2Toggle
+                    | Target::ShowsToggle
                     | Target::Cs2Major
                     | Target::Cs2Results
                     | Target::InputMode(_)
@@ -1506,14 +1535,32 @@ impl State {
                 }
                 return vec![];
             }
-            // CS2 Score's switches: Right does nothing and Up from the first reaches the tabs.
+            // TV Shows' cards: Left and Right step through every show, scrolling the row.
+            if let Target::Show(index) = self.focus
+                && matches!(direction, Direction::Left | Direction::Right)
+            {
+                let next = match direction {
+                    Direction::Left => index.checked_sub(1),
+                    _ => (index + 1 < self.shows.list.len()).then_some(index + 1),
+                };
+                if let Some(next) = next {
+                    self.shows_reveal(next);
+                    self.focus = Target::Show(next);
+                    self.dirty = true;
+                }
+                return vec![];
+            }
+            // CS2 Score's and TV Shows' switches: Right does nothing and Up from the first
+            // reaches the tabs.
             if matches!(
                 self.focus,
-                Target::Cs2Toggle | Target::Cs2Major | Target::Cs2Results
+                Target::Cs2Toggle | Target::Cs2Major | Target::Cs2Results | Target::ShowsToggle
             ) {
                 match direction {
                     Direction::Right => return vec![],
-                    Direction::Up if self.focus == Target::Cs2Toggle => {
+                    Direction::Up
+                        if matches!(self.focus, Target::Cs2Toggle | Target::ShowsToggle) =>
+                    {
                         self.focus(Target::Nav(2), controls);
                         return vec![];
                     }
@@ -2309,6 +2356,26 @@ impl State {
                 }
             }
             Target::Cs2Close => return self.back(),
+            Target::ShowsToggle => {
+                self.preferences.show_shows = !self.preferences.show_shows;
+                return vec![Effect::Save];
+            }
+            Target::Show(index) => {
+                let Some(show) = self.shows.list.get(index) else {
+                    return vec![];
+                };
+                if let Some(app) = show.app.clone() {
+                    return vec![Effect::Launch(app)];
+                }
+                let message = match show.service {
+                    Some(service) => self
+                        .preferences
+                        .language
+                        .format("showsNoApp", &[("service", service)]),
+                    None => self.preferences.language.t("showsNoService").to_owned(),
+                };
+                self.notify(message);
+            }
             Target::WeatherConfigure => {
                 self.open(2);
                 self.section = WIDGETS_SECTION;
@@ -2422,6 +2489,7 @@ impl State {
                     0 => (Subpage::Greeting, Target::GreetingToggle),
                     1 => (Subpage::Weather, Target::WeatherToggle),
                     6 => (Subpage::Cs2, Target::Cs2Toggle),
+                    7 => (Subpage::Shows, Target::ShowsToggle),
                     2 => (Subpage::Shortcuts, Target::TileEditor),
                     4 => (Subpage::Date, Target::DateToggle),
                     5 => (Subpage::Crypto, Target::CryptoToggle),
@@ -2723,7 +2791,7 @@ impl State {
                     ) => {
                         return vec![];
                     }
-                    Some(Subpage::Cs2) => return vec![],
+                    Some(Subpage::Cs2 | Subpage::Shows) => return vec![],
                     None => return vec![],
                 }
                 self.close_subpage();

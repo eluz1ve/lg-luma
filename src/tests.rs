@@ -2705,7 +2705,7 @@ fn widgets_group_existing_settings_and_restore_each_parent_without_changing_pref
             _ => None,
         })
         .collect();
-    assert_eq!(widget_order, [4, 0, 1, 2, 3, 5, 6]);
+    assert_eq!(widget_order, [4, 0, 1, 2, 3, 5, 6, 7]);
     for (index, subpage) in [
         Subpage::Greeting,
         Subpage::Weather,
@@ -2787,7 +2787,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
                 .iter()
                 .filter(|c| matches!(c.target, Target::Widget(_)))
                 .count(),
-            7
+            8
         );
         for key in [
             "widgets",
@@ -2798,6 +2798,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
             "date",
             "crypto",
             "cs2Score",
+            "shows",
         ] {
             assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t(key))), "{key}/{language:?}");
         }
@@ -3946,4 +3947,43 @@ fn home_and_its_rows_ease_to_their_scroll_unless_motion_is_reduced() {
     state.animate(1. / 60.);
     assert_eq!(state.page_scroll(), 0.);
     assert_eq!(state.motion.shown(crate::motion::Lane::Favorites, 0.), 0.);
+}
+
+#[test]
+fn tv_shows_slide_six_at_a_time_and_open_their_app() {
+    use crate::shows::Show;
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.shows.list = (0..10)
+        .map(|index| Show {
+            id: index,
+            title: format!("Show {index}"),
+            poster: None,
+            meta: "Drama · 2024".into(),
+            service: Some("Netflix"),
+            app: (index != 3).then(|| "netflix".to_owned()),
+        })
+        .collect();
+    let shows = |state: &State| {
+        controls(state)
+            .into_iter()
+            .filter_map(|c| match c.target {
+                Target::Show(index) => Some(index),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shows(&state), [0, 1, 2, 3, 4, 5]);
+    state.focus = Target::Show(5);
+    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Show(6));
+    assert_eq!(state.shows_first, 1);
+    assert_eq!(shows(&state), [1, 2, 3, 4, 5, 6]);
+    assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+    state.focus = Target::Show(3);
+    assert!(state.activate().is_empty());
+    assert!(
+        state.notice.is_some(),
+        "a show no app plays says which service has it"
+    );
 }
