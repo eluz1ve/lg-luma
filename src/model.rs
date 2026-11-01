@@ -3,6 +3,55 @@ use crate::weather::{Location, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+/// The focused card's glow on Home, chosen in Settings › General.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FocusGlow {
+    #[default]
+    White,
+    Blue,
+    Violet,
+    Green,
+    Amber,
+    Off,
+}
+impl FocusGlow {
+    pub const ALL: [Self; 6] = [
+        Self::White,
+        Self::Blue,
+        Self::Violet,
+        Self::Green,
+        Self::Amber,
+        Self::Off,
+    ];
+    /// The next choice, for the setting's OK.
+    pub fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|glow| *glow == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+    /// The glow's colour; Off has none.
+    pub fn rgb(self) -> Option<u32> {
+        match self {
+            Self::White => Some(0xe8eef8),
+            Self::Blue => Some(0x6fa8ff),
+            Self::Violet => Some(0xa98bff),
+            Self::Green => Some(0x6fe0a8),
+            Self::Amber => Some(0xffc46b),
+            Self::Off => None,
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::White => "glowWhite",
+            Self::Blue => "glowBlue",
+            Self::Violet => "glowViolet",
+            Self::Green => "glowGreen",
+            Self::Amber => "glowAmber",
+            Self::Off => "stateOff",
+        }
+    }
+}
+
 pub const CATEGORIES: [&str; 4] = ["Streaming", "Music", "Gaming", "Utilities"];
 pub const BACKGROUNDS: [(&str, &str); 9] = [
     ("slate", "Slate"),
@@ -269,6 +318,8 @@ pub struct Preferences {
     pub show_app_names: bool,
     pub hour_24: bool,
     pub reduced_motion: bool,
+    /// The colour of the focused card's glow on Home.
+    pub focus_glow: FocusGlow,
     pub show_seconds: bool,
     /// Optional name appended to the Home greeting ("Good evening, Ana."). Empty = plain greeting.
     pub greeting_name: String,
@@ -335,6 +386,7 @@ impl Default for Preferences {
             show_app_names: true,
             hour_24: false,
             reduced_motion: false,
+            focus_glow: FocusGlow::default(),
             show_seconds: false,
             greeting_name: String::new(),
             show_greeting: true,

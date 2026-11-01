@@ -801,24 +801,30 @@ fn lift(out: &mut Scene, state: &State, target: &Target, rect: Rect, radius: f32
         1. + 13. * amount,
         0.01 + 0.39 * amount,
     );
-    if amount > 0. {
-        // Two inexpensive GPU distance-field glows, with no texture blur or CPU readback.
-        out.draw.push(Draw::Shadow(
-            rect.inset(-3.),
-            radius + 3.,
-            32.,
-            c(0xdceaff, 0.32 * amount),
-        ));
-        out.draw
-            .push(Draw::Shadow(rect, radius, 10., c(0xffffff, 0.45 * amount)));
-    }
+    focus_glow(out, state, rect, radius, amount);
     (rect, amount)
 }
 
-/// The lifted card's bright edge, fading in with the lift.
+/// The focused card's glow in the colour chosen in Settings › General: two inexpensive GPU
+/// distance-field glows, with no texture blur or CPU readback.
+fn focus_glow(out: &mut Scene, state: &State, rect: Rect, radius: f32, amount: f32) {
+    let Some(rgb) = state.preferences.focus_glow.rgb().filter(|_| amount > 0.) else {
+        return;
+    };
+    out.draw.push(Draw::Shadow(
+        rect.inset(-3.),
+        radius + 3.,
+        32.,
+        c(rgb, 0.2 * amount),
+    ));
+    out.draw
+        .push(Draw::Shadow(rect, radius, 10., c(rgb, 0.24 * amount)));
+}
+
+/// The lifted card's edge, fading in with the lift.
 fn lift_edge(out: &mut Scene, rect: Rect, radius: f32, amount: f32) {
     if amount > 0. {
-        out.border(rect, radius, 1.4, c(0xffffff, 0.65 * amount));
+        out.border(rect, radius, 1.4, c(0xffffff, 0.5 * amount));
     }
 }
 
@@ -904,16 +910,8 @@ fn tile(
         0.165 + 0.235 * amount,
     );
 
-    if home && amount > 0. {
-        // Two inexpensive GPU distance-field glows, with no texture blur or CPU readback.
-        out.draw.push(Draw::Shadow(
-            rect.inset(-3.),
-            22.2,
-            32.,
-            c(0xdceaff, 0.32 * amount),
-        ));
-        out.draw
-            .push(Draw::Shadow(rect, 19.2, 10., c(0xffffff, 0.45 * amount)));
+    if home {
+        focus_glow(out, state, rect, 19.2, amount);
     }
     let favorite_color = app_face(out, assets, app, rect, state.preferences.language, 19.2);
 
@@ -942,7 +940,7 @@ fn tile(
         );
     }
     if home {
-        out.border(rect, 19.2, 1.4, c(0xffffff, 0.65 * amount));
+        lift_edge(out, rect, 19.2, amount);
     } else if focused {
         out.ring(rect, 19.2);
     }
@@ -1528,80 +1526,81 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
             false,
         );
     }
-    // The cards slide to `first` (`motion.rs`); only those in view take focus and clicks.
-    let shown = state
-        .motion
-        .shown(crate::motion::Lane::Shows, state.shows_first as f32)
-        .min(first.max(state.shows_first) as f32);
-    let content = state.content_viewport();
-    let top = (y + 20.).max(content.y);
-    out.draw.push(Draw::Clip(Some(Rect::new(
-        content.x,
-        top,
-        content.w,
-        (y + 58.4 + SHOW_POSTER_HEIGHT + 110. - top).max(0.),
-    ))));
-    for (index, show) in list.iter().enumerate() {
-        let x = |at: f32| 84. + (index as f32 - at) * HOME_TILE_PITCH;
-        let rect = Rect::new(x(shown), y + 58.4, SHOW_WIDTH, SHOW_POSTER_HEIGHT);
-        if rect.x + rect.w < content.x - 40. || rect.x > content.x + content.w + 40. {
-            continue;
-        }
-        let target = Target::Show(index);
-        let (face, lift_amount) = lift(out, state, &target, rect, 18.4);
-        match state.shows.poster(show) {
-            Some(poster) => out.draw.push(Draw::Cover(poster, face, 18.4, [1.; 4])),
-            None => {
-                out.draw.push(Draw::RoundedGradient(
-                    face,
-                    18.4,
-                    c(0x262c33, 0.8),
-                    c(0x171c22, 0.8),
-                ));
-                out.icon(
-                    assets,
-                    "tv",
-                    Rect::new(
-                        face.x + face.w / 2. - 22.,
-                        face.y + face.h / 2. - 22.,
-                        44.,
-                        44.,
-                    ),
-                    c(0xf5f5f5, 0.35),
-                );
-            }
-        }
-        lift_edge(out, face, 18.4, lift_amount);
-        // Below the poster: the title, then genre, year and rating, then the service.
-        let below = rect.y + rect.h + 12.;
-        out.text(
-            &show.title,
-            Rect::new(rect.x, below, rect.w, 26.),
-            assets.fit_text(&show.title, text(19.2, 550, -0.01), rect.w),
-            WHITE,
-            false,
-        );
-        let meta = match show.service {
-            Some(service) if !show.meta.is_empty() => format!("{} · {service}", show.meta),
-            Some(service) => service.to_owned(),
-            None => show.meta.clone(),
-        };
-        out.text(
-            &meta,
-            Rect::new(rect.x, below + 29., rect.w, 20.),
-            assets.fit_text(&meta, text(14.4, 400, 0.), rect.w),
-            c(0xf5f5f5, if show.app.is_some() { 0.6 } else { 0.4 }),
-            false,
-        );
-        if (first..first + visible).contains(&index) {
-            out.control(
-                target,
-                Rect::new(x(first as f32), rect.y, rect.w, rect.h + 60.),
-                true,
+    carousel(
+        out,
+        state,
+        Carousel {
+            lane: crate::motion::Lane::Shows,
+            first: state.shows_first,
+            count: list.len(),
+            visible,
+            pitch: HOME_TILE_PITCH,
+            card: Rect::new(84., y + 58.4, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
+            below: 60.,
+        },
+        |out, index, rect, hit| show_card(out, state, assets, &list[index], index, rect, hit),
+    );
+}
+
+/// A show's card: its poster, then the title and its details below.
+fn show_card(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    show: &crate::shows::Show,
+    index: usize,
+    rect: Rect,
+    hit: Option<Rect>,
+) {
+    let target = Target::Show(index);
+    let (face, lift_amount) = lift(out, state, &target, rect, 18.4);
+    match state.shows.poster(show) {
+        Some(poster) => out.draw.push(Draw::Cover(poster, face, 18.4, [1.; 4])),
+        None => {
+            out.draw.push(Draw::RoundedGradient(
+                face,
+                18.4,
+                c(0x262c33, 0.8),
+                c(0x171c22, 0.8),
+            ));
+            out.icon(
+                assets,
+                "tv",
+                Rect::new(
+                    face.x + face.w / 2. - 22.,
+                    face.y + face.h / 2. - 22.,
+                    44.,
+                    44.,
+                ),
+                c(0xf5f5f5, 0.35),
             );
         }
     }
-    out.draw.push(Draw::Clip(Some(content)));
+    lift_edge(out, face, 18.4, lift_amount);
+    // Below the poster: the title, then genre, year and rating, then the service.
+    let below = rect.y + rect.h + 12.;
+    out.text(
+        &show.title,
+        Rect::new(rect.x, below, rect.w, 26.),
+        assets.fit_text(&show.title, text(19.2, 550, -0.01), rect.w),
+        WHITE,
+        false,
+    );
+    let meta = match show.service {
+        Some(service) if !show.meta.is_empty() => format!("{} · {service}", show.meta),
+        Some(service) => service.to_owned(),
+        None => show.meta.clone(),
+    };
+    out.text(
+        &meta,
+        Rect::new(rect.x, below + 29., rect.w, 20.),
+        assets.fit_text(&meta, text(14.4, 400, 0.), rect.w),
+        c(0xf5f5f5, if show.app.is_some() { 0.6 } else { 0.4 }),
+        false,
+    );
+    if let Some(hit) = hit {
+        out.control(target, hit, true);
+    }
 }
 
 fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -1931,28 +1930,68 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
             false,
         );
     }
-    // The cards slide to `first` (`motion.rs`); only the three in view take focus and clicks.
+    carousel(
+        out,
+        state,
+        Carousel {
+            lane: crate::motion::Lane::Cs2,
+            first: state.cs2_first,
+            count: matches.len(),
+            visible,
+            pitch: CS2_CARD_PITCH,
+            card: Rect::new(84., y + 58.4, 569.1, CS2_CARD_HEIGHT),
+            below: 0.,
+        },
+        |out, index, rect, hit| cs2_card(out, state, assets, matches[index], rect, hit, index, now),
+    );
+}
+
+/// A row of cards on Home that slides as one (`motion.rs`). `card` is where the first card in
+/// view sits; `below` is extra room under each card, for labels.
+struct Carousel {
+    lane: crate::motion::Lane,
+    first: usize,
+    count: usize,
+    visible: usize,
+    pitch: f32,
+    card: Rect,
+    below: f32,
+}
+
+/// The carousel every row of cards on Home uses, so all of them move alike: the cards slide on
+/// the row's lane toward `first`, those off screen are skipped, and only the `visible` ones take
+/// focus and clicks, at their settled places. `draw` draws card `index` at `rect` and registers
+/// `hit` when given.
+fn carousel(
+    out: &mut Scene,
+    state: &State,
+    row: Carousel,
+    mut draw: impl FnMut(&mut Scene, usize, Rect, Option<Rect>),
+) {
+    let last_first = row.count.saturating_sub(row.visible);
+    let first = row.first.min(last_first);
     let shown = state
         .motion
-        .shown(crate::motion::Lane::Cs2, state.cs2_first as f32)
-        .min(first.max(state.cs2_first) as f32);
+        .shown(row.lane, row.first as f32)
+        .clamp(0., last_first as f32);
     let content = state.content_viewport();
-    let top = (y + 20.).max(content.y);
+    let top = (row.card.y - 38.).max(content.y);
     out.draw.push(Draw::Clip(Some(Rect::new(
         content.x,
         top,
         content.w,
-        (y + 58.4 + CS2_CARD_HEIGHT + 40. - top).max(0.),
+        (row.card.y + row.card.h + row.below + 40. - top).max(0.),
     ))));
-    for (index, item) in matches.into_iter().enumerate() {
-        let x = |at: f32| 84. + (index as f32 - at) * CS2_CARD_PITCH;
-        let rect = Rect::new(x(shown), y + 58.4, 569.1, CS2_CARD_HEIGHT);
-        let in_view = (first..first + visible).contains(&index);
+    for index in 0..row.count {
+        let x = |at: f32| row.card.x + (index as f32 - at) * row.pitch;
+        let rect = Rect::new(x(shown), row.card.y, row.card.w, row.card.h);
         if rect.x + rect.w < content.x - 40. || rect.x > content.x + content.w + 40. {
             continue;
         }
-        let hit = in_view.then(|| Rect::new(x(first as f32), rect.y, rect.w, rect.h));
-        cs2_card(out, state, assets, item, rect, hit, index, now);
+        let hit = (first..first + row.visible)
+            .contains(&index)
+            .then(|| Rect::new(x(first as f32), rect.y, rect.w, rect.h + row.below));
+        draw(out, index, rect, hit);
     }
     out.draw.push(Draw::Clip(Some(content)));
 }
@@ -4004,6 +4043,13 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     } else {
                         language.t("stateOff")
                     }),
+                    false,
+                ),
+                (
+                    crate::state::FOCUS_GLOW_ROW,
+                    "focusGlow",
+                    "sparkles",
+                    Some(language.t(state.preferences.focus_glow.key())),
                     false,
                 ),
                 (

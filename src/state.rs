@@ -17,6 +17,8 @@ pub const HOME_TAKEOVER_ROW: usize = 9;
 pub const SECTION_COUNT: usize = 4;
 /// System row turning automatic Homebrew app updates on or off (homebrew_updates.rs).
 pub const HOMEBREW_UPDATES_ROW: usize = 13;
+/// Settings › General's focus glow colour row.
+pub const FOCUS_GLOW_ROW: usize = 14;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
 pub const SETTINGS_LIST_BOTTOM_PADDING: f32 = 48.;
 pub const APPS_COLUMNS: usize = 6;
@@ -2612,6 +2614,9 @@ impl State {
                         return vec![];
                     }
                     2 => self.preferences.reduced_motion = !self.preferences.reduced_motion,
+                    FOCUS_GLOW_ROW => {
+                        self.preferences.focus_glow = self.preferences.focus_glow.next()
+                    }
                     4 => {
                         self.subpage = Some(Subpage::Language);
                         self.focus = Target::Choice(self.preferences.language.index());

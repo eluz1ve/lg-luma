@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 /// The focused card lifts in about a fifth of a second.
 const FOCUS_OMEGA: f32 = 24.;
-/// Scrolling settles in about half a second, starting and stopping softly.
-const SCROLL_OMEGA: f32 = 9.;
+/// Scrolling covers 90% of the way in about a fifth of a second, starting and stopping softly.
+const SCROLL_OMEGA: f32 = 19.5;
 
 #[derive(Default, Clone, Copy)]
 struct Spring {

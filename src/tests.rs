@@ -3987,3 +3987,67 @@ fn tv_shows_slide_six_at_a_time_and_open_their_app() {
         "a show no app plays says which service has it"
     );
 }
+
+#[test]
+fn carousels_slide_the_same_way_left_and_right() {
+    use crate::shows::Show;
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.shows.list = (0..12)
+        .map(|index| Show {
+            id: index,
+            title: format!("Show {index}"),
+            poster: None,
+            meta: String::new(),
+            service: None,
+            app: None,
+        })
+        .collect();
+    let drawn_x = |state: &State| {
+        scene(state).draw.iter().find_map(|draw| match draw {
+            crate::renderer::Draw::Text(label, rect, ..) if label == "Show 4" => Some(rect.x),
+            _ => None,
+        })
+    };
+    state.animate(0.);
+    state.shows_first = 4;
+    for _ in 0..60 {
+        state.animate(1. / 60.);
+    }
+    let settled = drawn_x(&state).unwrap();
+    // Left: the row eases back rather than jumping.
+    state.shows_first = 3;
+    state.animate(1. / 60.);
+    let moving = drawn_x(&state).unwrap();
+    assert!(moving > settled && moving < settled + crate::state::HOME_TILE_PITCH);
+    // Right: the same easing the other way.
+    for _ in 0..60 {
+        state.animate(1. / 60.);
+    }
+    state.shows_first = 4;
+    state.animate(1. / 60.);
+    let back = drawn_x(&state).unwrap();
+    assert!(back < settled + crate::state::HOME_TILE_PITCH && back > settled);
+}
+
+#[test]
+fn the_focus_glow_colour_is_chosen_in_general_settings() {
+    use crate::model::FocusGlow;
+    let mut state = ready();
+    state.open(2);
+    state.focus = Target::Setting(crate::state::FOCUS_GLOW_ROW);
+    assert!(controls(&state).iter().any(|c| c.target == state.focus));
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.focus_glow, FocusGlow::Blue);
+    state.preferences.focus_glow = FocusGlow::Off;
+    state.page = Page::Home;
+    state.focus = Target::App("netflix".into());
+    state.preferences.reduced_motion = true;
+    state.animate(0.);
+    let glows = scene(&state)
+        .draw
+        .iter()
+        .filter(|draw| matches!(draw, crate::renderer::Draw::Shadow(_, _, blur, _) if *blur == 32.))
+        .count();
+    assert_eq!(glows, 0, "Off draws no glow");
+}
