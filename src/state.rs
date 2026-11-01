@@ -895,6 +895,35 @@ impl State {
         true
     }
 
+    /// Takes the saved place's names, and its id, from a lookup in the current language, if it
+    /// is still the saved place. True when anything changed and the preferences need saving.
+    pub fn rename_location(&mut self, place: crate::weather::Location) -> bool {
+        let Some(location) = self
+            .preferences
+            .weather_location
+            .as_mut()
+            .filter(|location| location.key() == place.key())
+        else {
+            return false;
+        };
+        let id = place.id.or(location.id);
+        if (
+            &location.name,
+            &location.region,
+            &location.country,
+            location.id,
+        ) == (&place.name, &place.region, &place.country, id)
+        {
+            return false;
+        }
+        location.name = place.name;
+        location.region = place.region;
+        location.country = place.country;
+        location.id = id;
+        self.dirty = true;
+        true
+    }
+
     pub fn background_id(&self, index: usize) -> Option<&str> {
         self.background_ids().nth(index)
     }
@@ -2192,6 +2221,7 @@ impl State {
             Target::WeatherResult(index) => {
                 if let Some(place) = self.weather.results.get(index).cloned() {
                     self.preferences.weather_location = Some(place);
+                    self.weather.cancel_rename();
                     self.weather.invalidate_forecast();
                     self.weather.cancel_search();
                     self.focus = Target::WeatherSearch;
@@ -2369,9 +2399,20 @@ impl State {
                         return vec![Effect::Save];
                     }
                     Some(Subpage::Language) => {
-                        self.preferences.language =
-                            Language::ALL[index.min(Language::ALL.len() - 1)];
+                        let language = Language::ALL[index.min(Language::ALL.len() - 1)];
+                        let previous = self.preferences.language;
+                        self.preferences.language = language;
                         self.weather.cancel_search();
+                        // Place names come from the search in the language it ran in. With
+                        // the weather off, Luma contacts no weather service.
+                        if language != previous
+                            && self.preferences.show_weather
+                            && let Some(location) = &self.preferences.weather_location
+                        {
+                            let command = self.weather.rename(location, previous, language);
+                            self.close_subpage();
+                            return vec![Effect::Save, Effect::Weather(command)];
+                        }
                     }
                     Some(Subpage::TextRendering) => {
                         let mode = TextRendering::ALL[index.min(TextRendering::ALL.len() - 1)];

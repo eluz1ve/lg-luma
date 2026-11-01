@@ -493,7 +493,9 @@ fn input_refresh_active(state: &State, webos: bool, focused: bool, visible: bool
                 )))
 }
 
-fn weather_tick(state: &mut State, service: &weather_service::Service, visible: bool) {
+/// True when a renamed place needs the preferences saved.
+fn weather_tick(state: &mut State, service: &weather_service::Service, visible: bool) -> bool {
+    let mut save = false;
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let (command, changed) = state.weather.sync(
         &state.preferences,
@@ -510,6 +512,11 @@ fn weather_tick(state: &mut State, service: &weather_service::Service, visible: 
             weather_service::Response::Search { id, result } => {
                 state.dirty |= state.weather.accept_search(id, result)
             }
+            weather_service::Response::Renamed { id, result } => {
+                if let Some(place) = state.weather.accept_rename(id, result) {
+                    save |= state.rename_location(place);
+                }
+            }
             weather_service::Response::Forecast { id, key, result } => {
                 let (changed, command) = state.weather.accept_forecast(id, &key, result, now);
                 state.dirty |= changed;
@@ -519,6 +526,7 @@ fn weather_tick(state: &mut State, service: &weather_service::Service, visible: 
             }
         }
     }
+    save
 }
 
 fn scripted_click(
@@ -1243,7 +1251,18 @@ fn run() -> Result<(), String> {
             };
             state.notify(state.preferences.language.format(key, &[("tile", &title)]));
         }
-        weather_tick(&mut state, &weather_service, visible);
+        if weather_tick(&mut state, &weather_service, visible) {
+            running &= effects(
+                vec![Effect::Save],
+                &mut state,
+                &platform,
+                &preferences_path,
+                &weather_service,
+                &wallpaper_service,
+                &webhook_service,
+                &updates,
+            );
+        }
         if std::mem::take(&mut state.update_check_requested) {
             if let Some(version) = &options.test_update_version {
                 state.update_response(Ok(
@@ -1707,7 +1726,18 @@ fn run() -> Result<(), String> {
         if input_refresh.due(Instant::now(), inputs_active) {
             platform.send(Request::RefreshInputs);
         }
-        weather_tick(&mut state, &weather_service, visible);
+        if weather_tick(&mut state, &weather_service, visible) {
+            running &= effects(
+                vec![Effect::Save],
+                &mut state,
+                &platform,
+                &preferences_path,
+                &weather_service,
+                &wallpaper_service,
+                &webhook_service,
+                &updates,
+            );
+        }
         // SDL-webOS disables text input when its own panel is dismissed, even
         // if it did not forward a Back/Return key to the application.
         if text_active
