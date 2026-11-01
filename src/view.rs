@@ -783,6 +783,45 @@ fn header(
     out.control(Target::TvSettings, rect, false);
 }
 
+/// Home's shared focus lift (`motion.rs`): a card grows and rises toward focus, with a soft glow.
+/// Returns where to draw the card and how far it has lifted; its hit target stays at `rect`.
+fn lift(out: &mut Scene, state: &State, target: &Target, rect: Rect, radius: f32) -> (Rect, f32) {
+    let amount = state.motion.focus(target);
+    let grow = rect.w.min(rect.h) * 0.07 * amount;
+    let rect = Rect::new(
+        rect.x - grow / 2.,
+        rect.y - grow / 2. - 5. * amount,
+        rect.w + grow,
+        rect.h + grow,
+    );
+    out.shadow(
+        rect,
+        radius,
+        4. + 30. * amount,
+        1. + 13. * amount,
+        0.01 + 0.39 * amount,
+    );
+    if amount > 0. {
+        // Two inexpensive GPU distance-field glows, with no texture blur or CPU readback.
+        out.draw.push(Draw::Shadow(
+            rect.inset(-3.),
+            radius + 3.,
+            32.,
+            c(0xdceaff, 0.32 * amount),
+        ));
+        out.draw
+            .push(Draw::Shadow(rect, radius, 10., c(0xffffff, 0.45 * amount)));
+    }
+    (rect, amount)
+}
+
+/// The lifted card's bright edge, fading in with the lift.
+fn lift_edge(out: &mut Scene, rect: Rect, radius: f32, amount: f32) {
+    if amount > 0. {
+        out.border(rect, radius, 1.4, c(0xffffff, 0.65 * amount));
+    }
+}
+
 fn tile(
     out: &mut Scene,
     state: &State,
@@ -806,7 +845,10 @@ fn tile(
     // Home's favorites are drawn where their scroll has eased to; hit targets stay put.
     let rect = if state.page == Page::Home {
         Rect::new(
-            rect.x + state.home_scroll - state.home_scroll_shown,
+            rect.x + state.home_scroll
+                - state
+                    .motion
+                    .shown(crate::motion::Lane::Favorites, state.home_scroll),
             rect.y,
             rect.w,
             rect.h,
@@ -835,7 +877,7 @@ fn tile(
     let focused = state.focus == Target::App(app.id.clone());
     let home = state.page == Page::Home;
     let amount = if home {
-        state.home_focus.amount(&app.id)
+        state.motion.focus(&Target::App(app.id.clone()))
     } else if focused {
         1.
     } else {
@@ -1156,7 +1198,7 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
 
 fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
-    let s = state.scroll;
+    let s = state.page_scroll();
     let summary = state
         .preferences
         .show_weather
@@ -1284,7 +1326,11 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     out.draw.push(Draw::Clip(Some(state.favorites_viewport())));
     // Soft edges: out to the right from the end of the sixth tile, and in from the left once
     // the row has scrolled.
-    let left = if state.home_scroll_shown > 0. {
+    let left = if state
+        .motion
+        .shown(crate::motion::Lane::Favorites, state.home_scroll)
+        > 0.
+    {
         [HOME_FADE_LEFT, HOME_STRIP_LEFT]
     } else {
         [0., 0.]
@@ -1337,13 +1383,8 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             104.,
         );
         let focused = state.focus == Target::Input(input.id.clone());
-        out.shadow(
-            rect,
-            18.4,
-            if focused { 34. } else { 4. },
-            if focused { 14. } else { 1. },
-            if focused { 0.4 } else { 0.01 },
-        );
+        let hit = rect;
+        let (rect, lift_amount) = lift(out, state, &Target::Input(input.id.clone()), rect, 18.4);
         out.draw.push(Draw::RoundedGradient(
             rect,
             18.4,
@@ -1408,10 +1449,8 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             c(0xe8e8e8, if k > 1. { 0.62 } else { 0.48 }),
             false,
         );
-        if focused {
-            out.ring(rect, 18.4);
-        }
-        out.control(Target::Input(input.id.clone()), rect, true);
+        lift_edge(out, rect, 18.4, lift_amount);
+        out.control(Target::Input(input.id.clone()), hit, true);
     }
     // Crypto prices, then CS2 Score, stacked below the inputs.
     let rows = inputs.len().div_ceil(3) as f32;
@@ -1451,7 +1490,7 @@ fn crypto_block(out: &mut Scene, state: &State) {
     let coins = &state.preferences.crypto_coins;
     let title = 34.;
     let height = pad * 2. + title + coins.len() as f32 * line;
-    let top = (300. - height / 2.).clamp(128., 470. - height) - state.scroll;
+    let top = (300. - height / 2.).clamp(128., 470. - height) - state.page_scroll();
     let rect = Rect::new(
         CRYPTO_BLOCK_X,
         top,
@@ -1554,13 +1593,8 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
     for (index, symbol) in state.preferences.crypto_coins.iter().enumerate() {
         let rect = Rect::new(84. + index as f32 * (width + gap), y + 58.4, width, 104.);
         let focused = state.focus == Target::Coin(index) && !state.pointer;
-        out.shadow(
-            rect,
-            18.4,
-            if focused { 34. } else { 4. },
-            if focused { 14. } else { 1. },
-            if focused { 0.4 } else { 0.01 },
-        );
+        let hit = rect;
+        let (rect, lift_amount) = lift(out, state, &Target::Coin(index), rect, 18.4);
         out.draw.push(Draw::RoundedGradient(
             rect,
             18.4,
@@ -1638,14 +1672,13 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
                 false,
             );
         }
-        if focused {
-            out.ring(rect, 18.4);
-        }
-        out.control(Target::Coin(index), rect, true);
+        lift_edge(out, rect, 18.4, lift_amount);
+        out.control(Target::Coin(index), hit, true);
     }
 }
 
 const CS2_CARD_HEIGHT: f32 = 150.;
+const CS2_CARD_PITCH: f32 = 591.45;
 
 /// Home's CS2 Score: a heading crediting Liquipedia, then up to three match cards in the inputs'
 /// style, live ones first.
@@ -1733,23 +1766,40 @@ fn cs2_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, now: OffsetD
             false,
         );
     }
-    for (index, item) in matches.into_iter().enumerate().skip(first).take(visible) {
-        let rect = Rect::new(
-            84. + (index - first) as f32 * 591.45,
-            y + 58.4,
-            569.1,
-            CS2_CARD_HEIGHT,
-        );
-        cs2_card(out, state, assets, item, rect, index, now);
+    // The cards slide to `first` (`motion.rs`); only the three in view take focus and clicks.
+    let shown = state
+        .motion
+        .shown(crate::motion::Lane::Cs2, state.cs2_first as f32)
+        .min(first.max(state.cs2_first) as f32);
+    let content = state.content_viewport();
+    let top = (y + 20.).max(content.y);
+    out.draw.push(Draw::Clip(Some(Rect::new(
+        content.x,
+        top,
+        content.w,
+        (y + 58.4 + CS2_CARD_HEIGHT + 40. - top).max(0.),
+    ))));
+    for (index, item) in matches.into_iter().enumerate() {
+        let x = |at: f32| 84. + (index as f32 - at) * CS2_CARD_PITCH;
+        let rect = Rect::new(x(shown), y + 58.4, 569.1, CS2_CARD_HEIGHT);
+        let in_view = (first..first + visible).contains(&index);
+        if rect.x + rect.w < content.x - 40. || rect.x > content.x + content.w + 40. {
+            continue;
+        }
+        let hit = in_view.then(|| Rect::new(x(first as f32), rect.y, rect.w, rect.h));
+        cs2_card(out, state, assets, item, rect, hit, index, now);
     }
+    out.draw.push(Draw::Clip(Some(content)));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cs2_card(
     out: &mut Scene,
     state: &State,
     assets: &Assets,
     item: &crate::cs2::Match,
     rect: Rect,
+    hit: Option<Rect>,
     index: usize,
     now: OffsetDateTime,
 ) {
@@ -1757,13 +1807,7 @@ fn cs2_card(
     let language = state.preferences.language;
     let focused = state.focus == Target::Cs2Match(index) && !state.pointer;
     let live = item.state == Phase::Live;
-    out.shadow(
-        rect,
-        18.4,
-        if focused { 34. } else { 4. },
-        if focused { 14. } else { 1. },
-        if focused { 0.4 } else { 0.01 },
-    );
+    let (rect, lift_amount) = lift(out, state, &Target::Cs2Match(index), rect, 18.4);
     // A deep card, so scores stand out against any wallpaper, with the tournament's logo as a
     // faint watermark at its right.
     out.draw.push(Draw::RoundedGradient(
@@ -1910,10 +1954,10 @@ fn cs2_card(
         },
         false,
     );
-    if focused {
-        out.ring(rect, 18.4);
+    lift_edge(out, rect, 18.4, lift_amount);
+    if let Some(hit) = hit {
+        out.control(Target::Cs2Match(index), hit, true);
     }
-    out.control(Target::Cs2Match(index), rect, true);
 }
 
 /// A match's round in the TV's language: "Upper bracket · Semifinals", "Grand final"…

@@ -265,7 +265,8 @@ pub const KEYS: [&str; 40] = [
 ];
 
 pub struct State {
-    pub home_focus: crate::home_focus::HomeFocus,
+    /// The focused card's lift and the scrolling of Home and its rows (`motion.rs`).
+    pub motion: crate::motion::Motion,
     pub page: Page,
     pub focus: Target,
     pub inventory: Inventory,
@@ -276,9 +277,6 @@ pub struct State {
     pub subpage: Option<Subpage>,
     pub scroll: f32,
     pub home_scroll: f32,
-    /// Where the favorites are drawn: eases toward `home_scroll`, which navigation and hit
-    /// targets use, unless motion is reduced.
-    pub home_scroll_shown: f32,
     pub overlay: Option<Overlay>,
     pub moving: Option<String>,
     pub loading: bool,
@@ -321,7 +319,7 @@ pub struct State {
 impl State {
     pub fn new(preferences: Preferences) -> Self {
         Self {
-            home_focus: crate::home_focus::HomeFocus::default(),
+            motion: crate::motion::Motion::default(),
             page: Page::Home,
             focus: Target::Nav(0),
             inventory: Inventory::default(),
@@ -332,7 +330,6 @@ impl State {
             subpage: None,
             scroll: 0.,
             home_scroll: 0.,
-            home_scroll_shown: 0.,
             overlay: None,
             moving: None,
             loading: false,
@@ -496,40 +493,46 @@ impl State {
         }
     }
 
-    /// Eases the drawn favorites toward their scroll position; reduced motion jumps there.
-    pub fn animate_favorites(&mut self, dt: f32) {
-        let target = self.home_scroll;
-        let gap = target - self.home_scroll_shown;
-        if gap == 0. {
-            return;
-        }
-        self.home_scroll_shown = if self.preferences.reduced_motion || gap.abs() < 0.5 {
-            target
+    /// Advances the shared motion: Home's focused card lifts, and Home and its rows scroll to
+    /// where navigation put them. Hit targets and navigation use the targets at once.
+    pub fn animate(&mut self, dt: f32) {
+        use crate::motion::Lane;
+        let home = self.page == Page::Home;
+        let selected = (home && self.overlay.is_none())
+            .then_some(&self.focus)
+            .filter(|target| {
+                matches!(
+                    target,
+                    Target::App(_) | Target::Input(_) | Target::Coin(_) | Target::Cs2Match(_)
+                )
+            });
+        let lanes: Vec<(Lane, f32)> = if home {
+            vec![
+                (Lane::Page, self.scroll),
+                (Lane::Favorites, self.home_scroll),
+                (Lane::Cs2, self.cs2_first as f32),
+            ]
         } else {
-            // About 90% of the way in 0.2 s, at any frame rate.
-            self.home_scroll_shown + gap * (1. - (-dt * 11.5).exp())
+            Vec::new()
         };
-        self.dirty = true;
+        let reduced = self.preferences.reduced_motion;
+        self.dirty |= self.motion.advance(selected, &lanes, dt, reduced);
     }
 
-    pub fn animate_home_focus(&mut self, dt: f32) {
-        let selected = match &self.focus {
-            Target::App(id) if self.page == Page::Home && self.overlay.is_none() => {
-                Some(id.as_str())
-            }
-            _ => None,
-        };
-        self.dirty |= self
-            .home_focus
-            .advance(selected, dt, self.preferences.reduced_motion);
+    /// Where the page is drawn: Home eases toward `scroll`, other pages are drawn at it.
+    pub fn page_scroll(&self) -> f32 {
+        if self.page == Page::Home {
+            self.motion.shown(crate::motion::Lane::Page, self.scroll)
+        } else {
+            self.scroll
+        }
     }
 
     pub fn animating(&self) -> bool {
         ((self.recents_open() || self.recents.visibility > 0.)
             && (self.recents.visibility != if self.recents_open() { 1. } else { 0. }
                 || self.recents.cards_animating(self.pointer)))
-            || self.home_focus.animating()
-            || self.home_scroll_shown != self.home_scroll
+            || self.motion.animating()
             || self.previous_background.is_some()
             || self.panel_started.is_some()
             || (!self.preferences.reduced_motion
@@ -892,12 +895,14 @@ impl State {
                 } else {
                     120.8
                 };
-                if control.rect.y < top {
-                    self.scroll = (self.scroll + control.rect.y - top).max(0.);
+                // Home may still be easing: measure where the card is once it settles.
+                let y = control.rect.y + self.page_scroll() - self.scroll;
+                if y < top {
+                    self.scroll = (self.scroll + y - top).max(0.);
                 }
                 let bottom = self.scroll_bottom();
-                if control.rect.y + control.rect.h > bottom {
-                    self.scroll += control.rect.y + control.rect.h - bottom;
+                if y + control.rect.h > bottom {
+                    self.scroll += y + control.rect.h - bottom;
                 }
             }
         }

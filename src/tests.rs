@@ -31,8 +31,8 @@ fn home_focus_animation_preserves_hitboxes_and_stops_off_home() {
     let mut state = ready();
     state.focus = Target::App("netflix".into());
     let before = controls(&state);
-    state.animate_home_focus(0.08);
-    assert!(state.home_focus.amount("netflix") > 0.);
+    state.animate(0.08);
+    assert!(state.motion.focus(&Target::App("netflix".into())) > 0.);
     assert!(state.animating());
     let during = controls(&state);
     for (a, b) in before.iter().zip(during.iter()) {
@@ -43,9 +43,9 @@ fn home_focus_animation_preserves_hitboxes_and_stops_off_home() {
         );
     }
     state.page = Page::Apps;
-    state.animate_home_focus(2.);
-    assert_eq!(state.home_focus.amount("netflix"), 0.);
-    assert!(!state.home_focus.animating());
+    state.animate(2.);
+    assert_eq!(state.motion.focus(&Target::App("netflix".into())), 0.);
+    assert!(!state.motion.animating());
 }
 
 #[test]
@@ -54,8 +54,8 @@ fn reduced_home_focus_uses_glow_and_grid_keeps_its_ring() {
     let mut state = ready();
     state.preferences.reduced_motion = true;
     state.focus = Target::App("netflix".into());
-    state.animate_home_focus(0.);
-    assert_eq!(state.home_focus.amount("netflix"), 1.);
+    state.animate(0.);
+    assert_eq!(state.motion.focus(&Target::App("netflix".into())), 1.);
     let has_glow = |scene: view::Scene| {
         scene.draw.iter().any(
             |draw| matches!(draw, Draw::Shadow(_, _, _, color) if color[0] > 0. && color[3] > 0.),
@@ -63,7 +63,7 @@ fn reduced_home_focus_uses_glow_and_grid_keeps_its_ring() {
     };
     assert!(has_glow(scene(&state)));
     state.page = Page::Apps;
-    state.animate_home_focus(0.);
+    state.animate(0.);
     assert!(!has_glow(scene(&state)));
     assert!(
         scene(&state)
@@ -3911,4 +3911,39 @@ fn a_language_change_with_the_weather_off_contacts_no_service() {
             ..
         })
     )));
+}
+
+#[test]
+fn home_and_its_rows_ease_to_their_scroll_unless_motion_is_reduced() {
+    let mut state = ready();
+    state.animate(0.);
+    let input = |state: &State| {
+        controls(state)
+            .into_iter()
+            .find(|c| matches!(c.target, Target::Input(_)))
+            .map(|c| c.rect.y)
+    };
+    let before = input(&state);
+    state.home_scroll = 300.;
+    state.scroll = 200.;
+    state.animate(1. / 60.);
+    assert!(state.animating());
+    let favorites = state.motion.shown(crate::motion::Lane::Favorites, 300.);
+    assert!(favorites > 0. && favorites < 300.);
+    assert!(state.page_scroll() > 0. && state.page_scroll() < 200.);
+    // Hit targets follow the drawn page, so pointer clicks land on what is shown.
+    let during = input(&state);
+    assert!(during.unwrap() < before.unwrap() && during.unwrap() > before.unwrap() - 200.);
+    for _ in 0..120 {
+        state.animate(1. / 60.);
+    }
+    assert_eq!(state.page_scroll(), 200.);
+    assert!(!state.animating());
+
+    state.preferences.reduced_motion = true;
+    state.home_scroll = 0.;
+    state.scroll = 0.;
+    state.animate(1. / 60.);
+    assert_eq!(state.page_scroll(), 0.);
+    assert_eq!(state.motion.shown(crate::motion::Lane::Favorites, 0.), 0.);
 }
