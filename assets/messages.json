@@ -299,6 +299,21 @@
     "nl": "Achtergrond verwijderen",
     "sv": "Ta bort bakgrund"
   },
+  "nextAerial": {
+    "zh-tw": "下一個地點",
+    "en": "Next place",
+    "de": "Nächster Ort",
+    "zh": "下一个地点",
+    "es": "Siguiente lugar",
+    "pt": "Próximo lugar",
+    "it": "Luogo successivo",
+    "ru": "Следующее место",
+    "pl": "Następne miejsce",
+    "fr": "Lieu suivant",
+    "vi": "Địa điểm tiếp theo",
+    "nl": "Volgende plek",
+    "sv": "Nästa plats"
+  },
   "deleteBackgroundWarning": {
     "zh-tw": "刪除此背景？它將從圖庫中移除。",
     "en": "Delete this background? It will be removed from your gallery.",

@@ -524,7 +524,7 @@ impl Preferences {
         let mut seen = HashSet::new();
         self.deleted_backgrounds.retain(|id| {
             id != &self.background
-                && (BACKGROUNDS.iter().any(|(known, _)| *known == id) || id == crate::aerials::ID)
+                && BACKGROUNDS.iter().any(|(known, _)| *known == id)
                 && seen.insert(id.clone())
         });
         fn clean(ids: &mut Vec<String>) {

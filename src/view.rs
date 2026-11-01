@@ -5049,10 +5049,13 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     } else {
         crate::platform::can_uninstall(id)
     };
+    let skippable = background
+        && id == crate::aerials::ID
+        && state.preferences.background == crate::aerials::ID;
     let height = if shortcut {
         176.
     } else if background {
-        if deletable { 176. } else { 99.2 }
+        if deletable || skippable { 176. } else { 99.2 }
     } else if deletable {
         329.6
     } else {
@@ -5095,6 +5098,9 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
         let mut actions = vec![(Target::UseBackground, language.t("useBackground"))];
         if deletable {
             actions.push((Target::DeleteBackground, language.t("deleteBackground")));
+        }
+        if skippable {
+            actions.push((Target::NextAerial, language.t("nextAerial")));
         }
         actions
     } else {
@@ -5163,6 +5169,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
             match &target {
                 Target::OpenApp | Target::TileTest(_) => "arrow",
                 Target::UseBackground => "check",
+                Target::NextAerial => "right",
                 Target::Option(0) => {
                     if favorite {
                         "heart-filled"

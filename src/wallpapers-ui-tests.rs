@@ -1027,7 +1027,7 @@ fn rotating_through_the_gallery_skips_apple_tv_which_rotates_on_its_own() {
 }
 
 #[test]
-fn apple_tv_survives_a_restart_and_can_be_removed_from_the_gallery() {
+fn apple_tv_survives_a_restart_and_cannot_be_removed_from_the_gallery() {
     let mut preferences = Preferences {
         background: crate::aerials::ID.into(),
         splash_background: Some(crate::aerials::ID.into()),
@@ -1037,22 +1037,84 @@ fn apple_tv_survives_a_restart_and_can_be_removed_from_the_gallery() {
     assert_eq!(preferences.background, crate::aerials::ID);
     assert_eq!(preferences.splash_background(), crate::aerials::ID);
     assert_eq!(preferences.splash_background, None);
+    // Removed by an earlier build: it comes back.
+    let mut preferences = Preferences {
+        deleted_backgrounds: vec![crate::aerials::ID.into(), "summit".into()],
+        ..Preferences::default()
+    };
+    preferences.sanitize();
+    assert_eq!(preferences.deleted_backgrounds, vec!["summit".to_owned()]);
     let mut state = ready();
     choose(&mut state, "summit");
     let index = state.background_count() - 1;
+    assert_eq!(state.background_id(index), Some(crate::aerials::ID));
+    assert!(!state.can_delete_background(crate::aerials::ID));
     state.focus = Target::Background(index);
     state.activate();
+    let controls: Vec<_> = scene(&state)
+        .controls
+        .into_iter()
+        .map(|c| c.target)
+        .collect();
+    assert_eq!(controls, vec![Target::UseBackground]);
     state.focus = Target::DeleteBackground;
     state.activate();
+    assert!(matches!(
+        state.overlay,
+        Some(Overlay::BackgroundOptions { .. })
+    ));
+    state.overlay = Some(Overlay::BackgroundDelete {
+        id: crate::aerials::ID.into(),
+        restore: Target::Background(index),
+    });
     state.focus = Target::ConfirmDelete;
+    assert!(state.activate().is_empty());
+    assert!(state.preferences.deleted_backgrounds.is_empty());
+    assert_eq!(state.background_id(index), Some(crate::aerials::ID));
+}
+
+#[test]
+fn apple_tv_in_use_can_be_moved_to_its_next_place_at_once() {
+    let mut state = ready();
+    state.preferences.reduced_motion = true;
+    choose(&mut state, crate::aerials::ID);
+    let rotation = state.preferences.aerials;
+    let current = aerial(rotation.current(places()));
+    let next = aerial(rotation.next(places()));
+    state.aerial_ready(current.clone());
+    state.aerial_ready(next.clone());
+    state.aerials_request = false;
+    let now = rotation.changed + 60;
+    assert!(!state.advance_aerials(now));
+    let index = state.background_count() - 1;
+    state.focus = Target::Background(index);
+    state.activate();
+    let controls: Vec<_> = scene(&state)
+        .controls
+        .into_iter()
+        .map(|c| c.target)
+        .collect();
+    assert_eq!(controls, vec![Target::UseBackground, Target::NextAerial]);
+    state.focus = Target::NextAerial;
     assert_eq!(state.activate(), vec![Effect::Save]);
-    assert!(
-        (0..state.background_count()).all(|i| state.background_id(i) != Some(crate::aerials::ID))
-    );
-    let mut preferences = state.preferences.clone();
-    preferences.sanitize();
-    assert_eq!(
-        preferences.deleted_backgrounds,
-        vec![crate::aerials::ID.to_owned()]
-    );
+    assert!(state.overlay.is_none());
+    assert!(state.aerials_request);
+    assert!(state.advance_aerials(now));
+    assert_eq!(state.background_key(), format!("aerials#{}", next.id));
+    assert_eq!(state.preferences.aerials.changed, now);
+    // The fifteen minutes start again from the change.
+    assert!(!state.advance_aerials(now + crate::aerials::INTERVAL - 1));
+    // Not the background: there is no next place to move to.
+    choose(&mut state, "summit");
+    state.focus = Target::Background(index);
+    state.activate();
+    let controls: Vec<_> = scene(&state)
+        .controls
+        .into_iter()
+        .map(|c| c.target)
+        .collect();
+    assert_eq!(controls, vec![Target::UseBackground]);
+    state.focus = Target::NextAerial;
+    assert!(state.activate().is_empty());
+    assert_eq!(state.preferences.background, "summit");
 }

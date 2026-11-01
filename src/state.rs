@@ -87,6 +87,7 @@ pub enum Target {
     WallpaperGradient,
     UseBackground,
     DeleteBackground,
+    NextAerial,
     InputMode(String),
     InputRename,
     InputNameReset,
@@ -1226,18 +1227,14 @@ impl State {
                         .any(|deleted| deleted == id)
             })
             .chain(self.wallpapers.iter().map(|item| item.id.as_str()))
-            .chain(std::iter::once(crate::aerials::ID).filter(|id| {
-                *id == self.preferences.background
-                    || !self
-                        .preferences
-                        .deleted_backgrounds
-                        .iter()
-                        .any(|deleted| deleted == id)
-            }))
+            .chain(std::iter::once(crate::aerials::ID))
     }
 
+    /// Apple TV is never removed: its stills are only kept while shown, so there is nothing to free.
     pub fn can_delete_background(&self, id: &str) -> bool {
-        id != self.preferences.background && self.background_ids().any(|known| known == id)
+        id != self.preferences.background
+            && id != crate::aerials::ID
+            && self.background_ids().any(|known| known == id)
     }
 
     fn background_target(&self, id: &str) -> Target {
@@ -1271,7 +1268,7 @@ impl State {
             _ => None,
         };
         self.wallpapers.retain(|item| item.id != id);
-        if BACKGROUNDS.iter().any(|(known, _)| *known == id) || id == crate::aerials::ID {
+        if BACKGROUNDS.iter().any(|(known, _)| *known == id) {
             self.preferences.deleted_backgrounds.push(id.to_owned());
         }
         if matches!(&self.overlay, Some(Overlay::BackgroundOptions { id: current, .. } | Overlay::BackgroundDelete { id: current, .. }) if current == id)
@@ -2863,6 +2860,18 @@ impl State {
                 }
                 self.preferences.background = id;
                 self.preferences.wallpaper_changed = unix_now();
+                self.back();
+                return vec![Effect::Save];
+            }
+            Target::NextAerial => {
+                if !matches!(&self.overlay, Some(Overlay::BackgroundOptions { id, .. }) if id == crate::aerials::ID)
+                    || self.preferences.background != crate::aerials::ID
+                {
+                    return vec![];
+                }
+                // Due at once: advance_aerials moves on as soon as the next still is on the TV.
+                self.preferences.aerials.changed = 0;
+                self.aerials_request = true;
                 self.back();
                 return vec![Effect::Save];
             }
