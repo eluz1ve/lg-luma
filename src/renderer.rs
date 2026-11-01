@@ -22,7 +22,7 @@ const GLYPH_GEOMETRY_BUDGET: usize = 8 * 1024 * 1024;
 const TEXT_GEOMETRY_BUDGET: usize = 32 * 1024 * 1024;
 const TEXTURE_BUDGET: usize = 48 * 1024 * 1024;
 /// How dark a text shadow is where all its taps overlap, under the glyphs.
-const SHADOW_DEPTH: f32 = 0.38;
+const SHADOW_DEPTH: f32 = 0.55;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextStyle {
@@ -1940,17 +1940,17 @@ fn link(vertex: &str, fragment: &str, attributes: &[&CStr]) -> Result<GLuint, St
     }
 }
 
-/// Offsets for a shadow under text of this size, and each tap's opacity. Large text casts a wide,
-/// soft one; small text a tight one just below, which keeps its letters crisp instead of
-/// blurring them together.
+/// Offsets for a shadow under text of this size, and each tap's opacity. It stays tight to the
+/// glyphs at every size: on a bright wallpaper a wide halo reads as blurred text, while a close,
+/// dense one outlines the letters.
 pub fn shadow_taps(size: f32) -> (Vec<[f32; 2]>, f32) {
-    let (radius, drop, rings, depth): (f32, f32, &[(f32, usize)], f32) = if size >= 40. {
-        let rings = &[(0.33, 6), (0.66, 10), (1., 14)];
-        ((size * 0.2).min(12.), (size * 0.05).min(4.5), rings, SHADOW_DEPTH)
+    let (radius, drop, rings): (f32, f32, &[(f32, usize)]) = if size >= 40. {
+        let rings = &[(0.5, 8), (1., 12)];
+        ((size * 0.045).min(3.5), (size * 0.03).min(2.5), rings)
     } else if size >= 20. {
-        (size * 0.09, size * 0.06, &[(1., 8)], SHADOW_DEPTH)
+        (1.3, 1.3, &[(1., 8)])
     } else {
-        (1.2, 1.2, &[(1., 6)], SHADOW_DEPTH)
+        (0.9, 1., &[(1., 8)])
     };
     let mut taps = vec![[0., drop]];
     for &(ring, count) in rings {
@@ -1962,6 +1962,6 @@ pub fn shadow_taps(size: f32) -> (Vec<[f32; 2]>, f32) {
             ]);
         }
     }
-    let alpha = 1. - (1. - depth).powf(1. / taps.len() as f32);
+    let alpha = 1. - (1. - SHADOW_DEPTH).powf(1. / taps.len() as f32);
     (taps, alpha)
 }
