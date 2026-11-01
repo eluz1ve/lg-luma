@@ -35,6 +35,8 @@ fn cs2_score_is_switched_in_widgets() {
     assert_eq!(state.activate(), vec![Effect::Save]);
     assert!(state.preferences.show_cs2);
     state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::Cs2Layout);
+    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Cs2Major);
     state.activate();
     assert!(!state.preferences.cs2_major_only);
@@ -229,4 +231,32 @@ fn down_from_favorites_reaches_cs2_score_without_inputs() {
         .find(|c| c.target == state.focus)
         .unwrap();
     assert!(card.rect.y + card.rect.h <= 1080.);
+}
+
+#[test]
+fn cs2_and_shows_move_between_today_and_their_rows_from_widgets() {
+    let mut state = ready();
+    state.preferences.show_cs2 = true;
+    state.preferences.show_shows = true;
+    let heading = |state: &State, label: &str| {
+        scene(state)
+            .draw
+            .iter()
+            .any(|draw| matches!(draw, crate::renderer::Draw::Text(text, ..) if text == label))
+    };
+    // In Today by default: no rows of their own.
+    assert!(state.preferences.cs2_today && state.preferences.shows_today);
+    assert!(!heading(&state, "CS2 Score") && !heading(&state, "TV Shows"));
+    state.open(2);
+    for (widget, layout) in [(6, Target::Cs2Layout), (7, Target::ShowsLayout)] {
+        state.focus = Target::Widget(widget);
+        state.activate();
+        state.focus = layout.clone();
+        assert!(controls(&state).iter().any(|c| c.target == layout));
+        assert_eq!(state.activate(), vec![Effect::Save]);
+        state.direction(Direction::Left, &controls(&state));
+    }
+    assert!(!state.preferences.cs2_today && !state.preferences.shows_today);
+    state.open(0);
+    assert!(heading(&state, "CS2 Score") && heading(&state, "TV Shows"));
 }

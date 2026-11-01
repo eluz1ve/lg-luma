@@ -1199,6 +1199,36 @@
     "nl": "Vandaag",
     "sv": "I dag"
   },
+  "placeToday": {
+    "zh-tw": "在「今天」中",
+    "en": "In Today",
+    "de": "In „Heute“",
+    "zh": "在“今天”中",
+    "es": "En «Hoy»",
+    "pt": "Em “Hoje”",
+    "it": "In «Oggi»",
+    "ru": "В «Сегодня»",
+    "pl": "W „Dziś”",
+    "fr": "Dans « Aujourd’hui »",
+    "vi": "Trong “Hôm nay”",
+    "nl": "In ‘Vandaag’",
+    "sv": "I ”I dag”"
+  },
+  "placeRow": {
+    "zh-tw": "單獨一列",
+    "en": "Separate row",
+    "de": "Eigene Reihe",
+    "zh": "单独一行",
+    "es": "Fila aparte",
+    "pt": "Linha própria",
+    "it": "Riga a parte",
+    "ru": "Отдельным рядом",
+    "pl": "Osobny rząd",
+    "fr": "Rangée à part",
+    "vi": "Hàng riêng",
+    "nl": "Eigen rij",
+    "sv": "Egen rad"
+  },
   "todayMore": {
     "zh-tw": "還有 {count} 項",
     "en": "{count} more",

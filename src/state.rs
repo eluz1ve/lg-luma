@@ -125,10 +125,12 @@ pub enum Target {
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
-    /// Widgets › Crypto: a row below the inputs or a block beside the greeting.
+    /// Widgets › Crypto: a row below the inputs or a line in Today.
     CryptoLayout,
-    /// Widgets › Crypto: whether the block beside the greeting sits on a card.
-    CryptoCard,
+    /// Widgets › CS2 Score: matches in Today or in their own row.
+    Cs2Layout,
+    /// Widgets › TV Shows: episodes in Today or a row of posters.
+    ShowsLayout,
     /// Widgets › Crypto: the coin search's field.
     CryptoSearch,
     /// Widgets › Crypto: one of the search's matches.
@@ -1650,13 +1652,14 @@ impl State {
                 Target::TileEditor
                     | Target::Tile(_)
                     | Target::Cs2Toggle
+                    | Target::Cs2Layout
                     | Target::ShowsToggle
+                    | Target::ShowsLayout
                     | Target::Cs2Major
                     | Target::Cs2Results
                     | Target::InputMode(_)
                     | Target::CryptoToggle
                     | Target::CryptoLayout
-                    | Target::CryptoCard
                     | Target::CryptoSearch
                     | Target::CryptoResult(_)
                     | Target::CryptoCoin(_)
@@ -1703,7 +1706,6 @@ impl State {
                 self.focus,
                 Target::CryptoToggle
                     | Target::CryptoLayout
-                    | Target::CryptoCard
                     | Target::CryptoSearch
                     | Target::CryptoResult(_)
                     | Target::CryptoCoin(_)
@@ -1779,7 +1781,12 @@ impl State {
             // reaches the tabs.
             if matches!(
                 self.focus,
-                Target::Cs2Toggle | Target::Cs2Major | Target::Cs2Results | Target::ShowsToggle
+                Target::Cs2Toggle
+                    | Target::Cs2Layout
+                    | Target::Cs2Major
+                    | Target::Cs2Results
+                    | Target::ShowsToggle
+                    | Target::ShowsLayout
             ) {
                 match direction {
                     Direction::Right => return vec![],
@@ -2681,8 +2688,12 @@ impl State {
                 self.preferences.show_crypto = !self.preferences.show_crypto;
                 return vec![Effect::Save];
             }
-            Target::CryptoCard => {
-                self.preferences.crypto_card = !self.preferences.crypto_card;
+            Target::Cs2Layout => {
+                self.preferences.cs2_today = !self.preferences.cs2_today;
+                return vec![Effect::Save];
+            }
+            Target::ShowsLayout => {
+                self.preferences.shows_today = !self.preferences.shows_today;
                 return vec![Effect::Save];
             }
             Target::CryptoLayout => {

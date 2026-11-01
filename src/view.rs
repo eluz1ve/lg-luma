@@ -1777,13 +1777,33 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
             chevron: false,
         },
     );
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::ShowsLayout,
+            rect: Rect::new(640., 164.8 + 84. - s, 1120., 72.),
+            title: language.t("cryptoLayout"),
+            icon: Some("grid"),
+            value: Some(place(language, state.preferences.shows_today)),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
     out.text(
         language.t("showsSource"),
-        Rect::new(660., 164.8 + 84. + 6. - s, 1080., 24.),
+        Rect::new(660., 164.8 + 2. * 84. + 6. - s, 1080., 24.),
         text(16., 400, 0.),
         c(0xf5f5f5, 0.55),
         false,
     );
+}
+
+/// Where a widget sits on Home: in the Today card, or in a row of its own.
+fn place(language: Language, today: bool) -> &'static str {
+    language.t(if today { "placeToday" } else { "placeRow" })
 }
 
 /// The Today card's lines for this moment, over the TV's local day.
@@ -1827,7 +1847,7 @@ fn today_card(
     out.border(rect, 24., 1., c(0xffffff, 0.063));
     let x = rect.x + 24.;
     let inner = rect.w - 48.;
-    let mut eyebrow = language.t("today").to_uppercase();
+    let mut eyebrow = language.t("today").to_owned();
     if today.more > 0 {
         eyebrow = format!(
             "{eyebrow} · {}",
@@ -1835,7 +1855,7 @@ fn today_card(
         );
     }
     out.text(
-        eyebrow,
+        eyebrow.to_uppercase(),
         Rect::new(x, rect.y + TODAY_PAD, inner, 24.),
         text(20., 600, 0.12),
         c(0xf5f5f5, 0.6),
@@ -3687,21 +3707,9 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
         248.8,
         language.t("cryptoLayout"),
         Some("sparkles"),
-        Some(language.t(if state.preferences.crypto_beside {
-            "cryptoBeside"
-        } else {
-            "cryptoRow"
-        })),
+        Some(place(language, state.preferences.crypto_beside)),
     );
-    simple(
-        out,
-        Target::CryptoCard,
-        332.8,
-        language.t("cryptoCardBackground"),
-        None,
-        on_off(state.preferences.crypto_card),
-    );
-    let mut y = 432.8;
+    let mut y = 348.8;
     out.text(
         language.t("cryptoCoins"),
         Rect::new(660., y - s, 1080., 24.),
@@ -3774,6 +3782,12 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
     for (index, (target, key, icon, on)) in [
         (Target::Cs2Toggle, "showWidget", "eye", preferences.show_cs2),
         (
+            Target::Cs2Layout,
+            "cryptoLayout",
+            "grid",
+            preferences.cs2_today,
+        ),
+        (
             Target::Cs2Major,
             "cs2MajorOnly",
             "sparkles",
@@ -3789,6 +3803,7 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
     .into_iter()
     .enumerate()
     {
+        let layout = target == Target::Cs2Layout;
         row(
             out,
             state,
@@ -3798,7 +3813,11 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 rect: Rect::new(640., 164.8 + index as f32 * 84. - s, 1120., 72.),
                 title: language.t(key),
                 icon: Some(icon),
-                value: Some(language.t(if on { "stateOn" } else { "stateOff" })),
+                value: Some(if layout {
+                    place(language, on)
+                } else {
+                    language.t(if on { "stateOn" } else { "stateOff" })
+                }),
                 description: None,
                 selected: false,
                 chevron: false,
@@ -3807,7 +3826,7 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
     }
     out.text(
         language.t("cs2Source"),
-        Rect::new(660., 164.8 + 3. * 84. + 6. - s, 1080., 24.),
+        Rect::new(660., 164.8 + 4. * 84. + 6. - s, 1080., 24.),
         text(16., 400, 0.),
         c(0xf5f5f5, 0.55),
         false,
