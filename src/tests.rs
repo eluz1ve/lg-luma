@@ -1028,7 +1028,8 @@ fn time_format_selects_seconds_without_changing_the_hour_format() {
 }
 
 #[test]
-fn system_version_is_inside_the_update_status_card_without_a_separate_row() {
+fn system_version_is_in_the_summary_without_a_separate_row() {
+    use crate::layout::{PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y};
     let mut state = ready();
     state.open(2);
     state.section = crate::state::SYSTEM_SECTION;
@@ -1036,16 +1037,17 @@ fn system_version_is_inside_the_update_status_card_without_a_separate_row() {
     let system = scene(&state);
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
-        crate::renderer::Draw::Shape(rect, _, _, color)
-            if rect.x == crate::layout::LIST_X && rect.y == crate::layout::LIST_TOP
-                && rect.w == crate::layout::LIST_WIDTH && rect.h == 220. && color[3] == 0.72
+        crate::renderer::Draw::Shape(rect, _, width, color)
+            if rect.x == PREVIEW_X && rect.y == PREVIEW_Y && rect.w == PREVIEW_WIDTH
+                && *width == 0. && color[3] == 0.42
     )));
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
-        crate::renderer::Draw::Text(label, _, style, color, _)
-            if label == "Current version: test" && style.size == 20.8 && style.weight == 450 && color[3] == 0.73
+        crate::renderer::Draw::Text(label, rect, style, color, _)
+            if label == "Current version: test" && rect.x > PREVIEW_X && style.size == 24.
+                && style.weight == 450 && color[3] == 0.62
     )));
-    assert_eq!(state.hit_test(&system.controls, 900., 200.), None);
+    assert_eq!(state.hit_test(&system.controls, PREVIEW_X + 100., PREVIEW_Y + 60.), None);
     state.focus = Target::Sidebar(crate::state::SYSTEM_SECTION);
     state.direction(Direction::Right, &system.controls);
     assert_eq!(state.focus, Target::CheckUpdates);

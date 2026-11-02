@@ -5293,5 +5293,35 @@
     "vi": "Nút Home trên điều khiển có mở Luma không",
     "nl": "Of de Home-knop van de afstandsbediening Luma opent",
     "sv": "Om fjärrkontrollens Home-knapp öppnar Luma"
+  },
+  "previewTitle": {
+    "en": "How Home will look",
+    "de": "So sieht Start aus",
+    "es": "Así se verá Inicio",
+    "zh": "主页效果",
+    "zh-tw": "主畫面效果",
+    "pt": "Como o Início vai ficar",
+    "it": "Come apparirà la Home",
+    "ru": "Так будет на Главной",
+    "pl": "Tak będzie wyglądać Start",
+    "fr": "Aperçu de l'accueil",
+    "vi": "Trang chính sẽ trông thế này",
+    "nl": "Zo ziet Start eruit",
+    "sv": "Så här ser Hem ut"
+  },
+  "previewHint": {
+    "en": "Changes apply right away. This is Home with your wallpaper and widgets.",
+    "de": "Änderungen gelten sofort. So sieht Start mit deinem Hintergrund und deinen Widgets aus.",
+    "es": "Los cambios se aplican al instante. Así es Inicio con tu fondo y tus widgets.",
+    "zh": "更改会立即生效。这是带有你的壁纸和小组件的主页。",
+    "zh-tw": "變更會立即生效。這是套用你的桌布和小工具的主畫面。",
+    "pt": "As alterações valem na hora. Este é o Início com seu fundo e seus widgets.",
+    "it": "Le modifiche valgono subito. Questa è la Home con il tuo sfondo e i tuoi widget.",
+    "ru": "Изменения применяются сразу. Это Главная с вашими обоями и виджетами.",
+    "pl": "Zmiany działają od razu. Tak wygląda Start z Twoją tapetą i widżetami.",
+    "fr": "Les changements s'appliquent aussitôt. Voici l'accueil avec votre fond et vos widgets.",
+    "vi": "Thay đổi áp dụng ngay. Đây là Trang chính với hình nền và tiện ích của bạn.",
+    "nl": "Wijzigingen gelden meteen. Dit is Start met je achtergrond en widgets.",
+    "sv": "Ändringar gäller direkt. Så här ser Hem ut med din bakgrund och dina widgetar."
   }
 }

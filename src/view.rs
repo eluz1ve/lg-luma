@@ -17,9 +17,10 @@ use std::{
 use time::OffsetDateTime;
 
 use crate::layout::{
-    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, ROW_GROWN, ROW_HEIGHT,
-    ROW_SPACING, SAFE_X, SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH,
-    column as column_width, type_scale,
+    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, PREVIEW_HEIGHT,
+    PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT, ROW_SPACING, SAFE_X,
+    SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH, column as column_width,
+    type_scale,
 };
 
 const MAIN_TOP: f32 = 108.8;
@@ -212,13 +213,40 @@ pub struct Scene {
     pub draw: Vec<Draw>,
     pub controls: Vec<Control>,
     pub modal: Option<Rect>,
+    /// Where Home draws what a setting changes, so Settings' preview can ring it.
+    pub regions: Vec<(Region, Rect)>,
+    /// Where Settings wants Home drawn small (`home_preview`).
+    pub preview: Option<PreviewSlot>,
 }
+
+/// A part of Home that settings change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    Clock,
+    Date,
+    Greeting,
+    Weather,
+    Favorites,
+    Inputs,
+    Crypto,
+    Cs2,
+    Shows,
+}
+
+/// The place in Settings' draw list for Home's preview, and the part of Home to ring in it.
+pub struct PreviewSlot {
+    at: usize,
+    region: Option<Region>,
+}
+
 impl Scene {
     fn new() -> Self {
         Self {
             draw: Vec::new(),
             controls: Vec::new(),
             modal: None,
+            regions: Vec::new(),
+            preview: None,
         }
     }
     fn shape(&mut self, rect: Rect, radius: f32, fill: Color) {
@@ -855,10 +883,20 @@ fn header(
         state.preferences.show_seconds,
     );
     let k = state.preferences.ui_scale.scale();
+    let style = text(24. * k, 500, -0.03).shadow();
+    out.regions.push((
+        Region::Clock,
+        Rect::new(
+            SAFE_X,
+            76.8 - 14.4 * k,
+            assets.width(&clock, style).min(300. * k),
+            28.8 * k,
+        ),
+    ));
     out.text(
         clock,
         Rect::new(SAFE_X, 76.8 - 14.4 * k, 300. * k, 28.8 * k),
-        text(24. * k, 500, -0.03).shadow(),
+        style,
         WHITE,
         false,
     );
@@ -1415,10 +1453,21 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         .min(HEADER_BOTTOM - block)
         - s;
     if state.preferences.show_date {
+        let date = state.preferences.date_format.format(language, now);
+        let style = text(type_scale::EYEBROW, 600, 0.12).shadow();
+        out.regions.push((
+            Region::Date,
+            Rect::new(
+                SAFE_X,
+                top,
+                assets.width(&date, style).min(column),
+                type_scale::EYEBROW * 1.2,
+            ),
+        ));
         out.text(
-            state.preferences.date_format.format(language, now),
+            date,
             Rect::new(SAFE_X, top, column, type_scale::EYEBROW * 1.2),
-            text(type_scale::EYEBROW, 600, 0.12).shadow(),
+            style,
             c(0xf5f5f5, 0.72),
             false,
         );
@@ -1430,6 +1479,15 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             .shadow();
         let fitted = assets.fit_text(&greeting, style, column);
         let height = greeting_line * fitted.size / style.size;
+        out.regions.push((
+            Region::Greeting,
+            Rect::new(
+                SAFE_X,
+                top + date_height + (greeting_line - height) / 2.,
+                assets.width(&greeting, fitted).min(column),
+                height,
+            ),
+        ));
         out.text(
             &greeting,
             Rect::new(
@@ -1444,6 +1502,15 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         );
     }
     if let Some(summary) = summary {
+        out.regions.push((
+            Region::Weather,
+            Rect::new(
+                SAFE_X,
+                top + date_height + greeting_height,
+                summary.width,
+                summary.height,
+            ),
+        ));
         weather_summary(
             out,
             state,
@@ -1507,6 +1574,18 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     if !apps.is_empty() && names {
         grid_height += CAPTION_ROOM;
     }
+    let shown = apps.len().min(6) as f32;
+    if shown > 0. {
+        out.regions.push((
+            Region::Favorites,
+            Rect::new(
+                SAFE_X,
+                cards_y,
+                shown * HOME_TILE_PITCH - (HOME_TILE_PITCH - HOME_TILE_WIDTH),
+                HOME_FACE_HEIGHT,
+            ),
+        ));
+    }
     // Like Apple TV's rows, the favourites run to the screen edge: the next tile shows cut off
     // at the right (and a scrolled-away one at the left), so it is clear the row continues.
     out.draw.push(Draw::Clip(Some(state.favorites_viewport())));
@@ -1562,6 +1641,18 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         row_heading(out, language.t("inputsHeading"), input_y);
     }
     let chip_width = column_width(4);
+    if !inputs.is_empty() {
+        let columns = inputs.len().min(4) as f32;
+        out.regions.push((
+            Region::Inputs,
+            Rect::new(
+                SAFE_X,
+                input_y + ROW_HEADING_GAP,
+                columns * (chip_width + GUTTER) - GUTTER,
+                (inputs.len().div_ceil(4) - 1) as f32 * CHIP_ROW_PITCH + CHIP_HEIGHT,
+            ),
+        ));
+    }
     for (index, input) in inputs.iter().enumerate() {
         let rect = Rect::new(
             SAFE_X + (index % 4) as f32 * (chip_width + GUTTER),
@@ -1653,21 +1744,42 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     } else {
         input_y + ROW_HEADING_GAP + (rows - 1.) * CHIP_ROW_PITCH + CHIP_HEIGHT + ROW_GAP
     };
-    today_card(out, state, assets, &today, now);
+    if let Some(card) = today_card(out, state, assets, &today, now) {
+        use crate::today::Line;
+        for (region, kind) in [(Region::Crypto, 0), (Region::Cs2, 1), (Region::Shows, 2)] {
+            if today.lines.iter().any(|line| {
+                matches!(
+                    (kind, line),
+                    (0, Line::Crypto) | (1, Line::Match { .. }) | (2, Line::Episode { .. })
+                )
+            }) {
+                out.regions.push((region, card));
+            }
+        }
+    }
+    let row_region = |out: &mut Scene, region, y: f32, height| {
+        out.regions.push((
+            region,
+            Rect::new(SAFE_X, y + ROW_HEADING_GAP, WIDTH, height),
+        ));
+    };
     // Prices in the Today card have no row of their own.
     if state.preferences.show_crypto
         && !state.preferences.crypto_beside
         && !state.preferences.crypto_coins.is_empty()
     {
+        row_region(out, Region::Crypto, y, CHIP_HEIGHT);
         crypto_row(out, state, y);
         y += ROW_HEADING_GAP + CHIP_HEIGHT + ROW_GAP;
     }
     // Widgets in the Today card have no row of their own.
     if state.preferences.show_cs2 && !state.preferences.cs2_today {
+        row_region(out, Region::Cs2, y, CS2_CARD_HEIGHT);
         cs2_row(out, state, assets, y, now);
         y += ROW_HEADING_GAP + CS2_CARD_HEIGHT + ROW_GAP;
     }
     if state.preferences.show_shows && !state.preferences.shows_today {
+        row_region(out, Region::Shows, y, SHOW_POSTER_HEIGHT);
         shows_row(out, state, assets, y);
     }
 }
@@ -1870,10 +1982,10 @@ fn today_card(
     assets: &Assets,
     today: &crate::today::Today,
     now: OffsetDateTime,
-) {
+) -> Option<Rect> {
     use crate::today::Line;
     if today.lines.is_empty() {
-        return;
+        return None;
     }
     let language = state.preferences.language;
     let height = TODAY_PAD * 2. + TODAY_EYEBROW + TODAY_LINE * today.lines.len() as f32;
@@ -2058,6 +2170,7 @@ fn today_card(
             out.control(target, row, true);
         }
     }
+    Some(rect)
 }
 
 /// Home's crypto prices: a heading and up to four cards in the inputs' style, each with the
@@ -4235,12 +4348,203 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.draw.push(Draw::Clip(None));
     }
     settings_title(out, state, assets, LIST_WIDTH);
+    match state.section {
+        0 | WIDGETS_SECTION => preview_frame(out, state),
+        SYSTEM_SECTION if state.subpage.is_none() => system_summary(out, state, assets),
+        _ => {}
+    }
     // The open sidebar lies over the page, which steps back behind it.
     let dim = sidebar_dim(state);
     if dim < 1. {
         out.fade(start, 1., dim);
     }
     settings_sidebar(out, state, assets);
+}
+
+const PREVIEW: Rect = Rect::new(PREVIEW_X, PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+
+/// Beside General and Widgets: what Home will look like, with a line on what it shows. Home
+/// itself is drawn into the slot later, by `home_preview`.
+fn preview_frame(out: &mut Scene, state: &State) {
+    let language = state.preferences.language;
+    out.text(
+        language.t("previewTitle").to_uppercase(),
+        Rect::new(PREVIEW.x, PREVIEW.y - 36., PREVIEW.w, type_scale::EYEBROW * 1.2),
+        text(type_scale::EYEBROW, 600, 0.12).shadow(),
+        c(0xf5f5f5, 0.72),
+        false,
+    );
+    out.shadow(PREVIEW, 18., 30., 8., 0.35);
+    out.preview = Some(PreviewSlot {
+        at: out.draw.len(),
+        region: preview_region(state),
+    });
+    out.border(PREVIEW, 18., 1., c(0xffffff, 0.14));
+    out.text(
+        language.t("previewHint"),
+        Rect::new(PREVIEW.x, PREVIEW.y + PREVIEW.h + 24., PREVIEW.w, 60.),
+        text(type_scale::CAPTION, 450, 0.).leading(1.35).shadow(),
+        c(0xf5f5f5, 0.72),
+        false,
+    );
+}
+
+/// The part of Home the focused setting, or the open subpage, changes.
+fn preview_region(state: &State) -> Option<Region> {
+    if let Some(subpage) = &state.subpage {
+        return match subpage {
+            Subpage::AppNames | Subpage::Shortcuts => Some(Region::Favorites),
+            Subpage::Clock | Subpage::ClockFormat | Subpage::TimeFormat => Some(Region::Clock),
+            Subpage::Date | Subpage::DateFormat => Some(Region::Date),
+            Subpage::Greeting => Some(Region::Greeting),
+            Subpage::Weather | Subpage::WeatherLocation | Subpage::Temperature => {
+                Some(Region::Weather)
+            }
+            Subpage::Inputs | Subpage::Input(_) => Some(Region::Inputs),
+            Subpage::Crypto => Some(Region::Crypto),
+            Subpage::Cs2 => Some(Region::Cs2),
+            Subpage::Shows => Some(Region::Shows),
+            _ => None,
+        };
+    }
+    match state.focus {
+        Target::Setting(0) | Target::Widget(2) => Some(Region::Favorites),
+        Target::Setting(index) if index == crate::state::FOCUS_GLOW_ROW => {
+            Some(Region::Favorites)
+        }
+        Target::Setting(1) => Some(Region::Clock),
+        Target::Widget(4) => Some(Region::Date),
+        Target::Widget(0) => Some(Region::Greeting),
+        Target::Widget(1) => Some(Region::Weather),
+        Target::Widget(3) => Some(Region::Inputs),
+        Target::Widget(5) => Some(Region::Crypto),
+        Target::Widget(6) => Some(Region::Cs2),
+        Target::Widget(7) => Some(Region::Shows),
+        _ => None,
+    }
+}
+
+/// Draws Home, small, where Settings left room for it: Home's own scene, built as Home would
+/// draw it at rest, scaled into the frame. It takes no focus, and Settings' state is restored.
+pub fn home_preview(scene: &mut Scene, state: &mut State, assets: &Assets, now: OffsetDateTime) {
+    let Some(slot) = scene.preview.take() else {
+        return;
+    };
+    let dim = sidebar_dim(state);
+    let saved = (
+        std::mem::replace(&mut state.page, Page::Home),
+        std::mem::replace(&mut state.focus, Target::Nav(0)),
+        std::mem::replace(&mut state.scroll, 0.),
+        std::mem::replace(&mut state.home_scroll, 0.),
+        // No focus ring on the tab bar.
+        std::mem::replace(&mut state.pointer, true),
+        state.overlay.take(),
+        state.notice.take(),
+        state.error.take(),
+        state.pressed.take(),
+        state.moving.take(),
+    );
+    let tab = navigation(assets, state.preferences.language).items[0];
+    let home = scene_with_pill(state, assets, tab.x, tab.w, now);
+    (
+        state.page,
+        state.focus,
+        state.scroll,
+        state.home_scroll,
+        state.pointer,
+        state.overlay,
+        state.notice,
+        state.error,
+        state.pressed,
+        state.moving,
+    ) = saved;
+    let k = PREVIEW.w / 1920.;
+    let place = |rect: Rect| {
+        Rect::new(
+            PREVIEW.x + rect.x * k,
+            PREVIEW.y + rect.y * k,
+            rect.w * k,
+            rect.h * k,
+        )
+    };
+    let within = |rect: Option<Rect>| {
+        let Some(rect) = rect.map(place) else {
+            return PREVIEW;
+        };
+        let x = rect.x.max(PREVIEW.x);
+        let y = rect.y.max(PREVIEW.y);
+        let right = (rect.x + rect.w).min(PREVIEW.x + PREVIEW.w);
+        let bottom = (rect.y + rect.h).min(PREVIEW.y + PREVIEW.h);
+        Rect::new(x, y, (right - x).max(0.), (bottom - y).max(0.))
+    };
+    // The wallpaper fills the frame, whose corners are round.
+    let corner = |rect: Rect, radius: f32| {
+        if rect.w >= 1920. && rect.h >= 1080. {
+            18.
+        } else {
+            radius * k
+        }
+    };
+    let mut small = Scene::new();
+    small.draw.push(Draw::Clip(Some(PREVIEW)));
+    for draw in home.draw {
+        small.draw.push(match draw {
+            Draw::Shape(rect, radius, width, color) => Draw::Shape(
+                place(rect),
+                radius * k,
+                if width > 0. { (width * k).max(1.) } else { 0. },
+                color,
+            ),
+            Draw::RoundedGradient(rect, radius, a, b) => {
+                Draw::RoundedGradient(place(rect), radius * k, a, b)
+            }
+            Draw::Shadow(rect, radius, blur, color) => {
+                Draw::Shadow(place(rect), radius * k, blur * k, color)
+            }
+            Draw::Text(label, rect, mut style, color, center) => {
+                style.size *= k;
+                Draw::Text(label, place(rect), style, color, center)
+            }
+            Draw::Image(path, rect, radius, contain) => {
+                Draw::Image(path, place(rect), corner(rect, radius), contain)
+            }
+            Draw::TintedImage(path, rect, radius, contain, color) => {
+                Draw::TintedImage(path, place(rect), corner(rect, radius), contain, color)
+            }
+            Draw::AppImage(art, rect, radius, color) => {
+                Draw::AppImage(art, place(rect), radius * k, color)
+            }
+            Draw::Picture(art, rect, radius, color) => {
+                Draw::Picture(art, place(rect), radius * k, color)
+            }
+            Draw::Cover(art, rect, radius, color) => {
+                Draw::Cover(art, place(rect), radius * k, color)
+            }
+            Draw::Clip(rect) => Draw::Clip(Some(within(rect))),
+            Draw::EdgeFade(fade) => {
+                Draw::EdgeFade(fade.map(|edges| edges.map(|y| PREVIEW.y + y * k)))
+            }
+            Draw::EdgeFadeX(fade) => {
+                Draw::EdgeFadeX(fade.map(|edges| edges.map(|x| PREVIEW.x + x * k)))
+            }
+        });
+    }
+    small.draw.push(Draw::EdgeFade(None));
+    small.draw.push(Draw::EdgeFadeX(None));
+    small.draw.push(Draw::Clip(None));
+    if let Some(rect) = slot.region.and_then(|region| {
+        home.regions
+            .iter()
+            .find(|(drawn, _)| *drawn == region)
+            .map(|(_, rect)| place(*rect).inset(-6.))
+    }) {
+        small.border(rect.inset(-3.), 13., 3., c(0xffffff, 0.18));
+        small.border(rect, 10., 2., c(0xffffff, 0.95));
+    }
+    if dim < 1. {
+        small.fade(0, 1., dim);
+    }
+    scene.draw.splice(slot.at..slot.at, small.draw);
 }
 
 /// How bright the page under the sidebar is: full beside the icons, dimmed once it is open.
@@ -4831,64 +5135,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             }
         }
         SYSTEM_SECTION => {
-            let rect = Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, 220.);
-            let title = if matches!(state.update, crate::update::InstallStatus::Failed(_)) {
-                "updateError"
-            } else if state.available_update.is_some() {
-                "updateAvailable"
-            } else {
-                match state.update_status {
-                    crate::update::Status::Unchecked => "checkForUpdates",
-                    crate::update::Status::Checking => "checkingUpdates",
-                    crate::update::Status::Checked => "latestVersionInstalled",
-                    crate::update::Status::Failed => "updateCheckFailed",
-                }
-            };
-            settings_surface(out, rect, 20.);
-            out.text(
-                language.t(title),
-                Rect::new(rect.x + 24.2, rect.y + 24., rect.w - 48.4, 34.),
-                text(24., 550, -0.02).leading(1.4),
-                WHITE,
-                false,
-            );
-            out.text(
-                if let Some(latest) = &state.available_update {
-                    language.format(
-                        "updateVersions",
-                        &[("current", assets.version.trim()), ("latest", latest)],
-                    )
-                } else {
-                    language.format("currentVersion", &[("current", assets.version.trim())])
-                },
-                Rect::new(rect.x + 24.2, rect.y + 74., rect.w - 48.4, 32.),
-                text(20.8, 450, -0.02).leading(1.4),
-                c(0xeeeeee, 0.73),
-                false,
-            );
-            row(
-                out,
-                state,
-                assets,
-                Row {
-                    target: if state.available_update.is_some() {
-                        Target::InstallUpdate
-                    } else {
-                        Target::CheckUpdates
-                    },
-                    rect: Rect::new(rect.x + 24., rect.y + 132., rect.w - 48., 64.),
-                    title: &update_value(state),
-                    icon: Some(if state.available_update.is_some() {
-                        "arrow"
-                    } else {
-                        "refresh"
-                    }),
-                    value: None,
-                    description: None,
-                    selected: false,
-                    chevron: false,
-                },
-            );
             let rows = [
                 (
                     3,
@@ -4936,10 +5182,37 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     true,
                 ),
             ];
-            let rects = list_rects(
+            let update = if state.available_update.is_some() {
+                Target::InstallUpdate
+            } else {
+                Target::CheckUpdates
+            };
+            let mut rects = list_rects(
                 state,
-                LIST_TOP + 220. + 24.,
-                &rows.map(|row| (Target::Setting(row.0), true)),
+                LIST_TOP,
+                &std::iter::once((update.clone(), false))
+                    .chain(rows.iter().map(|row| (Target::Setting(row.0), true)))
+                    .collect::<Vec<_>>(),
+            )
+            .into_iter();
+            row(
+                out,
+                state,
+                assets,
+                Row {
+                    target: update,
+                    rect: rects.next().unwrap(),
+                    title: &update_value(state),
+                    icon: Some(if state.available_update.is_some() {
+                        "arrow"
+                    } else {
+                        "refresh"
+                    }),
+                    value: None,
+                    description: None,
+                    selected: false,
+                    chevron: false,
+                },
             );
             for ((index, title, about, icon, value, chevron), rect) in rows.into_iter().zip(rects) {
                 row(
@@ -5260,6 +5533,68 @@ fn input_name_rows(out: &mut Scene, state: &State, assets: &Assets, id: &str, y:
             },
         );
     }
+}
+
+/// System, on the right where other sections show Home: Luma's version and its updates.
+fn system_summary(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let title = if matches!(state.update, crate::update::InstallStatus::Failed(_)) {
+        "updateError"
+    } else if state.available_update.is_some() {
+        "updateAvailable"
+    } else {
+        match state.update_status {
+            crate::update::Status::Unchecked => "checkForUpdates",
+            crate::update::Status::Checking => "checkingUpdates",
+            crate::update::Status::Checked => "latestVersionInstalled",
+            crate::update::Status::Failed => "updateCheckFailed",
+        }
+    };
+    let version = if let Some(latest) = &state.available_update {
+        language.format(
+            "updateVersions",
+            &[("current", assets.version.trim()), ("latest", latest)],
+        )
+    } else {
+        language.format("currentVersion", &[("current", assets.version.trim())])
+    };
+    let inner = PREVIEW.w - 64.;
+    let title_style = text(34., 600, -0.02).leading(1.25);
+    let title_height = assets.lines(language.t(title), title_style, inner) as f32 * 34. * 1.25;
+    let version_style = text(type_scale::SECONDARY, 450, 0.).leading(1.35);
+    let version_height =
+        assets.lines(&version, version_style, inner) as f32 * type_scale::SECONDARY * 1.35;
+    let panel = Rect::new(
+        PREVIEW.x,
+        PREVIEW.y,
+        PREVIEW.w,
+        28. + title_height + 10. + version_height + 30.,
+    );
+    out.text(
+        "LUMA",
+        Rect::new(PREVIEW.x, PREVIEW.y - 36., PREVIEW.w, type_scale::EYEBROW * 1.2),
+        text(type_scale::EYEBROW, 600, 0.12).shadow(),
+        c(0xf5f5f5, 0.72),
+        false,
+    );
+    out.shape(panel, 22., c(0x0a0d12, 0.42));
+    out.border(panel, 22., 1., c(0xffffff, 0.12));
+    let mut y = panel.y + 28.;
+    out.text(
+        language.t(title),
+        Rect::new(panel.x + 32., y, inner, title_height),
+        title_style,
+        WHITE,
+        false,
+    );
+    y += title_height + 10.;
+    out.text(
+        version,
+        Rect::new(panel.x + 32., y, inner, version_height),
+        version_style,
+        c(0xffffff, 0.62),
+        false,
+    );
 }
 
 fn settings_surface(out: &mut Scene, rect: Rect, radius: f32) {

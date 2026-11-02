@@ -186,3 +186,102 @@ fn rows_scrolled_under_the_title_are_masked_and_cannot_be_clicked() {
             .any(|d| matches!(d, Draw::Clip(Some(r)) if r.y == 214.))
     );
 }
+
+fn test_assets() -> view::Assets {
+    view::Assets {
+        root: PathBuf::new(),
+        version: "test".into(),
+        metrics: BTreeMap::new(),
+        artwork: crate::app_artwork::Service::new(false),
+    }
+}
+
+/// The scene as the app draws it: with Home, small, in Settings' preview.
+fn previewed(state: &mut State) -> view::Scene {
+    let mut scene = scene(state);
+    view::home_preview(
+        &mut scene,
+        state,
+        &test_assets(),
+        time::OffsetDateTime::UNIX_EPOCH,
+    );
+    scene
+}
+
+fn text_in(scene: &view::Scene, needle: &str) -> Option<(Rect, TextStyle)> {
+    scene.draw.iter().find_map(|draw| match draw {
+        Draw::Text(text, rect, style, ..) if text == needle => Some((*rect, *style)),
+        _ => None,
+    })
+}
+
+/// The greeting at the scenes' time, midnight UTC.
+fn greeting_text(state: &State) -> String {
+    crate::i18n::Language::En.greeting(0, &state.preferences.greeting_name)
+}
+
+const K: f32 = 776. / 1920.;
+
+#[test]
+fn general_and_widgets_show_home_small_beside_the_list() {
+    for section in [0, WIDGETS_SECTION] {
+        let mut state = settings(section);
+        let scene = previewed(&mut state);
+        let (rect, style) =
+            text_in(&scene, &greeting_text(&state)).expect("Home's greeting in the preview");
+        assert!((style.size - 76. * K).abs() < 0.01, "{}", style.size);
+        assert!(rect.x >= 1064. && rect.x + rect.w <= 1840., "{rect:?}");
+        assert!(rect.y >= 190. && rect.y <= 190. + 437., "{rect:?}");
+        let targets = |scene: &view::Scene| -> Vec<Target> {
+            scene.controls.iter().map(|c| c.target.clone()).collect()
+        };
+        assert_eq!(targets(&scene), targets(&super::scene(&state)), "the preview takes no focus");
+        // Settings' own state is back once the preview is drawn.
+        assert_eq!(state.page, Page::Settings);
+        assert_eq!(state.focus, Target::Sidebar(section));
+    }
+    for section in [1, crate::state::SYSTEM_SECTION] {
+        let mut state = settings(section);
+        assert!(text_in(&previewed(&mut state), &greeting_text(&state)).is_none());
+    }
+}
+
+#[test]
+fn the_preview_rings_the_part_the_focused_setting_changes() {
+    let mut state = settings(0);
+    state.focus = Target::Setting(1); // Clock
+    let mut home = ready();
+    home.focus = Target::Nav(0);
+    home.pointer = true;
+    let clock = scene(&home)
+        .regions
+        .iter()
+        .find(|(region, _)| *region == view::Region::Clock)
+        .map(|(_, rect)| *rect)
+        .expect("Home marks its clock");
+    let clock = Rect::new(1064. + clock.x * K, 190. + clock.y * K, clock.w * K, clock.h * K);
+    let scene = previewed(&mut state);
+    assert!(scene.draw.iter().any(|draw| matches!(draw,
+        Draw::Shape(r, _, width, _) if *width >= 2.
+            && r.x < clock.x && r.y < clock.y
+            && r.x + r.w > clock.x + clock.w && r.y + r.h > clock.y + clock.h
+            && r.w < clock.w + 40.
+    )));
+}
+
+#[test]
+fn system_summarises_luma_and_its_updates_on_the_right() {
+    let mut state = settings(crate::state::SYSTEM_SECTION);
+    state.panel_started = None;
+    let drawn = texts(&state);
+    let version = crate::i18n::Language::En.format("currentVersion", &[("current", "test")]);
+    assert!(
+        drawn.iter().any(|(text, rect, _)| *text == version && rect.x >= 1064.),
+        "the version sits in the summary on the right"
+    );
+    let check = controls(&state)
+        .into_iter()
+        .find(|c| c.target == Target::CheckUpdates)
+        .unwrap();
+    assert_eq!(xywh(check.rect), (196., 224., 820., 68.));
+}

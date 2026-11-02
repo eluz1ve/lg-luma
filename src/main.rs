@@ -483,11 +483,14 @@ fn compose(
     now: OffsetDateTime,
 ) -> view::Scene {
     let scene = view::scene_with_pill(state, assets, pill, width, now);
-    if !state.pointer && state.overlay.is_none() && state.reveal_focus(&scene.controls) {
-        view::scene_with_pill(state, assets, pill, width, now)
-    } else {
-        scene
-    }
+    let mut scene =
+        if !state.pointer && state.overlay.is_none() && state.reveal_focus(&scene.controls) {
+            view::scene_with_pill(state, assets, pill, width, now)
+        } else {
+            scene
+        };
+    view::home_preview(&mut scene, state, assets, now);
+    scene
 }
 
 fn wallpaper_upload_active(state: &State, webos: bool, focused: bool, visible: bool) -> bool {
