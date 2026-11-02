@@ -18,10 +18,10 @@ use time::OffsetDateTime;
 
 use crate::layout::{
     CONTENT_TOP, GALLERY_COLUMNS, GALLERY_GAP_X, GALLERY_GAP_Y, GALLERY_TILE_HEIGHT,
-    GALLERY_TILE_WIDTH, GALLERY_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, PREVIEW_HEIGHT,
-    PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT, ROW_SPACING, SAFE_X,
-    SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH, column as column_width,
-    type_scale,
+    GALLERY_TILE_WIDTH, GALLERY_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X,
+    PREVIEW_HEIGHT, PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT, ROW_SPACING,
+    SAFE_X, SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH,
+    column as column_width, type_scale,
 };
 
 const MAIN_TOP: f32 = 108.8;
@@ -1953,7 +1953,12 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
     out.text(
         language.t("showsSource"),
-        Rect::new(LIST_X + 24., LIST_TOP + 2. * LIST_PITCH + 6. - s, LIST_WIDTH - 48., 56.),
+        Rect::new(
+            LIST_X + 24.,
+            LIST_TOP + 2. * LIST_PITCH + 6. - s,
+            LIST_WIDTH - 48.,
+            56.,
+        ),
         text(type_scale::CAPTION, 450, 0.).shadow(),
         c(0xf5f5f5, 0.72),
         false,
@@ -3734,11 +3739,18 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         );
         x += 44.;
     }
-    let right = rect.x + rect.w - if row.chevron || row.selected { 56. } else { 24. };
+    let right = rect.x + rect.w
+        - if row.chevron || row.selected {
+            56.
+        } else {
+            24.
+        };
     let value_style = text(type_scale::SECONDARY, 450, 0.).right();
     let value_width = row.value.map_or(0., |value| {
         // `fit_text` keeps a pixel spare.
-        (assets.width(value, value_style) + 1.).ceil().min(rect.w * 0.45)
+        (assets.width(value, value_style) + 1.)
+            .ceil()
+            .min(rect.w * 0.45)
     });
     if let Some(value) = row.value {
         out.text(
@@ -4032,7 +4044,12 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * LIST_PITCH - s,
+                    LIST_WIDTH,
+                    ROW_HEIGHT,
+                ),
                 title: language.t(key),
                 icon: Some(icon),
                 value: Some(if layout {
@@ -4048,7 +4065,12 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
     }
     out.text(
         language.t("cs2Source"),
-        Rect::new(LIST_X + 24., LIST_TOP + 4. * LIST_PITCH + 6. - s, LIST_WIDTH - 48., 56.),
+        Rect::new(
+            LIST_X + 24.,
+            LIST_TOP + 4. * LIST_PITCH + 6. - s,
+            LIST_WIDTH - 48.,
+            56.,
+        ),
         text(type_scale::CAPTION, 450, 0.).shadow(),
         c(0xf5f5f5, 0.72),
         false,
@@ -4070,7 +4092,11 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.text(
             &place.name,
             Rect::new(rect.x + 68., y + 14., rect.w - 160., 31.),
-            assets.fit_text(&place.name, text(type_scale::BODY, 550, -0.02), rect.w - 160.),
+            assets.fit_text(
+                &place.name,
+                text(type_scale::BODY, 550, -0.02),
+                rect.w - 160.,
+            ),
             WHITE,
             false,
         );
@@ -4288,7 +4314,12 @@ fn gallery(out: &mut Scene, state: &State, assets: &Assets) {
     out.icon(
         assets,
         "upload",
-        Rect::new(rect.x + (rect.w - 32.) / 2., rect.y + rect.h / 2. - 44., 32., 32.),
+        Rect::new(
+            rect.x + (rect.w - 32.) / 2.,
+            rect.y + rect.h / 2. - 44.,
+            32.,
+            32.,
+        ),
         c(0xffffff, 0.86),
     );
     out.text(
@@ -4379,7 +4410,12 @@ fn gallery_action(
     } else {
         (c(0xf4f4f4, 0.92), c(0xffffff, 0.62), c(0xe4e4e4, 0.7))
     };
-    out.icon(assets, icon, Rect::new(rect.x + 20., rect.y + 16., 24., 24.), mark);
+    out.icon(
+        assets,
+        icon,
+        Rect::new(rect.x + 20., rect.y + 16., 24., 24.),
+        mark,
+    );
     let value_style = text(type_scale::SECONDARY, 450, 0.).right();
     let value_width = (assets.width(value, value_style) + 1.).ceil();
     let right = rect.x + rect.w - 24.;
@@ -4418,13 +4454,21 @@ fn dashed_border(out: &mut Scene, rect: Rect, radius: f32, color: Color) {
     for i in 0..across {
         let x = rect.x + from + i as f32 * (DASH + GAP);
         out.shape(Rect::new(x, rect.y, DASH, WIDTH), 1., color);
-        out.shape(Rect::new(x, rect.y + rect.h - WIDTH, DASH, WIDTH), 1., color);
+        out.shape(
+            Rect::new(x, rect.y + rect.h - WIDTH, DASH, WIDTH),
+            1.,
+            color,
+        );
     }
     let (down, from) = run(rect.h);
     for i in 0..down {
         let y = rect.y + from + i as f32 * (DASH + GAP);
         out.shape(Rect::new(rect.x, y, WIDTH, DASH), 1., color);
-        out.shape(Rect::new(rect.x + rect.w - WIDTH, y, WIDTH, DASH), 1., color);
+        out.shape(
+            Rect::new(rect.x + rect.w - WIDTH, y, WIDTH, DASH),
+            1.,
+            color,
+        );
     }
 }
 
@@ -4436,7 +4480,12 @@ fn preview_frame(out: &mut Scene, state: &State) {
     let language = state.preferences.language;
     out.text(
         language.t("previewTitle").to_uppercase(),
-        Rect::new(PREVIEW.x, PREVIEW.y - 36., PREVIEW.w, type_scale::EYEBROW * 1.2),
+        Rect::new(
+            PREVIEW.x,
+            PREVIEW.y - 36.,
+            PREVIEW.w,
+            type_scale::EYEBROW * 1.2,
+        ),
         text(type_scale::EYEBROW, 600, 0.12).shadow(),
         c(0xf5f5f5, 0.72),
         false,
@@ -4476,9 +4525,7 @@ fn preview_region(state: &State) -> Option<Region> {
     }
     match state.focus {
         Target::Setting(0) | Target::Widget(2) => Some(Region::Favorites),
-        Target::Setting(index) if index == crate::state::FOCUS_GLOW_ROW => {
-            Some(Region::Favorites)
-        }
+        Target::Setting(index) if index == crate::state::FOCUS_GLOW_ROW => Some(Region::Favorites),
         Target::Setting(1) => Some(Region::Clock),
         Target::Widget(4) => Some(Region::Date),
         Target::Widget(0) => Some(Region::Greeting),
@@ -4633,9 +4680,7 @@ fn breadcrumb(state: &State) -> Vec<&str> {
     let mut path = vec![language.t(SECTIONS[state.section.min(SECTIONS.len() - 1)].0)];
     match &state.subpage {
         Some(Subpage::DateFormat) => path.extend([language.t("date"), language.t("dateFormat")]),
-        Some(Subpage::ClockFormat) => {
-            path.extend([language.t("clock"), language.t("clockFormat")])
-        }
+        Some(Subpage::ClockFormat) => path.extend([language.t("clock"), language.t("clockFormat")]),
         Some(Subpage::TimeFormat) => path.extend([language.t("clock"), language.t("timeFormat")]),
         Some(Subpage::WeatherLocation) => {
             path.extend([language.t("weather"), language.t("location")])
@@ -5117,7 +5162,14 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     })),
                     false,
                 ),
-                (5, language.t("quitApp"), "quitAppAbout", "power", None, false),
+                (
+                    5,
+                    language.t("quitApp"),
+                    "quitAppAbout",
+                    "power",
+                    None,
+                    false,
+                ),
                 (
                     crate::state::HOME_TAKEOVER_ROW,
                     language.t("homeTakeover"),
@@ -5201,7 +5253,12 @@ fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target: Target::InputMode(input.id.clone()),
-                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * TWO_LINE_PITCH - s, LIST_WIDTH, ROW_GROWN),
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * TWO_LINE_PITCH - s,
+                    LIST_WIDTH,
+                    ROW_GROWN,
+                ),
                 title: state.preferences.input_title(input),
                 icon: Some(&format!(
                     "input-{}",
@@ -5269,7 +5326,12 @@ fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::GreetingName,
-            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - state.scroll, LIST_WIDTH, ROW_GROWN),
+            rect: Rect::new(
+                LIST_X,
+                LIST_TOP + LIST_PITCH - state.scroll,
+                LIST_WIDTH,
+                ROW_GROWN,
+            ),
             title: language.t("name"),
             icon: Some("type"),
             value: None,
@@ -5285,7 +5347,12 @@ fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::GreetingNameClear,
-            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH + TWO_LINE_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
+            rect: Rect::new(
+                LIST_X,
+                LIST_TOP + LIST_PITCH + TWO_LINE_PITCH - state.scroll,
+                LIST_WIDTH,
+                ROW_HEIGHT,
+            ),
             title: language.t("clearName"),
             icon: Some("refresh"),
             value: None,
@@ -5344,7 +5411,12 @@ fn date_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * LIST_PITCH - state.scroll,
+                    LIST_WIDTH,
+                    ROW_HEIGHT,
+                ),
                 title: language.t(title),
                 icon: None,
                 value: Some(value),
@@ -5387,7 +5459,12 @@ fn clock_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * LIST_PITCH - state.scroll,
+                    LIST_WIDTH,
+                    ROW_HEIGHT,
+                ),
                 title: language.t(key),
                 icon: None,
                 value: Some(value),
@@ -5427,7 +5504,12 @@ fn app_name_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * LIST_PITCH - state.scroll,
+                    LIST_WIDTH,
+                    ROW_HEIGHT,
+                ),
                 title: language.t(title),
                 icon: None,
                 value: Some(value),
@@ -5521,7 +5603,12 @@ fn system_summary(out: &mut Scene, state: &State, assets: &Assets) {
     );
     out.text(
         "LUMA",
-        Rect::new(PREVIEW.x, PREVIEW.y - 36., PREVIEW.w, type_scale::EYEBROW * 1.2),
+        Rect::new(
+            PREVIEW.x,
+            PREVIEW.y - 36.,
+            PREVIEW.w,
+            type_scale::EYEBROW * 1.2,
+        ),
         text(type_scale::EYEBROW, 600, 0.12).shadow(),
         c(0xf5f5f5, 0.72),
         false,
@@ -5574,7 +5661,12 @@ fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
         );
     }
     if tiles.is_empty() {
-        let rect = Rect::new(LIST_X, LIST_TOP + LIST_PITCH - state.scroll, LIST_WIDTH, 220.);
+        let rect = Rect::new(
+            LIST_X,
+            LIST_TOP + LIST_PITCH - state.scroll,
+            LIST_WIDTH,
+            220.,
+        );
         settings_surface(out, rect, 20.);
         out.icon(
             assets,

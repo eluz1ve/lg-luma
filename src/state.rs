@@ -2048,9 +2048,10 @@ impl State {
                     Direction::Right => self.focus(Target::WallpaperCycle, controls),
                     Direction::Left => self.focus(Target::Sidebar(self.section), controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Down => {
-                        self.focus(self.gallery_target(2.min(self.gallery_slots() - 1)), controls)
-                    }
+                    Direction::Down => self.focus(
+                        self.gallery_target(2.min(self.gallery_slots() - 1)),
+                        controls,
+                    ),
                 }
                 return vec![];
             }
@@ -2059,9 +2060,10 @@ impl State {
                     Direction::Right => {}
                     Direction::Left => self.focus(Target::WallpaperGradient, controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Down => {
-                        self.focus(self.gallery_target(3.min(self.gallery_slots() - 1)), controls)
-                    }
+                    Direction::Down => self.focus(
+                        self.gallery_target(3.min(self.gallery_slots() - 1)),
+                        controls,
+                    ),
                 }
                 return vec![];
             }

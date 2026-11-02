@@ -82,12 +82,13 @@ fn the_page_title_names_the_section_and_the_subpage_path() {
         ["Widgets", "Weather"]
     );
     assert_eq!(titles[0].1.x, 196.);
-    assert!(titles.iter().all(|(_, _, style)| style.shadow && style.weight == 600));
-    // The path is the page's title now, not a label inside the sidebar.
-    assert_eq!(
-        texts(&state).iter().filter(|t| t.0 == "Weather").count(),
-        1
+    assert!(
+        titles
+            .iter()
+            .all(|(_, _, style)| style.shadow && style.weight == 600)
     );
+    // The path is the page's title now, not a label inside the sidebar.
+    assert_eq!(texts(&state).iter().filter(|t| t.0 == "Weather").count(), 1);
 }
 
 /// The main sections' rows, in the order they are drawn.
@@ -114,7 +115,10 @@ fn rows_fill_the_820_list_under_the_title() {
     let rows = setting_rects(&state);
     assert_eq!(rows[0], (196., 224., 820., 68.));
     assert_eq!(rows[1].1 - rows[0].1, 78.);
-    assert!(rows.iter().all(|row| row.0 == 196. && row.2 == 820. && row.3 == 68.));
+    assert!(
+        rows.iter()
+            .all(|row| row.0 == 196. && row.2 == 820. && row.3 == 68.)
+    );
 }
 
 #[test]
@@ -132,7 +136,10 @@ fn the_focused_row_grows_to_show_its_description() {
         .find(|t| t.0 == english.t("clockAbout"))
         .expect("the focused row describes itself");
     assert_eq!(style.size, 22.);
-    assert!(rect.y > rows[1].1 + 40. && rect.y + rect.h <= rows[1].1 + 104., "{rect:?}");
+    assert!(
+        rect.y > rows[1].1 + 40. && rect.y + rect.h <= rows[1].1 + 104.,
+        "{rect:?}"
+    );
     assert!(!drawn.iter().any(|t| t.0 == english.t("languageAbout")));
 }
 
@@ -150,7 +157,10 @@ fn values_sit_at_the_right_edge_of_the_list_and_titles_stop_before_them() {
         let (_, value_rect, value_style) = drawn.iter().find(|t| t.0 == value).unwrap();
         assert_eq!(value_style.size, 24.);
         let right = value_rect.x + value_rect.w;
-        assert!(right <= 1016. - 24. && right >= 1016. - 80., "{value}: {right}");
+        assert!(
+            (1016. - 80. ..=1016. - 24.).contains(&right),
+            "{value}: {right}"
+        );
         let (_, title_rect, title_style) = drawn.iter().find(|t| t.0 == title).unwrap();
         assert!(
             title_rect.x + measured(title, *title_style) <= right - measured(value, *value_style),
@@ -235,7 +245,11 @@ fn general_and_widgets_show_home_small_beside_the_list() {
         let targets = |scene: &view::Scene| -> Vec<Target> {
             scene.controls.iter().map(|c| c.target.clone()).collect()
         };
-        assert_eq!(targets(&scene), targets(&super::scene(&state)), "the preview takes no focus");
+        assert_eq!(
+            targets(&scene),
+            targets(&super::scene(&state)),
+            "the preview takes no focus"
+        );
         // Settings' own state is back once the preview is drawn.
         assert_eq!(state.page, Page::Settings);
         assert_eq!(state.focus, Target::Sidebar(section));
@@ -259,7 +273,12 @@ fn the_preview_rings_the_part_the_focused_setting_changes() {
         .find(|(region, _)| *region == view::Region::Clock)
         .map(|(_, rect)| *rect)
         .expect("Home marks its clock");
-    let clock = Rect::new(1064. + clock.x * K, 190. + clock.y * K, clock.w * K, clock.h * K);
+    let clock = Rect::new(
+        1064. + clock.x * K,
+        190. + clock.y * K,
+        clock.w * K,
+        clock.h * K,
+    );
     let scene = previewed(&mut state);
     assert!(scene.draw.iter().any(|draw| matches!(draw,
         Draw::Shape(r, _, width, _) if *width >= 2.
@@ -276,7 +295,9 @@ fn system_summarises_luma_and_its_updates_on_the_right() {
     let drawn = texts(&state);
     let version = crate::i18n::Language::En.format("currentVersion", &[("current", "test")]);
     assert!(
-        drawn.iter().any(|(text, rect, _)| *text == version && rect.x >= 1064.),
+        drawn
+            .iter()
+            .any(|(text, rect, _)| *text == version && rect.x >= 1064.),
         "the version sits in the summary on the right"
     );
     let check = controls(&state)
@@ -297,7 +318,10 @@ fn control(state: &State, target: Target) -> Rect {
 #[test]
 fn the_gallery_fills_four_columns_with_upload_last() {
     let state = settings(1);
-    assert_eq!(xywh(control(&state, Target::Background(0))), (196., 236., 390., 219.));
+    assert_eq!(
+        xywh(control(&state, Target::Background(0))),
+        (196., 236., 390., 219.)
+    );
     assert_eq!(control(&state, Target::Background(1)).x, 614.);
     assert_eq!(control(&state, Target::Background(4)).y, 487.);
     let n = state.background_count();
@@ -321,15 +345,39 @@ fn the_gallery_fills_four_columns_with_upload_last() {
 fn the_remote_moves_on_the_four_column_grid() {
     let mut state = settings(1);
     let routes = [
-        (Target::Background(0), Direction::Down, Target::Background(4)),
+        (
+            Target::Background(0),
+            Direction::Down,
+            Target::Background(4),
+        ),
         (Target::Background(4), Direction::Up, Target::Background(0)),
-        (Target::Background(0), Direction::Up, Target::WallpaperGradient),
+        (
+            Target::Background(0),
+            Direction::Up,
+            Target::WallpaperGradient,
+        ),
         (Target::Background(3), Direction::Up, Target::WallpaperCycle),
         (Target::Background(4), Direction::Left, Target::Sidebar(1)),
-        (Target::Background(3), Direction::Right, Target::Background(4)),
-        (Target::WallpaperGradient, Direction::Down, Target::Background(2)),
-        (Target::WallpaperCycle, Direction::Down, Target::Background(3)),
-        (Target::WallpaperGradient, Direction::Left, Target::Sidebar(1)),
+        (
+            Target::Background(3),
+            Direction::Right,
+            Target::Background(4),
+        ),
+        (
+            Target::WallpaperGradient,
+            Direction::Down,
+            Target::Background(2),
+        ),
+        (
+            Target::WallpaperCycle,
+            Direction::Down,
+            Target::Background(3),
+        ),
+        (
+            Target::WallpaperGradient,
+            Direction::Left,
+            Target::Sidebar(1),
+        ),
     ];
     for (from, direction, to) in routes {
         state.focus = from.clone();
@@ -369,7 +417,12 @@ fn the_gallery_scrolls_under_its_title_through_a_mask() {
     let drawn = scene(&state);
     let viewport = state.backgrounds_viewport();
     assert!(viewport.y > 206. && viewport.y < 236.);
-    assert!(drawn.draw.iter().any(|d| matches!(d, Draw::Clip(Some(r)) if r.y == viewport.y)));
+    assert!(
+        drawn
+            .draw
+            .iter()
+            .any(|d| matches!(d, Draw::Clip(Some(r)) if r.y == viewport.y))
+    );
     let first = control(&state, Target::Background(0));
     assert!(first.y + first.h < viewport.y);
     assert_ne!(

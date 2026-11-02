@@ -1051,7 +1051,10 @@ fn system_version_is_in_the_summary_without_a_separate_row() {
             if label == "Current version: test" && rect.x > PREVIEW_X && style.size == 24.
                 && style.weight == 450 && color[3] == 0.62
     )));
-    assert_eq!(state.hit_test(&system.controls, PREVIEW_X + 100., PREVIEW_Y + 60.), None);
+    assert_eq!(
+        state.hit_test(&system.controls, PREVIEW_X + 100., PREVIEW_Y + 60.),
+        None
+    );
     state.focus = Target::Sidebar(crate::state::SYSTEM_SECTION);
     state.direction(Direction::Right, &system.controls);
     assert_eq!(state.focus, Target::CheckUpdates);

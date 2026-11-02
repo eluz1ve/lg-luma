@@ -271,7 +271,10 @@ fn upload_is_modal_and_close_restores_its_exact_parent() {
     assert_eq!(state.section, 1);
     // The upload tile is the gallery's last: up is the tile above it.
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Background(state.background_count() - 4));
+    assert_eq!(
+        state.focus,
+        Target::Background(state.background_count() - 4)
+    );
 }
 
 #[test]
