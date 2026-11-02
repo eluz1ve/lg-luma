@@ -598,22 +598,26 @@ fn preferences_round_trip_and_corrupt_data_is_not_silently_overwritten() {
 #[test]
 fn gallery_and_grid_navigation_scroll_to_keep_focus_visible() {
     let mut state = ready();
-    state.set_wallpapers(vec![crate::wallpapers::Wallpaper {
-        id: "custom-00000000000000000000000000000001".into(),
-        directory: PathBuf::from("/preview/wallpapers/custom-00000000000000000000000000000001"),
-        has_original: true,
-        frames: Vec::new(),
-    }]);
+    state.set_wallpapers(
+        (1..=2)
+            .map(|index| crate::wallpapers::Wallpaper {
+                id: format!("custom-{index:032x}"),
+                directory: PathBuf::from(format!("/preview/wallpapers/custom-{index:032x}")),
+                has_original: true,
+                frames: Vec::new(),
+            })
+            .collect(),
+    );
     state.open(2);
     state.section = crate::state::BACKGROUND_SECTION;
     state.focus = Target::Background(0);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(3));
+    assert_eq!(state.focus, Target::Background(4));
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(6));
+    assert_eq!(state.focus, Target::Background(8));
     assert_eq!(state.scroll, 0., "the first three gallery rows fit");
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(9));
+    assert_eq!(state.focus, Target::UploadWallpaper);
     assert!(state.scroll > 0., "the fourth gallery row must scroll");
     let control = controls(&state)
         .into_iter()
@@ -1179,29 +1183,29 @@ fn input_visibility_has_explicit_choices_and_returns_to_the_same_input() {
 }
 
 #[test]
-fn background_sidebar_right_focuses_upload_and_ok_restores_the_applied_background() {
+fn background_sidebar_right_focuses_the_applied_background_and_ok_restores_it() {
     let mut state = ready();
     state.open(2);
     state.preferences.background = "forest".into();
     state.focus = Target::Sidebar(crate::state::BACKGROUND_SECTION);
     state.section = crate::state::BACKGROUND_SECTION;
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::UploadWallpaper);
+    assert_eq!(state.focus, Target::Background(6));
     assert_eq!(state.preferences.background, "forest");
     assert!(!state.preferences.wallpaper_cycle);
     assert!(state.overlay.is_none());
-    state.direction(Direction::Right, &controls(&state));
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Background(2));
+    state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperGradient);
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperCycle);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperGradient);
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::UploadWallpaper);
-    state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(1));
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::UploadWallpaper);
+    assert_eq!(state.focus, Target::Background(6));
     state.back();
     state.activate();
     assert_eq!(state.focus, Target::Background(6));

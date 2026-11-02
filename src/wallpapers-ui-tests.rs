@@ -11,7 +11,7 @@ fn custom(index: u32) -> Wallpaper {
 }
 
 #[test]
-fn upload_sits_left_of_rotation_and_both_remain_fixed_in_every_language() {
+fn gallery_switches_sit_right_of_the_title_and_stay_fixed_in_every_language() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
@@ -19,33 +19,17 @@ fn upload_sits_left_of_rotation_and_both_remain_fixed_in_every_language() {
         state.preferences.language = language;
         state.scroll = 0.;
         let before = controls(&state);
-        let cycle = before
-            .iter()
-            .find(|c| c.target == Target::WallpaperCycle)
-            .unwrap()
-            .rect;
-        let upload = before
-            .iter()
-            .find(|c| c.target == Target::UploadWallpaper)
-            .unwrap()
-            .rect;
-        assert!(cycle.x >= 640.);
-        let gradient = before
-            .iter()
-            .find(|c| c.target == Target::WallpaperGradient)
-            .unwrap()
-            .rect;
-        assert!(upload.x >= 640., "{}: {}", language.code(), upload.x);
-        assert_eq!(upload.x + upload.w + 20., gradient.x);
-        assert_eq!(gradient.x + gradient.w + 20., cycle.x);
-        assert_eq!(cycle.y, upload.y);
+        let at = |target: Target| before.iter().find(|c| c.target == target).unwrap().rect;
+        let cycle = at(Target::WallpaperCycle);
+        let gradient = at(Target::WallpaperGradient);
+        assert_eq!(cycle.x + cycle.w, 1840.);
+        assert_eq!(gradient.x + gradient.w + 16., cycle.x);
+        assert!(gradient.x >= 640., "{}: {}", language.code(), gradient.x);
+        assert_eq!((cycle.y, cycle.h), (148., 56.));
+        assert_eq!(cycle.y, gradient.y);
         state.scroll = 500.;
         let after = controls(&state);
-        for target in [
-            Target::WallpaperCycle,
-            Target::WallpaperGradient,
-            Target::UploadWallpaper,
-        ] {
+        for target in [Target::WallpaperCycle, Target::WallpaperGradient] {
             let old = before.iter().find(|c| c.target == target).unwrap();
             let new = after.iter().find(|c| c.target == target).unwrap();
             assert_eq!(
@@ -62,16 +46,14 @@ fn cycling_button_toggles_on_off_without_opening_a_page_or_moving_controls() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
-    state.focus = Target::UploadWallpaper;
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::WallpaperGradient);
+    state.focus = Target::WallpaperGradient;
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperCycle);
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperGradient);
     state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.focus, Target::UploadWallpaper);
-    state.direction(Direction::Right, &controls(&state));
+    assert_eq!(state.focus, Target::Sidebar(1));
+    state.focus = Target::WallpaperGradient;
     state.direction(Direction::Right, &controls(&state));
     assert!(!state.preferences.wallpaper_cycle);
     state.scroll = 300.;
@@ -123,8 +105,8 @@ fn cycling_button_toggles_on_off_without_opening_a_page_or_moving_controls() {
             })
             .unwrap();
         assert!(style.align_right);
-        assert!((value.x - title.x - title.w - 24.).abs() < 0.001);
-        assert!((button.x + button.w - value.x - value.w - 24.2).abs() < 0.001);
+        assert!((value.x - title.x - title.w - 12.).abs() < 0.001);
+        assert!((button.x + button.w - value.x - value.w - 24.).abs() < 0.001);
         for (old, new) in before.iter().zip(&enabled.controls) {
             assert_eq!(old.target, new.target);
             assert_eq!(
@@ -174,7 +156,7 @@ fn gradient_toggle_is_saved_stable_and_switches_bundled_and_uploaded_images() {
         );
     }
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(1));
+    assert_eq!(state.focus, Target::Background(2));
     state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::WallpaperGradient);
     let item = custom(1);
@@ -271,8 +253,8 @@ fn upload_is_modal_and_close_restores_its_exact_parent() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
-    state.focus = Target::Background(0);
-    state.direction(Direction::Up, &controls(&state));
+    state.focus = Target::Background(state.background_count() - 1);
+    state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::UploadWallpaper);
     assert!(state.activate().is_empty());
     assert!(matches!(state.overlay, Some(Overlay::WallpaperUpload)));
@@ -287,8 +269,9 @@ fn upload_is_modal_and_close_restores_its_exact_parent() {
     assert!(state.overlay.is_none());
     assert_eq!(state.focus, Target::UploadWallpaper);
     assert_eq!(state.section, 1);
-    state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(0));
+    // The upload tile is the gallery's last: up is the tile above it.
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Background(state.background_count() - 4));
 }
 
 #[test]
@@ -371,32 +354,19 @@ fn upload_instructions_are_ordered_and_only_the_displayed_url_loses_its_slash() 
 }
 
 #[test]
-fn upload_button_is_compact_and_rotation_is_right_aligned_in_every_language() {
+fn upload_tile_names_itself_inside_the_tile_in_every_language() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
     for language in crate::i18n::Language::ALL {
         state.preferences.language = language;
         let rendered = scene(&state);
-        let gallery = &rendered.controls;
-        let upload = gallery
+        let upload = rendered
+            .controls
             .iter()
             .find(|c| c.target == Target::UploadWallpaper)
-            .unwrap()
-            .rect;
-        let right_card = gallery
-            .iter()
-            .find(|c| c.target == Target::Background(2))
-            .unwrap()
-            .rect;
-        let cycle = gallery
-            .iter()
-            .find(|c| c.target == Target::WallpaperCycle)
-            .unwrap()
-            .rect;
-        assert_eq!(cycle.x + cycle.w, right_card.x + right_card.w);
-        assert!((88. ..=520.).contains(&upload.w));
-        assert!(upload.y + upload.h < right_card.y);
+            .unwrap();
+        assert!(upload.scrollable);
         let title = rendered
             .draw
             .iter()
@@ -405,12 +375,17 @@ fn upload_button_is_compact_and_rotation_is_right_aligned_in_every_language() {
                 _ => None,
             })
             .unwrap();
-        assert!((upload.x + upload.w - title.x - title.w - 24.2).abs() < 0.01);
+        assert!(title.x >= upload.rect.x + 24.);
+        assert!(title.x + title.w <= upload.rect.x + upload.rect.w - 24.);
+        assert!(
+            title.y > upload.rect.y + upload.rect.h / 2.,
+            "the label sits under the icon"
+        );
     }
 }
 
 #[test]
-fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
+fn gallery_scrolls_under_fixed_switches_through_a_mask() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
@@ -420,7 +395,8 @@ fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
     assert!(state.scroll > 0.);
     let scrolled = scene(&state);
     for target in [
-        Target::UploadWallpaper,
+        Target::WallpaperCycle,
+        Target::WallpaperGradient,
         Target::Sidebar(0),
         Target::Sidebar(1),
         Target::Sidebar(crate::state::SYSTEM_SECTION),
@@ -437,31 +413,33 @@ fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
         );
         assert!(!new.scrollable);
     }
-    let old = before
-        .iter()
-        .find(|c| c.target == Target::Background(3))
-        .unwrap();
-    let new = scrolled
-        .controls
-        .iter()
-        .find(|c| c.target == Target::Background(3))
-        .unwrap();
-    assert_eq!(old.rect.y - new.rect.y, state.scroll);
-    assert!(!scrolled.draw.iter().any(|draw| matches!(
-        draw,
-        Draw::Clip(Some(_)) | Draw::EdgeFade(Some(_)) | Draw::EdgeFadeX(Some(_))
-    )));
+    for target in [Target::Background(3), Target::UploadWallpaper] {
+        let old = before.iter().find(|c| c.target == target).unwrap();
+        let new = scrolled
+            .controls
+            .iter()
+            .find(|c| c.target == target)
+            .unwrap();
+        assert_eq!(old.rect.y - new.rect.y, state.scroll);
+    }
+    let viewport = state.backgrounds_viewport();
+    assert!(
+        scrolled
+            .draw
+            .iter()
+            .any(|draw| matches!(draw, Draw::Clip(Some(rect)) if rect.y == viewport.y))
+    );
     let last_card = scrolled
         .draw
         .iter()
         .rposition(|draw| {
             matches!(draw,
-                Draw::Image(_, rect, ..) if rect.w == 360. && rect.h == 202.5
+                Draw::Image(_, rect, ..) if rect.w == 390. && rect.h == 219.
             )
         })
         .unwrap();
     // The sidebar, a column of icons while the gallery has focus, is drawn last of all.
-    for key in ["uploadWallpaper", "wallpaperCycle"] {
+    for key in ["wallpaperGradient", "wallpaperCycle"] {
         let label = state.preferences.language.t(key);
         let fixed = scrolled
             .draw
@@ -475,7 +453,7 @@ fn gallery_scrolls_behind_fixed_controls_without_clipping_or_fades() {
         assert!(fixed > last_card, "{key} must be drawn above the gallery");
     }
     let scroll = state.scroll;
-    state.wheel_scroll(&scrolled.controls, Some((300., 300.)), 0, -3);
+    state.wheel_scroll(&scrolled.controls, Some((300., 180.)), 0, -3);
     assert_eq!(state.scroll, scroll);
 }
 
@@ -502,13 +480,13 @@ fn scrolled_backgrounds_cannot_capture_upload_or_sidebar_pointer_hits() {
         Some(Target::Sidebar(1))
     );
     assert_eq!(
-        state.hit_test(&gallery, 900., 260.),
+        state.hit_test(&gallery, 400., 260.),
         Some(Target::Background(0))
     );
 }
 
 #[test]
-fn remote_background_focus_stays_below_the_fixed_upload_action() {
+fn remote_gallery_focus_stays_below_the_fixed_switches() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
@@ -518,7 +496,7 @@ fn remote_background_focus_stays_below_the_fixed_upload_action() {
         state.direction(Direction::Down, &controls(&state));
     }
     assert!(state.scroll > 0.);
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.direction(Direction::Up, &controls(&state));
         if matches!(state.focus, Target::Background(_)) {
             let gallery = controls(&state);
@@ -530,7 +508,7 @@ fn remote_background_focus_stays_below_the_fixed_upload_action() {
     }
     assert_eq!(state.focus, Target::Background(2));
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::WallpaperCycle);
+    assert_eq!(state.focus, Target::WallpaperGradient);
 }
 
 #[test]
@@ -538,21 +516,22 @@ fn custom_gallery_navigation_reveals_whole_cards_in_incomplete_rows() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
-    // With Apple TV last, eleven cards: the last row holds two.
-    state.set_wallpapers(vec![custom(1)]);
-    state.focus = Target::Background(8);
+    // With Apple TV last, twelve cards and the upload tile: the last row holds it alone.
+    state.set_wallpapers(vec![custom(1), custom(2)]);
+    state.focus = Target::Background(10);
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Background(9));
+    assert_eq!(state.focus, Target::Background(11));
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Background(10));
+    assert_eq!(state.focus, Target::UploadWallpaper);
     state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.focus, Target::Background(10));
+    assert_eq!(state.focus, Target::UploadWallpaper);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(10));
+    assert_eq!(state.focus, Target::UploadWallpaper);
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Background(7));
+    assert_eq!(state.focus, Target::Background(8));
+    state.focus = Target::Background(10);
     state.direction(Direction::Down, &controls(&state));
-    assert_eq!(state.focus, Target::Background(10));
+    assert_eq!(state.focus, Target::UploadWallpaper);
     let focused = controls(&state)
         .into_iter()
         .find(|c| c.target == state.focus)
@@ -655,7 +634,7 @@ fn background_popup_is_modal_lifts_the_same_thumbnail_and_restores_its_parent() 
             .collect::<Vec<_>>(),
         vec![Target::UseBackground, Target::DeleteBackground]
     );
-    assert!(popup.draw.iter().any(|draw| matches!(draw, Draw::Image(_, rect, ..) if rect.x == before.x && rect.y == before.y && rect.w == before.w && rect.h == 202.5)));
+    assert!(popup.draw.iter().any(|draw| matches!(draw, Draw::Image(_, rect, ..) if rect.x == before.x && rect.y == before.y && rect.w == before.w && rect.h == before.h)));
     state.direction(Direction::Down, &popup.controls);
     assert_eq!(state.focus, Target::DeleteBackground);
     state.activate();

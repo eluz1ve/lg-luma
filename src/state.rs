@@ -750,9 +750,33 @@ impl State {
         Rect::new(0., top, 1920., content.y + content.h - top)
     }
 
+    /// The background gallery, below its title and actions: tiles scrolled above it are masked
+    /// and cannot be clicked. It starts where the list's does, so a first-row ring is not faded.
     pub fn backgrounds_viewport(&self) -> Rect {
         let content = self.content_viewport();
-        Rect::new(620., 244.8, 1160., content.y + content.h - 244.8)
+        let top = crate::layout::LIST_TOP - 10.;
+        Rect::new(176., top, 1684., content.y + content.h - top)
+    }
+
+    /// The gallery's tiles: every background, then the upload tile.
+    pub fn gallery_slots(&self) -> usize {
+        self.background_count() + 1
+    }
+
+    pub fn gallery_target(&self, slot: usize) -> Target {
+        if slot < self.background_count() {
+            Target::Background(slot)
+        } else {
+            Target::UploadWallpaper
+        }
+    }
+
+    pub fn gallery_slot(&self, target: &Target) -> Option<usize> {
+        match target {
+            Target::Background(index) => Some(*index),
+            Target::UploadWallpaper => Some(self.background_count()),
+            _ => None,
+        }
     }
 
     pub fn hit_test(&self, controls: &[Control], x: f32, y: f32) -> Option<Target> {
@@ -763,7 +787,10 @@ impl State {
                 let viewport =
                     if self.page == Page::Home && matches!(control.target, Target::App(_)) {
                         self.favorites_viewport()
-                    } else if matches!(control.target, Target::Background(_)) {
+                    } else if matches!(
+                        control.target,
+                        Target::Background(_) | Target::UploadWallpaper
+                    ) {
                         self.backgrounds_viewport()
                     } else if self.page == Page::Apps {
                         self.apps_viewport()
@@ -806,7 +833,9 @@ impl State {
             let max = controls
                 .iter()
                 .filter(|c| {
-                    c.scrollable && (!backgrounds || matches!(c.target, Target::Background(_)))
+                    c.scrollable
+                        && (!backgrounds
+                            || matches!(c.target, Target::Background(_) | Target::UploadWallpaper))
                 })
                 .map(|c| c.rect.y + c.rect.h + self.scroll - bottom)
                 .fold(0., f32::max);
@@ -1005,8 +1034,8 @@ impl State {
                     && matches!(&self.focus, Target::App(id)
                         if self.apps().iter().position(|app| &app.id == id)
                             .is_some_and(|index| index < APPS_COLUMNS));
-                let top = if matches!(self.focus, Target::Background(_)) {
-                    self.backgrounds_viewport().y + 8.
+                let top = if matches!(self.focus, Target::Background(_) | Target::UploadWallpaper) {
+                    crate::layout::GALLERY_TOP
                 } else if apps {
                     // The bar has slid away: cards may rise to the safe area.
                     SAFE_TOP
@@ -1706,14 +1735,7 @@ impl State {
             }
             if let Target::Sidebar(index) = self.focus {
                 match direction {
-                    Direction::Right => {
-                        let entry = if self.section == 1 {
-                            Target::UploadWallpaper
-                        } else {
-                            self.section_entry()
-                        };
-                        self.focus(entry, controls);
-                    }
+                    Direction::Right => self.focus(self.section_entry(), controls),
                     Direction::Up => self.focus(
                         if index == 0 {
                             Target::Nav(2)
@@ -1997,62 +2019,38 @@ impl State {
                     return vec![];
                 }
             }
-            if let Target::Background(index) = self.focus {
-                match direction {
-                    Direction::Right if index + 1 < self.background_count() => {
-                        self.focus(Target::Background(index + 1), controls);
-                        return vec![];
+            if let Some(slot) = self.gallery_slot(&self.focus) {
+                const COLUMNS: usize = crate::layout::GALLERY_COLUMNS;
+                let slots = self.gallery_slots();
+                let next = match direction {
+                    Direction::Right => (slot + 1 < slots).then(|| self.gallery_target(slot + 1)),
+                    Direction::Left if slot % COLUMNS != 0 => Some(self.gallery_target(slot - 1)),
+                    Direction::Left => Some(Target::Sidebar(self.section)),
+                    Direction::Up if slot >= COLUMNS => Some(self.gallery_target(slot - COLUMNS)),
+                    Direction::Up if slot % COLUMNS == COLUMNS - 1 => Some(Target::WallpaperCycle),
+                    Direction::Up => Some(Target::WallpaperGradient),
+                    Direction::Down if slot + COLUMNS < slots => {
+                        Some(self.gallery_target(slot + COLUMNS))
                     }
-                    Direction::Right => return vec![],
-                    Direction::Left if index % 3 != 0 => {
-                        self.focus(Target::Background(index - 1), controls);
-                        return vec![];
+                    // A short last row: the last tile stands under the column.
+                    Direction::Down if (slot / COLUMNS + 1) * COLUMNS < slots => {
+                        Some(self.gallery_target(slots - 1))
                     }
-                    Direction::Up => {
-                        self.focus(
-                            if index == 2 {
-                                Target::WallpaperCycle
-                            } else if index == 1 {
-                                Target::WallpaperGradient
-                            } else if index < 3 {
-                                Target::UploadWallpaper
-                            } else {
-                                Target::Background(index - 3)
-                            },
-                            controls,
-                        );
-                        return vec![];
-                    }
-                    Direction::Down => {
-                        if (index / 3 + 1) * 3 < self.background_count() {
-                            self.focus(
-                                Target::Background((index + 3).min(self.background_count() - 1)),
-                                controls,
-                            );
-                        }
-                        return vec![];
-                    }
-                    _ => {}
-                }
-            }
-            if self.focus == Target::UploadWallpaper {
-                match direction {
-                    Direction::Down => self.focus(Target::Background(0), controls),
-                    Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Left => self.focus(Target::Sidebar(1), controls),
-                    Direction::Right => self.focus(Target::WallpaperGradient, controls),
+                    Direction::Down => None,
+                };
+                if let Some(next) = next {
+                    self.focus(next, controls);
                 }
                 return vec![];
             }
             if self.focus == Target::WallpaperGradient {
                 match direction {
                     Direction::Right => self.focus(Target::WallpaperCycle, controls),
-                    Direction::Left => self.focus(Target::UploadWallpaper, controls),
+                    Direction::Left => self.focus(Target::Sidebar(self.section), controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Down => self.focus(
-                        Target::Background(1.min(self.background_count().saturating_sub(1))),
-                        controls,
-                    ),
+                    Direction::Down => {
+                        self.focus(self.gallery_target(2.min(self.gallery_slots() - 1)), controls)
+                    }
                 }
                 return vec![];
             }
@@ -2061,10 +2059,9 @@ impl State {
                     Direction::Right => {}
                     Direction::Left => self.focus(Target::WallpaperGradient, controls),
                     Direction::Up => self.focus(Target::Nav(2), controls),
-                    Direction::Down => self.focus(
-                        Target::Background(2.min(self.background_count().saturating_sub(1))),
-                        controls,
-                    ),
+                    Direction::Down => {
+                        self.focus(self.gallery_target(3.min(self.gallery_slots() - 1)), controls)
+                    }
                 }
                 return vec![];
             }
@@ -2083,16 +2080,8 @@ impl State {
                     Target::Nav(_) | Target::Sidebar(_) | Target::TvSettings
                 )
             {
-                if let Target::Background(index) = self.focus {
-                    if index % 3 != 0 { /* left follows gallery order */
-                    } else {
-                        self.focus(Target::Sidebar(self.section), controls);
-                        return vec![];
-                    }
-                } else {
-                    self.focus(Target::Sidebar(self.section), controls);
-                    return vec![];
-                }
+                self.focus(Target::Sidebar(self.section), controls);
+                return vec![];
             }
         }
         let Some(current) = controls.iter().find(|c| c.target == self.focus) else {

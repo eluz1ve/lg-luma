@@ -17,7 +17,8 @@ use std::{
 use time::OffsetDateTime;
 
 use crate::layout::{
-    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, PREVIEW_HEIGHT,
+    CONTENT_TOP, GALLERY_COLUMNS, GALLERY_GAP_X, GALLERY_GAP_Y, GALLERY_TILE_HEIGHT,
+    GALLERY_TILE_WIDTH, GALLERY_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, PREVIEW_HEIGHT,
     PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT, ROW_SPACING, SAFE_X,
     SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH, column as column_width,
     type_scale,
@@ -778,7 +779,7 @@ pub fn scene_with_pill(
         let anchor = match overlay {
             Overlay::BackgroundOptions { id, .. } => out.controls.iter()
                 .find(|control| matches!(control.target, Target::Background(index) if state.background_id(index) == Some(id.as_str())))
-                .map(|control| Rect::new(control.rect.x, control.rect.y, control.rect.w, 202.5)),
+                .map(|control| control.rect),
             Overlay::Options { id, .. } => out
                 .controls
                 .iter()
@@ -3664,13 +3665,6 @@ struct Row<'a> {
     selected: bool,
     chevron: bool,
 }
-fn rotation_value_width(assets: &Assets, language: Language) -> f32 {
-    ["stateOn", "stateOff"]
-        .into_iter()
-        .map(|key| assets.width(language.t(key), text(18.4, 450, 0.)))
-        .fold(0., f32::max)
-        .ceil()
-}
 
 /// Settings rows one under another, from `top`: the focused one grows to show its description.
 fn list_rects(state: &State, top: f32, rows: &[(Target, bool)]) -> Vec<Rect> {
@@ -3803,134 +3797,6 @@ fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
         );
     }
     out.control(row.target, rect, true);
-}
-
-/// The gallery's actions above it (until they get their own look).
-fn gallery_row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
-    let focused = state.focus == row.target;
-    let bright = focused;
-    let radius = if row.description.is_some() { 20. } else { 48. };
-    if bright {
-        out.draw.push(Draw::RoundedGradient(
-            row.rect,
-            radius,
-            c(0xfafafa, 1.),
-            c(0xe5e5e5, 1.),
-        ));
-    } else {
-        settings_surface(out, row.rect, radius);
-    }
-    let color = if bright {
-        c(0x2c2c2c, 1.)
-    } else {
-        c(0xeeeeee, 0.73)
-    };
-    let mut x = row.rect.x + 24.2;
-    if let Some(icon) = row.icon {
-        out.icon(
-            assets,
-            icon,
-            Rect::new(x, row.rect.y + (row.rect.h - 23.2) / 2., 23.2, 23.2),
-            if bright {
-                c(0x444444, 1.)
-            } else {
-                c(0xe4e4e4, 0.61)
-            },
-        );
-        x += 39.2;
-    }
-    let title_y = row.rect.y
-        + if row.description.is_some() {
-            17.
-        } else {
-            (row.rect.h - 29.12) / 2.
-        };
-    let compact_value_width = matches!(
-        row.target,
-        Target::WallpaperCycle | Target::WallpaperGradient
-    )
-    .then(|| rotation_value_width(assets, state.preferences.language));
-    let right_inset = if let Some(width) = compact_value_width {
-        width + 24.2 + 24.
-    } else if row.value.is_some() {
-        210.
-    } else if matches!(row.target, Target::UploadWallpaper | Target::WallpaperCycle) {
-        24.2
-    } else {
-        64.
-    };
-    let title_width = row.rect.w - (x - row.rect.x) - right_inset;
-    let title_height = if row.description.is_some() {
-        assets.lines(row.title, text(20.8, 550, -0.02), title_width) as f32 * 29.12
-    } else {
-        29.12
-    };
-    out.text(
-        row.title,
-        Rect::new(x, title_y, title_width, title_height),
-        text(20.8, 550, -0.02).leading(1.4),
-        color,
-        false,
-    );
-    if let Some(description) = row.description {
-        out.text(
-            description,
-            Rect::new(
-                x,
-                title_y + title_height + 4.8,
-                row.rect.w - 100.,
-                (row.rect.h - 34. - title_height - 4.8).max(22.8),
-            ),
-            text(15.2, 400, 0.).leading(1.5),
-            if bright {
-                c(0x555555, 1.)
-            } else {
-                c(0xf5f5f5, 0.56)
-            },
-            false,
-        );
-    }
-    if let Some(value) = row.value {
-        let value_width = compact_value_width.unwrap_or(170.);
-        out.text(
-            value,
-            Rect::new(
-                row.rect.x + row.rect.w - value_width - 24.2 - if row.chevron { 34.4 } else { 0. },
-                row.rect.y + (row.rect.h - 23.) / 2.,
-                value_width,
-                24.,
-            ),
-            text(18.4, 450, 0.).right(),
-            if bright {
-                c(0x444444, 1.)
-            } else {
-                c(0xeeeeee, 0.73)
-            },
-            false,
-        );
-    }
-    if row.chevron || row.selected {
-        out.icon(
-            assets,
-            if row.selected { "check" } else { "right" },
-            Rect::new(
-                row.rect.x + row.rect.w - 42.6,
-                row.rect.y + (row.rect.h - 18.4) / 2.,
-                18.4,
-                18.4,
-            ),
-            if bright {
-                c(0x444444, 1.)
-            } else {
-                c(0xe4e4e4, 0.61)
-            },
-        );
-    }
-    let scrollable = !matches!(
-        row.target,
-        Target::UploadWallpaper | Target::WallpaperCycle | Target::WallpaperGradient
-    );
-    out.control(row.target, row.rect, scrollable);
 }
 
 fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -4347,7 +4213,12 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.draw.push(Draw::EdgeFade(None));
         out.draw.push(Draw::Clip(None));
     }
-    settings_title(out, state, assets, LIST_WIDTH);
+    let title_width = if list {
+        LIST_WIDTH
+    } else {
+        gallery_actions(state, assets)[1].1.x - 24. - LIST_X
+    };
+    settings_title(out, state, assets, title_width);
     match state.section {
         0 | WIDGETS_SECTION => preview_frame(out, state),
         SYSTEM_SECTION if state.subpage.is_none() => system_summary(out, state, assets),
@@ -4359,6 +4230,202 @@ fn settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.fade(start, 1., dim);
     }
     settings_sidebar(out, state, assets);
+}
+
+/// A gallery tile's place: four columns from the list's edge to the safe edge.
+fn gallery_rect(state: &State, slot: usize) -> Rect {
+    Rect::new(
+        LIST_X + (slot % GALLERY_COLUMNS) as f32 * (GALLERY_TILE_WIDTH + GALLERY_GAP_X),
+        GALLERY_TOP + (slot / GALLERY_COLUMNS) as f32 * (GALLERY_TILE_HEIGHT + GALLERY_GAP_Y)
+            - state.scroll,
+        GALLERY_TILE_WIDTH,
+        GALLERY_TILE_HEIGHT,
+    )
+}
+
+/// The Background page: every wallpaper as a tile under the title, upload last, with the two
+/// switches beside the title.
+fn gallery(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let viewport = state.backgrounds_viewport();
+    out.draw.push(Draw::Clip(Some(viewport)));
+    out.draw.push(Draw::EdgeFade(Some([
+        viewport.y,
+        GALLERY_TOP - 8.,
+        viewport.y + viewport.h - 40.,
+        viewport.y + viewport.h,
+    ])));
+    for index in 0..state.background_count() {
+        let id = state.background_id(index).unwrap();
+        let rect = gallery_rect(state, index);
+        out.shadow(rect, 16., 15., 3., 0.13);
+        background_card(out, assets, state, id, rect);
+        if id == crate::aerials::ID {
+            aerials_caption(out, assets, state, rect);
+        }
+        out.border(rect, 16., 1., c(0xffffff, 0.086));
+        if state.preferences.background == id {
+            out.border(rect.inset(-2.), 18., 2., c(0xdedede, 1.));
+            out.border(rect.inset(-7.), 23., 3., c(0xdedede, 0.10));
+            let check = Rect::new(rect.x + rect.w - 28., rect.y + rect.h - 28., 21.6, 21.6);
+            out.shape(check, 10.8, c(0xf3f3f3, 1.));
+            out.icon(assets, "check", check.inset(3.6), c(0x333333, 1.));
+        }
+        if state.focus == Target::Background(index) {
+            out.ring(rect, 16.);
+        }
+        out.control(Target::Background(index), rect, true);
+    }
+    let rect = gallery_rect(state, state.background_count());
+    let focused = state.focus == Target::UploadWallpaper;
+    if focused {
+        out.shape(rect, 16., c(0xffffff, 0.10));
+    }
+    dashed_border(out, rect, 16., c(0xffffff, 0.45));
+    let label = language.t("uploadWallpaper");
+    let style = text(type_scale::SECONDARY, 550, -0.01);
+    let width = rect.w - 48.;
+    out.icon(
+        assets,
+        "upload",
+        Rect::new(rect.x + (rect.w - 32.) / 2., rect.y + rect.h / 2. - 44., 32., 32.),
+        c(0xffffff, 0.86),
+    );
+    out.text(
+        label,
+        Rect::new(rect.x + 24., rect.y + rect.h / 2. + 4., width, 30.),
+        assets.fit_text(label, style, width),
+        c(0xffffff, 0.86),
+        true,
+    );
+    if focused {
+        out.ring(rect, 16.);
+    }
+    out.control(Target::UploadWallpaper, rect, true);
+    out.draw.push(Draw::EdgeFade(None));
+    out.draw.push(Draw::Clip(None));
+    for (target, rect, icon, title, value) in gallery_actions(state, assets) {
+        gallery_action(out, state, assets, target, rect, icon, title, value);
+    }
+}
+
+/// The gallery's switches, laid right to left from the safe edge: rotation, then the shade.
+fn gallery_actions(
+    state: &State,
+    assets: &Assets,
+) -> [(Target, Rect, &'static str, &'static str, &'static str); 2] {
+    let language = state.preferences.language;
+    let on_off = |on: bool| language.t(if on { "stateOn" } else { "stateOff" });
+    // Sized for the longer state, so a switch keeps its width when it flips; measured as
+    // `gallery_action` places it.
+    let value_width = ["stateOn", "stateOff"]
+        .map(|key| {
+            (assets.width(language.t(key), text(type_scale::SECONDARY, 450, 0.)) + 1.).ceil()
+        })
+        .into_iter()
+        .fold(0., f32::max);
+    let cycle = state.preferences.wallpaper_cycle;
+    let gradient = state.preferences.wallpaper_gradient;
+    let mut right = SAFE_X + WIDTH;
+    [
+        (
+            Target::WallpaperCycle,
+            if cycle { "refresh" } else { "refresh-off" },
+            language.t("wallpaperCycle"),
+            on_off(cycle),
+        ),
+        (
+            Target::WallpaperGradient,
+            if gradient { "eye" } else { "eye-off" },
+            language.t("wallpaperGradient"),
+            on_off(gradient),
+        ),
+    ]
+    .map(|(target, icon, title, value)| {
+        let title_width = assets.width(title, text(type_scale::SECONDARY, 550, -0.01));
+        let width = (20. + 24. + 12. + title_width + 12. + value_width + 24.)
+            .ceil()
+            .min(560.);
+        let rect = Rect::new(right - width, 148., width, 56.);
+        right = rect.x - 16.;
+        (target, rect, icon, title, value)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gallery_action(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    target: Target,
+    rect: Rect,
+    icon: &str,
+    title: &str,
+    value: &str,
+) {
+    let focused = state.focus == target;
+    if focused {
+        out.draw.push(Draw::RoundedGradient(
+            rect,
+            28.,
+            c(0xfafafa, 1.),
+            c(0xe5e5e5, 1.),
+        ));
+    } else {
+        settings_surface(out, rect, 28.);
+    }
+    let (ink, quiet, mark) = if focused {
+        (c(0x2c2c2c, 1.), c(0x2c2c2c, 0.62), c(0x444444, 1.))
+    } else {
+        (c(0xf4f4f4, 0.92), c(0xffffff, 0.62), c(0xe4e4e4, 0.7))
+    };
+    out.icon(assets, icon, Rect::new(rect.x + 20., rect.y + 16., 24., 24.), mark);
+    let value_style = text(type_scale::SECONDARY, 450, 0.).right();
+    let value_width = (assets.width(value, value_style) + 1.).ceil();
+    let right = rect.x + rect.w - 24.;
+    out.text(
+        value,
+        Rect::new(right - value_width, rect.y + 13.5, value_width, 29.),
+        value_style,
+        quiet,
+        false,
+    );
+    let x = rect.x + 56.;
+    let width = right - value_width - 12. - x;
+    out.text(
+        title,
+        Rect::new(x, rect.y + 13.5, width, 29.),
+        assets.fit_text(title, text(type_scale::SECONDARY, 550, -0.01), width),
+        ink,
+        false,
+    );
+    out.control(target, rect, false);
+}
+
+/// A dashed outline along a rounded rect's straight edges: 2 px dashes, 14 long and 10 apart,
+/// each edge's run centred between its corners.
+fn dashed_border(out: &mut Scene, rect: Rect, radius: f32, color: Color) {
+    const DASH: f32 = 14.;
+    const GAP: f32 = 10.;
+    const WIDTH: f32 = 2.;
+    let run = |length: f32| {
+        let room = length - 2. * radius;
+        let count = ((room + GAP) / (DASH + GAP)).floor().max(0.) as usize;
+        let used = count as f32 * (DASH + GAP) - GAP;
+        (count, radius + (room - used) / 2.)
+    };
+    let (across, from) = run(rect.w);
+    for i in 0..across {
+        let x = rect.x + from + i as f32 * (DASH + GAP);
+        out.shape(Rect::new(x, rect.y, DASH, WIDTH), 1., color);
+        out.shape(Rect::new(x, rect.y + rect.h - WIDTH, DASH, WIDTH), 1., color);
+    }
+    let (down, from) = run(rect.h);
+    for i in 0..down {
+        let y = rect.y + from + i as f32 * (DASH + GAP);
+        out.shape(Rect::new(rect.x, y, WIDTH, DASH), 1., color);
+        out.shape(Rect::new(rect.x + rect.w - WIDTH, y, WIDTH, DASH), 1., color);
+    }
 }
 
 const PREVIEW: Rect = Rect::new(PREVIEW_X, PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT);
@@ -4980,125 +5047,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 );
             }
         }
-        1 => {
-            let actions_start = out.draw.len();
-            let upload_label = language.t("uploadWallpaper");
-            let upload_width = (assets.width(upload_label, text(20.8, 550, -0.02)) + 88.)
-                .ceil()
-                .min(520.);
-            let cycle_label = language.t("wallpaperCycle");
-            let gradient_label = language.t("wallpaperGradient");
-            let gradient_width = (assets.width(gradient_label, text(20.8, 550, -0.02))
-                + rotation_value_width(assets, language)
-                + 111.6)
-                .ceil()
-                .min(360.);
-            let cycle_width = (assets.width(cycle_label, text(20.8, 550, -0.02))
-                + rotation_value_width(assets, language)
-                + 111.6)
-                .ceil()
-                .min(520.);
-            gallery_row(
-                out,
-                state,
-                assets,
-                Row {
-                    target: Target::WallpaperCycle,
-                    rect: Rect::new(1760. - cycle_width, 164.8, cycle_width, 64.),
-                    title: cycle_label,
-                    icon: Some(if state.preferences.wallpaper_cycle {
-                        "refresh"
-                    } else {
-                        "refresh-off"
-                    }),
-                    value: Some(language.t(if state.preferences.wallpaper_cycle {
-                        "stateOn"
-                    } else {
-                        "stateOff"
-                    })),
-                    description: None,
-                    selected: false,
-                    chevron: false,
-                },
-            );
-            gallery_row(
-                out,
-                state,
-                assets,
-                Row {
-                    target: Target::WallpaperGradient,
-                    rect: Rect::new(
-                        1760. - cycle_width - 20. - gradient_width,
-                        164.8,
-                        gradient_width,
-                        64.,
-                    ),
-                    title: gradient_label,
-                    icon: Some(if state.preferences.wallpaper_gradient {
-                        "eye"
-                    } else {
-                        "eye-off"
-                    }),
-                    value: Some(language.t(if state.preferences.wallpaper_gradient {
-                        "stateOn"
-                    } else {
-                        "stateOff"
-                    })),
-                    description: None,
-                    selected: false,
-                    chevron: false,
-                },
-            );
-            gallery_row(
-                out,
-                state,
-                assets,
-                Row {
-                    target: Target::UploadWallpaper,
-                    rect: Rect::new(
-                        1760. - cycle_width - 40. - gradient_width - upload_width,
-                        164.8,
-                        upload_width,
-                        64.,
-                    ),
-                    title: upload_label,
-                    icon: Some("upload"),
-                    value: None,
-                    description: None,
-                    selected: false,
-                    chevron: false,
-                },
-            );
-            // Fixed actions sit above the gallery, without cutting off scrolling cards.
-            let actions = out.draw.split_off(actions_start);
-            for index in 0..state.background_count() {
-                let id = state.background_id(index).unwrap();
-                let rect = Rect::new(
-                    640. + (index % 3) as f32 * 380.,
-                    252.8 + (index / 3) as f32 * 226.5 - s,
-                    360.,
-                    202.5,
-                );
-                out.shadow(rect, 16., 15., 3., 0.13);
-                background_card(out, assets, state, id, rect);
-                if id == crate::aerials::ID {
-                    aerials_caption(out, assets, state, rect);
-                }
-                out.border(rect, 16., 1., c(0xffffff, 0.086));
-                if state.preferences.background == id {
-                    out.border(rect.inset(-2.), 18., 2., c(0xdedede, 1.));
-                    out.border(rect.inset(-7.), 23., 3., c(0xdedede, 0.10));
-                    let check = Rect::new(rect.x + rect.w - 28., rect.y + rect.h - 28., 21.6, 21.6);
-                    out.shape(check, 10.8, c(0xf3f3f3, 1.));
-                    out.icon(assets, "check", check.inset(3.6), c(0x333333, 1.));
-                }
-                if state.focus == Target::Background(index) {
-                    out.ring(rect, 16.);
-                }
-                out.control(Target::Background(index), rect, true);
-            }
-            out.draw.extend(actions);
-        }
+        1 => gallery(out, state, assets),
         WIDGETS_SECTION => {
             let rows = [
                 (4, "date", "dateAbout", "clock"),
@@ -6285,33 +6234,36 @@ mod tests {
     }
 
     #[test]
-    fn upload_button_padding_tracks_the_label_in_every_language() {
+    fn gallery_switches_keep_their_width_when_they_flip_in_every_language() {
         let assets = assets();
         let mut state = State::new(Preferences::default());
         state.open(2);
         state.section = 1;
         for language in Language::ALL {
             state.preferences.language = language;
-            let label = language.t("uploadWallpaper");
-            let label_width = assets.width(label, text(20.8, 550, -0.02));
-            let mut scene = Scene::new();
-            settings(&mut scene, &state, &assets);
-            let button = scene
-                .controls
-                .iter()
-                .find(|control| control.target == Target::UploadWallpaper)
-                .unwrap()
-                .rect;
-            let title = scene
-                .draw
-                .iter()
-                .find_map(|draw| match draw {
-                    Draw::Text(value, rect, ..) if value == label => Some(rect),
-                    _ => None,
-                })
-                .unwrap();
-            let right_padding = button.x + button.w - title.x - label_width;
-            assert!((24.2..25.6).contains(&right_padding));
+            let mut widths = Vec::new();
+            for on in [false, true] {
+                state.preferences.wallpaper_cycle = on;
+                state.preferences.wallpaper_gradient = on;
+                let mut scene = Scene::new();
+                settings(&mut scene, &state, &assets);
+                widths.push(
+                    [Target::WallpaperCycle, Target::WallpaperGradient].map(|target| {
+                        scene
+                            .controls
+                            .iter()
+                            .find(|control| control.target == target)
+                            .unwrap()
+                            .rect
+                    }),
+                );
+            }
+            assert_eq!(
+                widths[0].map(|rect| (rect.x, rect.w)),
+                widths[1].map(|rect| (rect.x, rect.w)),
+                "{}",
+                language.code()
+            );
         }
     }
 
@@ -6322,7 +6274,7 @@ mod tests {
         state.open(2);
         state.section = 1;
         let label = state.preferences.language.t("wallpaperCycle");
-        let label_width = assets.width(label, text(20.8, 550, -0.02));
+        let label_width = assets.width(label, text(type_scale::SECONDARY, 550, -0.01));
         for enabled in [false, true] {
             state.preferences.wallpaper_cycle = enabled;
             let mut scene = Scene::new();
@@ -6357,9 +6309,9 @@ mod tests {
                 })
                 .unwrap();
             assert!(style.align_right);
-            assert!((button.x + button.w - value.x - value.w - 24.2).abs() < 0.001);
-            assert!((24. ..25.).contains(&(value.x - title.x - label_width)));
-            assert!(button.w < 320.);
+            assert!((button.x + button.w - value.x - value.w - 24.).abs() < 0.001);
+            assert!(value.x - title.x - label_width >= 12.);
+            assert!(button.w < 400.);
         }
     }
 

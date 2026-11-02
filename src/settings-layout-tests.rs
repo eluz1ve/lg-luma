@@ -285,3 +285,95 @@ fn system_summarises_luma_and_its_updates_on_the_right() {
         .unwrap();
     assert_eq!(xywh(check.rect), (196., 224., 820., 68.));
 }
+
+fn control(state: &State, target: Target) -> Rect {
+    controls(state)
+        .into_iter()
+        .find(|c| c.target == target)
+        .unwrap_or_else(|| panic!("{target:?} is drawn"))
+        .rect
+}
+
+#[test]
+fn the_gallery_fills_four_columns_with_upload_last() {
+    let state = settings(1);
+    assert_eq!(xywh(control(&state, Target::Background(0))), (196., 236., 390., 219.));
+    assert_eq!(control(&state, Target::Background(1)).x, 614.);
+    assert_eq!(control(&state, Target::Background(4)).y, 487.);
+    let n = state.background_count();
+    assert_eq!(
+        xywh(control(&state, Target::UploadWallpaper)),
+        (
+            196. + (n % 4) as f32 * 418.,
+            236. + (n / 4) as f32 * 251.,
+            390.,
+            219.
+        )
+    );
+    let cycle = control(&state, Target::WallpaperCycle);
+    let gradient = control(&state, Target::WallpaperGradient);
+    assert_eq!(cycle.x + cycle.w, 1840.);
+    assert!(gradient.x + gradient.w < cycle.x);
+    assert!(cycle.y + cycle.h < 236. - 16., "{cycle:?}");
+}
+
+#[test]
+fn the_remote_moves_on_the_four_column_grid() {
+    let mut state = settings(1);
+    let routes = [
+        (Target::Background(0), Direction::Down, Target::Background(4)),
+        (Target::Background(4), Direction::Up, Target::Background(0)),
+        (Target::Background(0), Direction::Up, Target::WallpaperGradient),
+        (Target::Background(3), Direction::Up, Target::WallpaperCycle),
+        (Target::Background(4), Direction::Left, Target::Sidebar(1)),
+        (Target::Background(3), Direction::Right, Target::Background(4)),
+        (Target::WallpaperGradient, Direction::Down, Target::Background(2)),
+        (Target::WallpaperCycle, Direction::Down, Target::Background(3)),
+        (Target::WallpaperGradient, Direction::Left, Target::Sidebar(1)),
+    ];
+    for (from, direction, to) in routes {
+        state.focus = from.clone();
+        let c = controls(&state);
+        state.direction(direction, &c);
+        assert_eq!(state.focus, to, "from {from:?}");
+        state.scroll = 0.;
+    }
+    state.focus = Target::Background(state.background_count() - 1);
+    let c = controls(&state);
+    state.direction(Direction::Right, &c);
+    assert_eq!(state.focus, Target::UploadWallpaper);
+    // The upload tile sits on the grid like any other.
+    let c = controls(&state);
+    state.direction(Direction::Up, &c);
+    assert!(matches!(state.focus, Target::Background(_)));
+}
+
+#[test]
+fn the_sidebar_enters_the_gallery_on_the_applied_background() {
+    let mut state = settings(1);
+    let c = controls(&state);
+    state.direction(Direction::Right, &c);
+    assert!(
+        matches!(state.focus, Target::Background(i)
+            if state.background_id(i) == Some(state.preferences.background.as_str())),
+        "{:?}",
+        state.focus
+    );
+}
+
+#[test]
+fn the_gallery_scrolls_under_its_title_through_a_mask() {
+    let mut state = settings(1);
+    // One row down: the first row has passed under the switches.
+    state.scroll = 251.;
+    let drawn = scene(&state);
+    let viewport = state.backgrounds_viewport();
+    assert!(viewport.y > 206. && viewport.y < 236.);
+    assert!(drawn.draw.iter().any(|d| matches!(d, Draw::Clip(Some(r)) if r.y == viewport.y)));
+    let first = control(&state, Target::Background(0));
+    assert!(first.y + first.h < viewport.y);
+    assert_ne!(
+        state.hit_test(&drawn.controls, first.x + 20., first.y + first.h - 4.),
+        Some(Target::Background(0))
+    );
+}
