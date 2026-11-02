@@ -17,8 +17,9 @@ use std::{
 use time::OffsetDateTime;
 
 use crate::layout::{
-    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_WIDTH, LIST_X, SAFE_X, SIDEBAR_COLLAPSED,
-    SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH, column as column_width, type_scale,
+    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X, ROW_GROWN, ROW_HEIGHT,
+    ROW_SPACING, SAFE_X, SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH,
+    column as column_width, type_scale,
 };
 
 const MAIN_TOP: f32 = 108.8;
@@ -1809,7 +1810,7 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::ShowsToggle,
-            rect: Rect::new(640., 164.8 - s, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("showWidget"),
             icon: Some("eye"),
             value: Some(language.t(if state.preferences.show_shows {
@@ -1828,7 +1829,7 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::ShowsLayout,
-            rect: Rect::new(640., 164.8 + 84. - s, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("cryptoLayout"),
             icon: Some("grid"),
             value: Some(place(language, state.preferences.shows_today)),
@@ -1839,9 +1840,9 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
     out.text(
         language.t("showsSource"),
-        Rect::new(660., 164.8 + 2. * 84. + 6. - s, 1080., 24.),
-        text(16., 400, 0.),
-        c(0xf5f5f5, 0.55),
+        Rect::new(LIST_X + 24., LIST_TOP + 2. * LIST_PITCH + 6. - s, LIST_WIDTH - 48., 56.),
+        text(type_scale::CAPTION, 450, 0.).shadow(),
+        c(0xf5f5f5, 0.72),
         false,
     );
 }
@@ -3558,7 +3559,141 @@ fn rotation_value_width(assets: &Assets, language: Language) -> f32 {
         .ceil()
 }
 
+/// Settings rows one under another, from `top`: the focused one grows to show its description.
+fn list_rects(state: &State, top: f32, rows: &[(Target, bool)]) -> Vec<Rect> {
+    let mut y = top - state.scroll;
+    rows.iter()
+        .map(|(target, described)| {
+            let grown = if *described {
+                state.motion.focus(target)
+            } else {
+                0.
+            };
+            let rect = Rect::new(
+                LIST_X,
+                y,
+                LIST_WIDTH,
+                ROW_HEIGHT + (ROW_GROWN - ROW_HEIGHT) * grown,
+            );
+            y += rect.h + ROW_SPACING;
+            rect
+        })
+        .collect()
+}
+
+/// Between rows of a settings list.
+const LIST_PITCH: f32 = ROW_HEIGHT + ROW_SPACING;
+/// Between rows whose second line always shows (a name, a status, a place's region).
+const TWO_LINE_PITCH: f32 = ROW_GROWN + ROW_SPACING;
+
+/// A settings row: icon and title on the left, the value right beside the list's edge. The
+/// description shows once the row is taller than one line: always for rows sized for two, on
+/// focus for rows `list_rects` grows.
 fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
+    const RADIUS: f32 = 16.;
+    let rect = row.rect;
+    let focused = state.focus == row.target;
+    if focused {
+        out.draw.push(Draw::RoundedGradient(
+            rect,
+            RADIUS,
+            c(0xfafafa, 1.),
+            c(0xe5e5e5, 1.),
+        ));
+    } else {
+        settings_surface(out, rect, RADIUS);
+    }
+    let ink = if focused {
+        c(0x2c2c2c, 1.)
+    } else {
+        c(0xf4f4f4, 0.92)
+    };
+    let quiet = if focused {
+        c(0x2c2c2c, 0.62)
+    } else {
+        c(0xffffff, 0.62)
+    };
+    let mut x = rect.x + 24.;
+    if let Some(icon) = row.icon {
+        out.icon(
+            assets,
+            icon,
+            Rect::new(x, rect.y + 21., 26., 26.),
+            if focused {
+                c(0x444444, 1.)
+            } else {
+                c(0xe4e4e4, 0.7)
+            },
+        );
+        x += 44.;
+    }
+    let right = rect.x + rect.w - if row.chevron || row.selected { 56. } else { 24. };
+    let value_style = text(type_scale::SECONDARY, 450, 0.).right();
+    let value_width = row.value.map_or(0., |value| {
+        // `fit_text` keeps a pixel spare.
+        (assets.width(value, value_style) + 1.).ceil().min(rect.w * 0.45)
+    });
+    if let Some(value) = row.value {
+        out.text(
+            value,
+            Rect::new(right - value_width, rect.y + 20., value_width, 29.),
+            assets.fit_text(value, value_style, value_width),
+            quiet,
+            false,
+        );
+    }
+    let title_width = if row.value.is_some() {
+        right - value_width - 16.
+    } else {
+        right
+    } - x;
+    out.text(
+        row.title,
+        Rect::new(x, rect.y + 18.5, title_width, 31.),
+        assets.fit_text(row.title, text(type_scale::BODY, 550, -0.02), title_width),
+        ink,
+        false,
+    );
+    if let Some(description) = row.description {
+        let shown = ((rect.h - ROW_HEIGHT) / (ROW_GROWN - ROW_HEIGHT)).clamp(0., 1.);
+        if shown > 0. {
+            let mut color = if focused {
+                c(0x555555, 1.)
+            } else {
+                c(0xf5f5f5, 0.62)
+            };
+            color[3] *= shown;
+            out.text(
+                description,
+                Rect::new(
+                    x,
+                    rect.y + 56.,
+                    rect.x + rect.w - 24. - x,
+                    (rect.h - 70.).max(27.),
+                ),
+                text(type_scale::CAPTION, 450, 0.),
+                color,
+                false,
+            );
+        }
+    }
+    if row.chevron || row.selected {
+        out.icon(
+            assets,
+            if row.selected { "check" } else { "right" },
+            Rect::new(rect.x + rect.w - 44., rect.y + 24., 20., 20.),
+            if focused {
+                c(0x444444, 1.)
+            } else {
+                c(0xe4e4e4, 0.61)
+            },
+        );
+    }
+    out.control(row.target, rect, true);
+}
+
+/// The gallery's actions above it (until they get their own look).
+fn gallery_row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
     let focused = state.focus == row.target;
     let bright = focused;
     let radius = if row.description.is_some() { 20. } else { 48. };
@@ -3694,7 +3829,7 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::WeatherToggle,
-            rect: Rect::new(640., 164.8 - s, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("showWidget"),
             icon: Some("eye"),
             value: Some(if state.preferences.show_weather {
@@ -3712,10 +3847,11 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
         .weather_location
         .as_ref()
         .map(|place| place.name.as_str());
-    let style = text(18.4, 450, 0.).leading(1.4);
-    let city_lines = city.map_or(1, |city| assets.lines(city, style, 450.));
-    let height = (34. + city_lines as f32 * 25.76).max(72.);
-    let rect = Rect::new(640., 264.8 - s, 1120., height);
+    let style = text(type_scale::SECONDARY, 450, 0.).leading(1.2);
+    let line = type_scale::SECONDARY * 1.2;
+    let city_lines = city.map_or(1, |city| assets.lines(city, style, 400.));
+    let height = (40. + city_lines as f32 * line).max(ROW_HEIGHT);
+    let rect = Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, height);
     row(
         out,
         state,
@@ -3735,28 +3871,28 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.text(
             city,
             Rect::new(
-                rect.x + rect.w - 508.6,
-                rect.y + (height - city_lines as f32 * 25.76) / 2.,
-                450.,
-                city_lines as f32 * 25.76,
+                rect.x + rect.w - 56. - 400.,
+                rect.y + (height - city_lines as f32 * line) / 2.,
+                400.,
+                city_lines as f32 * line,
             ),
             style.right(),
             if state.focus == Target::WeatherLocation {
-                c(0x444444, 1.)
+                c(0x2c2c2c, 0.62)
             } else {
-                c(0xeeeeee, 0.73)
+                c(0xffffff, 0.62)
             },
             false,
         );
     }
-    let y = rect.y + height + 12.;
+    let y = rect.y + height + ROW_SPACING;
     row(
         out,
         state,
         assets,
         Row {
             target: Target::WeatherTemperature,
-            rect: Rect::new(640., y, 1120., 72.),
+            rect: Rect::new(LIST_X, y, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("temperature"),
             icon: Some("thermometer"),
             value: Some(state.preferences.temperature_unit.symbol()),
@@ -3790,7 +3926,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(640., y - s, 1120., 72.),
+                rect: Rect::new(LIST_X, y - s, LIST_WIDTH, ROW_HEIGHT),
                 title,
                 icon,
                 value,
@@ -3803,7 +3939,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
     simple(
         out,
         Target::CryptoToggle,
-        164.8,
+        LIST_TOP,
         language.t("showWidget"),
         Some("eye"),
         on_off(state.preferences.show_crypto),
@@ -3811,20 +3947,20 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
     simple(
         out,
         Target::CryptoLayout,
-        248.8,
+        LIST_TOP + LIST_PITCH,
         language.t("cryptoLayout"),
         Some("sparkles"),
         Some(place(language, state.preferences.crypto_beside)),
     );
-    let mut y = 348.8;
+    let mut y = LIST_TOP + 2. * LIST_PITCH + 16.;
     out.text(
         language.t("cryptoCoins"),
-        Rect::new(660., y - s, 1080., 24.),
-        text(16., 400, 0.),
-        c(0xf5f5f5, 0.55),
+        Rect::new(LIST_X + 24., y - s, LIST_WIDTH - 48., 28.),
+        text(type_scale::CAPTION, 450, 0.).shadow(),
+        c(0xf5f5f5, 0.72),
         false,
     );
-    y += 36.;
+    y += 40.;
     let search = &state.crypto.search;
     simple(
         out,
@@ -3834,7 +3970,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
         Some("search"),
         (!search.query.is_empty()).then_some(search.query.as_str()),
     );
-    y += 84.;
+    y += LIST_PITCH;
     if !search.query.is_empty() {
         let matches = search.matches();
         let status = if search.loading {
@@ -3849,9 +3985,9 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
         if let Some(key) = status {
             out.text(
                 language.t(key),
-                Rect::new(660., y + 4. - s, 1080., 24.),
-                text(17.6, 400, 0.),
-                c(0xf5f5f5, 0.6),
+                Rect::new(LIST_X + 24., y + 4. - s, LIST_WIDTH - 48., 28.),
+                text(type_scale::CAPTION, 450, 0.).shadow(),
+                c(0xf5f5f5, 0.72),
                 false,
             );
             y += 52.;
@@ -3865,7 +4001,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 None,
                 on_off(chosen(symbol)),
             );
-            y += 84.;
+            y += LIST_PITCH;
         }
         y += 20.;
     }
@@ -3878,7 +4014,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
             None,
             on_off(chosen(symbol)),
         );
-        y += 84.;
+        y += LIST_PITCH;
     }
 }
 
@@ -3917,7 +4053,7 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(640., 164.8 + index as f32 * 84. - s, 1120., 72.),
+                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
                 title: language.t(key),
                 icon: Some(icon),
                 value: Some(if layout {
@@ -3933,55 +4069,54 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
     }
     out.text(
         language.t("cs2Source"),
-        Rect::new(660., 164.8 + 4. * 84. + 6. - s, 1080., 24.),
-        text(16., 400, 0.),
-        c(0xf5f5f5, 0.55),
+        Rect::new(LIST_X + 24., LIST_TOP + 4. * LIST_PITCH + 6. - s, LIST_WIDTH - 48., 56.),
+        text(type_scale::CAPTION, 450, 0.).shadow(),
+        c(0xf5f5f5, 0.72),
         false,
     );
 }
 
 fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
-    let mut y = 164.8 - state.scroll;
+    let mut y = LIST_TOP - state.scroll;
     if let Some(place) = &state.preferences.weather_location {
-        let rect = Rect::new(640., y, 1120., 76.2);
-        out.shape(rect, 20., c(0x171c20, 0.72));
-        out.border(rect, 20., 1., c(0xffffff, 0.04));
+        let rect = Rect::new(LIST_X, y, LIST_WIDTH, 88.);
+        settings_surface(out, rect, 16.);
         out.icon(
             assets,
             "location",
-            Rect::new(664.2, y + 29.1, 18., 18.),
-            c(0xcccccc, 1.),
+            Rect::new(rect.x + 24., y + 31., 26., 26.),
+            c(0xe4e4e4, 0.7),
         );
         out.text(
             &place.name,
-            Rect::new(698.2, y + 17., 920., 25.),
-            text(18.4, 500, 0.),
+            Rect::new(rect.x + 68., y + 14., rect.w - 160., 31.),
+            assets.fit_text(&place.name, text(type_scale::BODY, 550, -0.02), rect.w - 160.),
             WHITE,
             false,
         );
         out.text(
             place.detail(),
-            Rect::new(698.2, y + 42.3, 920., 22.),
-            text(14.4, 400, 0.),
-            c(0xf5f5f5, 0.56),
+            Rect::new(rect.x + 68., y + 47., rect.w - 160., 27.),
+            text(type_scale::CAPTION, 450, 0.),
+            c(0xf5f5f5, 0.62),
             false,
         );
-        let clear = Rect::new(1695.8, y + 18.1, 40., 40.);
-        out.shape(clear, 20., c(0x23282c, 0.5));
-        out.border(clear, 20., 1., c(0xffffff, 0.07));
-        out.icon(assets, "close", clear.inset(12.), WHITE);
+        let clear = Rect::new(rect.x + rect.w - 68., y + 20., 48., 48.);
+        out.shape(clear, 24., c(0x23282c, 0.5));
+        out.border(clear, 24., 1., c(0xffffff, 0.07));
+        out.icon(assets, "close", clear.inset(14.), WHITE);
         if state.focus == Target::WeatherClear {
-            out.border(clear.inset(-2.), 22., 2., c(0xf0f0f0, 0.95));
+            out.border(clear.inset(-2.), 26., 2., c(0xf0f0f0, 0.95));
         }
         out.control(Target::WeatherClear, clear, true);
-        y += 96.2;
+        y += 88. + 20.;
     }
-    let query = Rect::new(640., y, 1044., 64.);
+    let query = Rect::new(LIST_X, y, LIST_WIDTH - 84., ROW_HEIGHT);
     let focused = state.focus == Target::WeatherQuery;
     out.shape(
         query,
-        48.,
+        query.h / 2.,
         if focused {
             c(0x303438, 1.)
         } else {
@@ -3990,17 +4125,17 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
     out.border(
         query,
-        48.,
+        query.h / 2.,
         1.,
         c(0xffffff, if focused { 0.70 } else { 0.07 }),
     );
     if focused {
-        out.border(query.inset(-3.), 51., 3., c(0xffffff, 0.063));
+        out.border(query.inset(-3.), query.h / 2. + 3., 3., c(0xffffff, 0.063));
     }
     out.icon(
         assets,
         "search",
-        Rect::new(664.2, y + 21.2, 21.6, 21.6),
+        Rect::new(query.x + 24., y + 21., 26., 26.),
         c(0xeeeeee, 0.73),
     );
     out.text(
@@ -4009,15 +4144,15 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
         } else {
             &state.weather.query
         },
-        Rect::new(699.4, y + 20.9, 950., 24.),
-        text(18.4, 400, -0.02),
+        Rect::new(query.x + 68., y + 18.5, query.w - 92., 31.),
+        text(type_scale::BODY, 450, -0.02),
         c(0xeeeeee, 0.73),
         false,
     );
     out.control(Target::WeatherQuery, query, true);
-    let search = Rect::new(1696., y, 64., 64.);
-    out.shape(search, 32., c(0x171c20, 0.72));
-    out.border(search, 32., 1., c(0xffffff, 0.07));
+    let search = Rect::new(LIST_X + LIST_WIDTH - ROW_HEIGHT, y, ROW_HEIGHT, ROW_HEIGHT);
+    out.shape(search, search.h / 2., c(0x171c20, 0.72));
+    out.border(search, search.h / 2., 1., c(0xffffff, 0.07));
     out.icon(
         assets,
         if state.weather.searching {
@@ -4025,14 +4160,14 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
         } else {
             "search"
         },
-        search.inset(20.8),
+        search.inset(21.),
         WHITE,
     );
     if state.focus == Target::WeatherSearch {
-        out.border(search.inset(-7.), 39., 2., c(0xf0f0f0, 0.95));
+        out.border(search.inset(-7.), search.h / 2. + 7., 2., c(0xf0f0f0, 0.95));
     }
     out.control(Target::WeatherSearch, search, true);
-    y += 84.;
+    y += LIST_PITCH;
     if state.weather.searching || state.weather.message.is_some() {
         out.text(
             if state.weather.searching {
@@ -4040,20 +4175,27 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
             } else {
                 language.t(state.weather.message.as_deref().unwrap_or(""))
             },
-            Rect::new(664.2, y, 1071.6, 58.),
-            text(16., 400, 0.).leading(1.5),
-            c(0xe0e0e0, 0.68),
+            Rect::new(LIST_X + 24., y, LIST_WIDTH - 48., 58.),
+            text(type_scale::CAPTION, 450, 0.).shadow(),
+            c(0xf0f0f0, 0.8),
             false,
         );
     }
     for (index, place) in state.weather.results.iter().enumerate() {
         let detail = place.detail();
-        let height = (34.
-            + assets.lines(&place.name, text(20.8, 550, -0.02), 992.6) as f32 * 29.12
-            + 4.8
-            + assets.lines(&detail, text(15.2, 400, 0.), 1020.) as f32 * 22.8)
-            .max(90.7);
-        let rect = Rect::new(640., y, 1120., height);
+        let room = LIST_WIDTH - 68. - 56.;
+        let height = (18.5
+            + assets.lines(&place.name, text(type_scale::BODY, 550, -0.02), room) as f32 * 31.
+            + 6.
+            + assets.lines(&detail, text(type_scale::CAPTION, 450, 0.), room) as f32 * 27.
+            + 20.)
+            .max(ROW_GROWN);
+        let rect = Rect::new(LIST_X, y, LIST_WIDTH, height);
+        let chosen = state
+            .preferences
+            .weather_location
+            .as_ref()
+            .is_some_and(|saved| saved.key() == place.key());
         row(
             out,
             state,
@@ -4065,34 +4207,33 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 icon: Some("location"),
                 value: None,
                 description: Some(&detail),
-                selected: false,
+                selected: chosen,
                 chevron: false,
             },
         );
-        if state
-            .preferences
-            .weather_location
-            .as_ref()
-            .is_some_and(|saved| saved.key() == place.key())
-        {
-            out.icon(
-                assets,
-                "check",
-                Rect::new(1717.4, y + (height - 18.4) / 2., 18.4, 18.4),
-                if state.focus == Target::WeatherResult(index) {
-                    c(0x444444, 1.)
-                } else {
-                    c(0xe4e4e4, 0.61)
-                },
-            );
-        }
-        y += height + 12.;
+        y += height + ROW_SPACING;
     }
 }
 
 fn settings(out: &mut Scene, state: &State, assets: &Assets) {
     let start = out.draw.len();
+    // Lists scroll under the title through a soft edge; the gallery masks itself.
+    let list = !(state.section == crate::state::BACKGROUND_SECTION && state.subpage.is_none());
+    if list {
+        let viewport = state.list_viewport();
+        out.draw.push(Draw::Clip(Some(viewport)));
+        out.draw.push(Draw::EdgeFade(Some([
+            viewport.y,
+            LIST_TOP,
+            viewport.y + viewport.h - 40.,
+            viewport.y + viewport.h,
+        ])));
+    }
     settings_content(out, state, assets);
+    if list {
+        out.draw.push(Draw::EdgeFade(None));
+        out.draw.push(Draw::Clip(None));
+    }
     settings_title(out, state, assets, LIST_WIDTH);
     // The open sidebar lies over the page, which steps back behind it.
     let dim = sidebar_dim(state);
@@ -4433,15 +4574,26 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 ),
             ],
         };
-        for (index, (title, description, selected)) in options.into_iter().enumerate() {
-            let h = if description.is_some() { 90.7 } else { 72. };
+        let rects = list_rects(
+            state,
+            LIST_TOP,
+            &options
+                .iter()
+                .enumerate()
+                .map(|(index, option)| (Target::Choice(index), option.1.is_some()))
+                .collect::<Vec<_>>(),
+        );
+        let bottom = rects.last().map_or(LIST_TOP - s, |rect| rect.y + rect.h);
+        for ((index, (title, description, selected)), rect) in
+            options.into_iter().enumerate().zip(rects)
+        {
             row(
                 out,
                 state,
                 assets,
                 Row {
                     target: Target::Choice(index),
-                    rect: Rect::new(640., 164.8 + index as f32 * (h + 12.) - s, 1120., h),
+                    rect,
                     title,
                     icon: None,
                     value: None,
@@ -4452,10 +4604,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             );
         }
         if let Subpage::Input(id) = subpage {
-            input_name_rows(out, state, assets, id, 164.8 + 3. * 102.7 + 16. - s);
-        }
-        if *subpage == Subpage::Appearance {
-            appearance_preview(out, state, assets, 164.8 + 3. * 102.7 + 8. - s);
+            input_name_rows(out, state, assets, id, bottom + 16.);
         }
         if let Some(opened) = state.panel_started {
             out.fade(start, (opened.elapsed().as_secs_f32() / 0.15).min(1.), 1.);
@@ -4464,13 +4613,21 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
     }
     match state.section {
         0 => {
-            for (position, (index, key, icon, value, chevron)) in [
-                (0, "appNames", "type", None, true),
-                (1, "clock", "clock", None, true),
-                (4, "language", "language", Some(language.name()), true),
+            let rows = [
+                (0, "appNames", "appNamesAbout", "type", None, true),
+                (1, "clock", "clockAbout", "clock", None, true),
+                (
+                    4,
+                    "language",
+                    "languageAbout",
+                    "language",
+                    Some(language.name()),
+                    true,
+                ),
                 (
                     2,
                     "reducedMotion",
+                    "reducedMotionAbout",
                     "motion",
                     Some(if state.preferences.reduced_motion {
                         language.t("stateOn")
@@ -4482,6 +4639,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (
                     crate::state::FOCUS_GLOW_ROW,
                     "focusGlow",
+                    "focusGlowAbout",
                     "sparkles",
                     Some(language.t(state.preferences.focus_glow.key())),
                     false,
@@ -4489,25 +4647,29 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (
                     crate::state::INTERFACE_SCALE_ROW,
                     "uiScale",
+                    "uiScaleAbout",
                     "grid",
                     Some(language.t(state.preferences.ui_scale.keys().0)),
                     true,
                 ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            ];
+            let rects = list_rects(
+                state,
+                LIST_TOP,
+                &rows.map(|row| (Target::Setting(row.0), true)),
+            );
+            for ((index, key, about, icon, value, chevron), rect) in rows.into_iter().zip(rects) {
                 row(
                     out,
                     state,
                     assets,
                     Row {
                         target: Target::Setting(index),
-                        rect: Rect::new(640., 164.8 + position as f32 * 84. - s, 1120., 72.),
+                        rect,
                         title: language.t(key),
                         icon: Some(icon),
                         value,
-                        description: None,
+                        description: Some(language.t(about)),
                         selected: false,
                         chevron,
                     },
@@ -4532,7 +4694,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 + 111.6)
                 .ceil()
                 .min(520.);
-            row(
+            gallery_row(
                 out,
                 state,
                 assets,
@@ -4555,7 +4717,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     chevron: false,
                 },
             );
-            row(
+            gallery_row(
                 out,
                 state,
                 assets,
@@ -4583,7 +4745,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     chevron: false,
                 },
             );
-            row(
+            gallery_row(
                 out,
                 state,
                 assets,
@@ -4634,31 +4796,34 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             out.draw.extend(actions);
         }
         WIDGETS_SECTION => {
-            for (index, (widget, key, icon)) in [
-                (4, "date", "clock"),
-                (0, "greeting", "type"),
-                (1, "weather", "weather-sun"),
-                (2, "shortcuts", "sparkles"),
-                (3, "inputs", "input-hdmi"),
-                (5, "crypto", "globe"),
+            let rows = [
+                (4, "date", "dateAbout", "clock"),
+                (0, "greeting", "greetingAbout", "type"),
+                (1, "weather", "weatherAbout", "weather-sun"),
+                (2, "shortcuts", "shortcutsAbout", "sparkles"),
+                (3, "inputs", "inputsAbout", "input-hdmi"),
+                (5, "crypto", "cryptoAbout", "globe"),
                 // Last, so the rows above keep their places.
-                (6, "cs2Score", "gaming"),
-                (7, "shows", "tv"),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+                (6, "cs2Score", "cs2ScoreAbout", "gaming"),
+                (7, "shows", "showsAbout", "tv"),
+            ];
+            let rects = list_rects(
+                state,
+                LIST_TOP,
+                &rows.map(|row| (Target::Widget(row.0), true)),
+            );
+            for ((widget, key, about, icon), rect) in rows.into_iter().zip(rects) {
                 row(
                     out,
                     state,
                     assets,
                     Row {
                         target: Target::Widget(widget),
-                        rect: Rect::new(640., 164.8 + index as f32 * 84. - s, 1120., 72.),
+                        rect,
                         title: language.t(key),
                         icon: Some(icon),
                         value: None,
-                        description: None,
+                        description: Some(language.t(about)),
                         selected: false,
                         chevron: true,
                     },
@@ -4666,7 +4831,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             }
         }
         SYSTEM_SECTION => {
-            let rect = Rect::new(640., 164.8 - s, 1120., 220.);
+            let rect = Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, 220.);
             let title = if matches!(state.update, crate::update::InstallStatus::Failed(_)) {
                 "updateError"
             } else if state.available_update.is_some() {
@@ -4724,7 +4889,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     chevron: false,
                 },
             );
-            for (position, (index, title, icon, value, chevron)) in [
+            let rows = [
                 (
                     3,
                     language.t(if state.loading {
@@ -4732,6 +4897,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     } else {
                         "refreshApps"
                     }),
+                    "refreshAppsAbout",
                     "refresh",
                     None,
                     false,
@@ -4739,6 +4905,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (
                     7,
                     language.t("textRendering"),
+                    "textRenderingAbout",
                     "type",
                     Some(language.t(state.preferences.text_rendering.label_key())),
                     true,
@@ -4746,6 +4913,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (
                     HOMEBREW_UPDATES_ROW,
                     language.t("homebrewUpdates"),
+                    "homebrewUpdatesAbout",
                     "refresh",
                     Some(language.t(if state.preferences.homebrew_updates {
                         "stateOn"
@@ -4754,10 +4922,11 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     })),
                     false,
                 ),
-                (5, language.t("quitApp"), "power", None, false),
+                (5, language.t("quitApp"), "quitAppAbout", "power", None, false),
                 (
                     crate::state::HOME_TAKEOVER_ROW,
                     language.t("homeTakeover"),
+                    "homeTakeoverAbout",
                     "tv",
                     Some(language.t(if state.home_takeover {
                         "stateOn"
@@ -4766,21 +4935,24 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                     })),
                     true,
                 ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            ];
+            let rects = list_rects(
+                state,
+                LIST_TOP + 220. + 24.,
+                &rows.map(|row| (Target::Setting(row.0), true)),
+            );
+            for ((index, title, about, icon, value, chevron), rect) in rows.into_iter().zip(rects) {
                 row(
                     out,
                     state,
                     assets,
                     Row {
                         target: Target::Setting(index),
-                        rect: Rect::new(640., 408.8 + position as f32 * 84. - s, 1120., 72.),
+                        rect,
                         title,
                         icon: Some(icon),
                         value,
-                        description: None,
+                        description: Some(language.t(about)),
                         selected: false,
                         chevron,
                     },
@@ -4789,45 +4961,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
         }
         _ => {}
     }
-}
-
-/// General › Interface scale: below the options, the chosen scale at its real size, drawn with
-/// the pages' own code (category chips, the search field, favourite tiles with names). The clock
-/// and the hints are on this screen already and change in place.
-fn appearance_preview(out: &mut Scene, state: &State, assets: &Assets, top: f32) {
-    let language = state.preferences.language;
-    let k = state.preferences.ui_scale.scale();
-    let panel = Rect::new(640., top, 1120., 982.4 - top);
-    out.shape(panel, 22., c(0x0a0d12, 0.42));
-    out.border(panel, 22., 1., c(0xffffff, 0.12));
-    out.text(
-        language.t("sample"),
-        Rect::new(panel.x + 26., panel.y + 16., 600., 24.),
-        text(17.6, 500, 0.04),
-        c(0xf0f0f0, 0.55),
-        false,
-    );
-    // Its controls are dropped, so the preview never takes focus.
-    let controls = out.controls.len();
-    let chips = panel.y + 56. + 28. * k;
-    category_chips(out, state, assets, panel.x + 32., chips);
-    search_field(out, state, assets, panel.x + panel.w - 32., chips, false);
-    let favorites = state.preferences.favorites(&state.inventory.apps);
-    let apps = favorites
-        .iter()
-        .filter(|id| !state.preferences.hidden.contains(id))
-        .filter_map(|id| state.inventory.apps.iter().find(|app| &app.id == id))
-        .take(3);
-    for (index, app) in apps.enumerate() {
-        let rect = Rect::new(
-            panel.x + 32. + index as f32 * HOME_TILE_PITCH,
-            chips + 28. * k + 28.,
-            HOME_TILE_WIDTH,
-            FACE_HEIGHT,
-        );
-        tile(out, state, assets, app, rect, true, false);
-    }
-    out.controls.truncate(controls);
 }
 
 fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -4846,7 +4979,7 @@ fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target: Target::InputMode(input.id.clone()),
-                rect: Rect::new(640., 164.8 + index as f32 * 102.7 - s, 1120., 90.7),
+                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * TWO_LINE_PITCH - s, LIST_WIDTH, ROW_GROWN),
                 title: state.preferences.input_title(input),
                 icon: Some(&format!(
                     "input-{}",
@@ -4867,7 +5000,7 @@ fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
             },
         );
     }
-    let mut y = 164.8 + state.inventory.inputs.len() as f32 * 102.7 + 16. - s;
+    let mut y = LIST_TOP + state.inventory.inputs.len() as f32 * TWO_LINE_PITCH + 16. - s;
     if state.inventory.inputs.is_empty() {
         out.text(
             language.t("noInputs"),
@@ -4884,7 +5017,7 @@ fn inputs_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::Setting(3),
-            rect: Rect::new(640., y, 1120., 72.),
+            rect: Rect::new(LIST_X, y, LIST_WIDTH, ROW_HEIGHT),
             title: if state.loading {
                 language.t("refreshNotice")
             } else {
@@ -4914,7 +5047,7 @@ fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::GreetingName,
-            rect: Rect::new(640., 248.8 - state.scroll, 1120., 90.7),
+            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - state.scroll, LIST_WIDTH, ROW_GROWN),
             title: language.t("name"),
             icon: Some("type"),
             value: None,
@@ -4930,7 +5063,7 @@ fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::GreetingNameClear,
-            rect: Rect::new(640., 351.5 - state.scroll, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH + TWO_LINE_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("clearName"),
             icon: Some("refresh"),
             value: None,
@@ -4945,7 +5078,7 @@ fn greeting_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::GreetingToggle,
-            rect: Rect::new(640., 164.8 - state.scroll, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP - state.scroll, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("showWidget"),
             icon: None,
             value: Some(language.t(if state.preferences.show_greeting {
@@ -4989,7 +5122,7 @@ fn date_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(640., 164.8 + index as f32 * 84. - state.scroll, 1120., 72.),
+                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
                 title: language.t(title),
                 icon: None,
                 value: Some(value),
@@ -5032,7 +5165,7 @@ fn clock_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(640., 164.8 + index as f32 * 84. - state.scroll, 1120., 72.),
+                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
                 title: language.t(key),
                 icon: None,
                 value: Some(value),
@@ -5072,7 +5205,7 @@ fn app_name_settings(out: &mut Scene, state: &State, assets: &Assets) {
             assets,
             Row {
                 target,
-                rect: Rect::new(640., 164.8 + index as f32 * 84. - state.scroll, 1120., 72.),
+                rect: Rect::new(LIST_X, LIST_TOP + index as f32 * LIST_PITCH - state.scroll, LIST_WIDTH, ROW_HEIGHT),
                 title: language.t(title),
                 icon: None,
                 value: Some(value),
@@ -5101,7 +5234,7 @@ fn input_name_rows(out: &mut Scene, state: &State, assets: &Assets, id: &str, y:
         assets,
         Row {
             target: Target::InputRename,
-            rect: Rect::new(640., y, 1120., 90.7),
+            rect: Rect::new(LIST_X, y, LIST_WIDTH, ROW_GROWN),
             title: language.t("renameInput"),
             icon: Some("type"),
             value: None,
@@ -5117,7 +5250,7 @@ fn input_name_rows(out: &mut Scene, state: &State, assets: &Assets, id: &str, y:
             assets,
             Row {
                 target: Target::InputNameReset,
-                rect: Rect::new(640., y + 102.7, 1120., 72.),
+                rect: Rect::new(LIST_X, y + TWO_LINE_PITCH, LIST_WIDTH, ROW_HEIGHT),
                 title: language.t("clearName"),
                 icon: Some("refresh"),
                 value: None,
@@ -5139,14 +5272,14 @@ fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
     let tiles = &state.preferences.custom_tiles;
     for (index, tile) in tiles.iter().enumerate() {
         let description = format!("{} · {}", tile.method.label(), shorten(&tile.url));
-        let y = 248.8 + index as f32 * 102.7 - state.scroll;
+        let y = LIST_TOP + LIST_PITCH + index as f32 * TWO_LINE_PITCH - state.scroll;
         row(
             out,
             state,
             assets,
             Row {
                 target: Target::Tile(tile.id.clone()),
-                rect: Rect::new(640., y, 1120., 90.7),
+                rect: Rect::new(LIST_X, y, LIST_WIDTH, ROW_GROWN),
                 title: &tile.title,
                 icon: Some(tile.icon()),
                 value: None,
@@ -5157,7 +5290,7 @@ fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
         );
     }
     if tiles.is_empty() {
-        let rect = Rect::new(640., 248.8 - state.scroll, 1120., 220.);
+        let rect = Rect::new(LIST_X, LIST_TOP + LIST_PITCH - state.scroll, LIST_WIDTH, 220.);
         settings_surface(out, rect, 20.);
         out.icon(
             assets,
@@ -5186,7 +5319,7 @@ fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
         assets,
         Row {
             target: Target::TileEditor,
-            rect: Rect::new(640., 164.8 - state.scroll, 1120., 72.),
+            rect: Rect::new(LIST_X, LIST_TOP - state.scroll, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("configure"),
             icon: Some("settings"),
             value: None,

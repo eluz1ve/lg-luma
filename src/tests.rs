@@ -886,7 +886,7 @@ fn input_name_actions_only_highlight_the_focused_row_and_keep_the_saved_mode() {
             .iter()
             .filter_map(|draw| match draw {
                 crate::renderer::Draw::RoundedGradient(rect, ..)
-                    if rect.x == 640. && rect.w == 1120. =>
+                    if rect.x == crate::layout::LIST_X && rect.w == crate::layout::LIST_WIDTH =>
                 {
                     Some(rect.y)
                 }
@@ -928,7 +928,7 @@ fn clock_choices_only_highlight_focus_while_preserving_saved_checkmarks() {
             .iter()
             .filter_map(|draw| match draw {
                 crate::renderer::Draw::RoundedGradient(rect, ..)
-                    if rect.x == 640. && rect.w == 1120. =>
+                    if rect.x == crate::layout::LIST_X && rect.w == crate::layout::LIST_WIDTH =>
                 {
                     Some(rect.y)
                 }
@@ -1037,7 +1037,8 @@ fn system_version_is_inside_the_update_status_card_without_a_separate_row() {
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
         crate::renderer::Draw::Shape(rect, _, _, color)
-            if rect.x == 640. && rect.y == 164.8 && rect.w == 1120. && rect.h == 220. && color[3] == 0.72
+            if rect.x == crate::layout::LIST_X && rect.y == crate::layout::LIST_TOP
+                && rect.w == crate::layout::LIST_WIDTH && rect.h == 220. && color[3] == 0.72
     )));
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
@@ -1121,6 +1122,8 @@ fn text_rendering_choices_persist_and_back_restores_the_system_row() {
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.subpage, Some(Subpage::TextRendering));
     assert_eq!(state.focus, Target::Choice(0));
+    // The focused choice grows to show its hint.
+    settle(&mut state);
     assert!(scene(&state).draw.iter().any(|draw| matches!(
         draw,
         crate::renderer::Draw::Text(label, ..) if label == "Restart Luma to apply changes."
@@ -1875,7 +1878,8 @@ fn settings_order_language_sort_and_shortcut_empty_card() {
     state.subpage = Some(Subpage::Shortcuts);
     let empty = scene(&state);
     assert!(empty.draw.iter().any(|draw| matches!(draw,
-        Draw::Shape(rect, radius, stroke, color) if rect.x == 640. && rect.y == 248.8 && rect.h == 220.
+        Draw::Shape(rect, radius, stroke, color) if rect.x == crate::layout::LIST_X
+            && rect.y == crate::layout::LIST_TOP + 78. && rect.h == 220.
             && *radius == 20. && *stroke == 0. && color[3] == 0.72
     )));
     assert!(empty.draw.iter().any(|draw| matches!(draw,
@@ -2436,8 +2440,7 @@ fn interface_scale_enlarges_the_clock_and_the_preview_is_not_focusable() {
     state.preferences.ui_scale = UiSize::Larger;
     let larger = scene(&state);
     assert!((text_size(&larger, "AM").unwrap() - clock * 1.5).abs() < 0.01);
-    // The preview draws categories and search, but only the options take focus.
-    assert!(text_size(&larger, "Streaming").is_some());
+    // Only the options take focus.
     assert!(!larger.controls.iter().any(|c| matches!(
         c.target,
         Target::Filter(_) | Target::Search | Target::App(_)
@@ -2620,14 +2623,15 @@ fn shortcut_settings_offer_qr_editing_and_a_test_remove_popup() {
         vec![Target::Tile(tile.id.clone()), Target::TileEditor]
     );
     assert_eq!(
-        state.hit_test(&controls(&state), 800., 280.),
+        state.hit_test(&controls(&state), 500., 340.),
         Some(Target::Tile(tile.id.clone()))
     );
     let page = scene(&state);
-    assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, _, _, color, _) if label == "Lamp" && color[3] == 0.73)));
+    assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, _, _, color, _) if label == "Lamp" && color[3] == 0.92)));
     assert!(page.draw.iter().any(|draw| matches!(draw,
         crate::renderer::Draw::Shape(rect, radius, _, color)
-            if rect.x == 640. && rect.h == 90.7 && *radius == 20. && color[3] == 0.72
+            if rect.x == crate::layout::LIST_X && rect.h == crate::layout::ROW_GROWN
+                && *radius == 16. && color[3] == 0.72
     )));
     assert!(
         !page
@@ -2914,7 +2918,7 @@ fn settings_lists_keep_bottom_padding_for_remote_and_wheel_scrolling() {
 }
 
 #[test]
-fn language_list_scrolls_under_fixed_ui_without_clipping_or_fades() {
+fn language_list_scrolls_under_the_title_through_a_soft_edge() {
     use crate::{renderer::Draw, state::Subpage};
     let mut state = ready();
     state.preferences.reduced_motion = true;
@@ -2922,9 +2926,14 @@ fn language_list_scrolls_under_fixed_ui_without_clipping_or_fades() {
     state.subpage = Some(Subpage::Language);
     state.scroll = 180.;
     let rendered = scene(&state);
-    assert!(!rendered.draw.iter().any(|draw| matches!(
+    let viewport = state.list_viewport();
+    assert!(rendered.draw.iter().any(|draw| matches!(
         draw,
-        Draw::Clip(Some(_)) | Draw::EdgeFade(Some(_)) | Draw::EdgeFadeX(Some(_))
+        Draw::Clip(Some(rect)) if rect.y == viewport.y
+    )));
+    assert!(rendered.draw.iter().any(|draw| matches!(
+        draw,
+        Draw::EdgeFade(Some([top, end, ..])) if *top == viewport.y && *end == crate::layout::LIST_TOP
     )));
     let first = rendered
         .controls
@@ -3192,7 +3201,7 @@ fn greeting_visibility_toggle_persists_without_clearing_name_or_hiding_date() {
         .iter()
         .find(|control| control.target == Target::GreetingToggle)
         .unwrap();
-    assert_eq!(toggle.rect.y, 164.8);
+    assert_eq!(toggle.rect.y, crate::layout::LIST_TOP);
     assert!(rendered.draw.iter().any(|draw| matches!(draw,
         Draw::Text(label, ..) if label == state.preferences.language.t("showWidget")
     )));
@@ -3718,6 +3727,8 @@ fn airplay_shares_input_visibility_settings_rename_and_home_controls() {
         state.subpage,
         Some(crate::state::Subpage::Input("airplay".into()))
     );
+    // The focused choice grows to show its hint.
+    settle(&mut state);
     assert!(scene(&state).draw.iter().any(|d| matches!(d, crate::renderer::Draw::Text(t, ..) if t == "Show when AirPlay is enabled on the TV")));
     for (choice, mode) in [
         (1, InputMode::Off),

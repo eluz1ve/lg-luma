@@ -89,3 +89,100 @@ fn the_page_title_names_the_section_and_the_subpage_path() {
         1
     );
 }
+
+/// The main sections' rows, in the order they are drawn.
+fn setting_rects(state: &State) -> Vec<(f32, f32, f32, f32)> {
+    controls(state)
+        .into_iter()
+        .filter(|c| matches!(c.target, Target::Setting(_) | Target::Widget(_)))
+        .map(|c| xywh(c.rect))
+        .collect()
+}
+
+/// The width tests measure text at: the renderer's fallback advances, without font metrics.
+fn measured(text: &str, style: TextStyle) -> f32 {
+    text.chars()
+        .map(|c| (if c == ' ' { 0.28 } else { 0.53 }) + style.tracking)
+        .sum::<f32>()
+        * style.size
+}
+
+#[test]
+fn rows_fill_the_820_list_under_the_title() {
+    let mut state = settings(0);
+    settle(&mut state);
+    let rows = setting_rects(&state);
+    assert_eq!(rows[0], (196., 224., 820., 68.));
+    assert_eq!(rows[1].1 - rows[0].1, 78.);
+    assert!(rows.iter().all(|row| row.0 == 196. && row.2 == 820. && row.3 == 68.));
+}
+
+#[test]
+fn the_focused_row_grows_to_show_its_description() {
+    let mut state = settings(0);
+    state.focus = Target::Setting(1); // Clock, the second row
+    settle(&mut state);
+    let rows = setting_rects(&state);
+    assert_eq!(rows[1].3, 104.);
+    assert_eq!(rows[2].1, 224. + 2. * 78. + 36.);
+    let english = crate::i18n::Language::En;
+    let drawn = texts(&state);
+    let (_, rect, style) = drawn
+        .iter()
+        .find(|t| t.0 == english.t("clockAbout"))
+        .expect("the focused row describes itself");
+    assert_eq!(style.size, 22.);
+    assert!(rect.y > rows[1].1 + 40. && rect.y + rect.h <= rows[1].1 + 104., "{rect:?}");
+    assert!(!drawn.iter().any(|t| t.0 == english.t("languageAbout")));
+}
+
+#[test]
+fn values_sit_at_the_right_edge_of_the_list_and_titles_stop_before_them() {
+    let mut state = settings(0);
+    state.preferences.language = crate::i18n::Language::De;
+    settle(&mut state);
+    let german = crate::i18n::Language::De;
+    let drawn = texts(&state);
+    for (title, value) in [
+        (german.t("language"), german.name()),
+        (german.t("uiScale"), german.t("sizeNormal")),
+    ] {
+        let (_, value_rect, value_style) = drawn.iter().find(|t| t.0 == value).unwrap();
+        assert_eq!(value_style.size, 24.);
+        let right = value_rect.x + value_rect.w;
+        assert!(right <= 1016. - 24. && right >= 1016. - 80., "{value}: {right}");
+        let (_, title_rect, title_style) = drawn.iter().find(|t| t.0 == title).unwrap();
+        assert!(
+            title_rect.x + measured(title, *title_style) <= right - measured(value, *value_style),
+            "{title} runs into {value}"
+        );
+    }
+}
+
+#[test]
+fn rows_scrolled_under_the_title_are_masked_and_cannot_be_clicked() {
+    let mut state = settings(0);
+    state.subpage = Some(Subpage::Language);
+    state.focus = Target::Choice(crate::i18n::Language::ALL.len() - 1);
+    settle(&mut state);
+    let controls = controls(&state);
+    state.reveal_focus(&controls);
+    let controls = super::controls(&state);
+    assert!(state.scroll > 0.);
+    let first = controls
+        .iter()
+        .find(|c| c.target == Target::Choice(0))
+        .unwrap()
+        .rect;
+    assert!(first.y + first.h < 214., "{first:?}");
+    assert_ne!(
+        state.hit_test(&controls, first.x + 10., first.y + first.h - 2.),
+        Some(Target::Choice(0))
+    );
+    assert!(
+        scene(&state)
+            .draw
+            .iter()
+            .any(|d| matches!(d, Draw::Clip(Some(r)) if r.y == 214.))
+    );
+}

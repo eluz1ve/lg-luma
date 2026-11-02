@@ -534,10 +534,10 @@ impl State {
         use crate::motion::Lane;
         let home = self.page == Page::Home;
         let apps = self.page == Page::Apps;
-        let selected = ((home || apps) && self.overlay.is_none())
+        let selected = (self.overlay.is_none())
             .then_some(&self.focus)
-            .filter(|target| {
-                matches!(
+            .filter(|target| match self.page {
+                Page::Home | Page::Apps => matches!(
                     target,
                     Target::App(_)
                         | Target::Input(_)
@@ -546,7 +546,12 @@ impl State {
                         | Target::Show(_)
                         | Target::TodayMatch(_)
                         | Target::TodayShow(_)
-                )
+                ),
+                // A settings row grows to show its description.
+                Page::Settings => matches!(
+                    target,
+                    Target::Setting(_) | Target::Widget(_) | Target::Choice(_)
+                ),
             });
         let lanes: Vec<(Lane, f32)> = if home {
             vec![
@@ -737,6 +742,14 @@ impl State {
         Rect::new(content.x, top, content.w, content.y + content.h - top)
     }
 
+    /// Settings' list, below the page's title: rows scrolled above it are masked and cannot be
+    /// clicked.
+    pub fn list_viewport(&self) -> Rect {
+        let content = self.content_viewport();
+        let top = crate::layout::LIST_TOP - 10.;
+        Rect::new(0., top, 1920., content.y + content.h - top)
+    }
+
     pub fn backgrounds_viewport(&self) -> Rect {
         let content = self.content_viewport();
         Rect::new(620., 244.8, 1160., content.y + content.h - 244.8)
@@ -754,6 +767,8 @@ impl State {
                         self.backgrounds_viewport()
                     } else if self.page == Page::Apps {
                         self.apps_viewport()
+                    } else if self.page == Page::Settings {
+                        self.list_viewport()
                     } else {
                         self.content_viewport()
                     };
@@ -995,6 +1010,8 @@ impl State {
                 } else if apps {
                     // The bar has slid away: cards may rise to the safe area.
                     SAFE_TOP
+                } else if self.page == Page::Settings {
+                    crate::layout::LIST_TOP
                 } else {
                     120.8
                 };
