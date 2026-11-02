@@ -562,7 +562,7 @@ impl State {
                 (Lane::Chrome, self.chrome_target()),
             ]
         } else {
-            Vec::new()
+            vec![(Lane::Sidebar, self.sidebar_target())]
         };
         let reduced = self.preferences.reduced_motion;
         self.dirty |= self.motion.advance(selected, &lanes, dt, reduced);
@@ -678,6 +678,24 @@ impl State {
                 .motion
                 .shown(crate::motion::Lane::Chrome, self.chrome_target()),
             Page::Settings => 0.,
+        }
+    }
+
+    /// How wide Settings' sidebar is drawn: open while it has focus, a column of icons otherwise.
+    pub fn sidebar_width(&self) -> f32 {
+        let target = self.sidebar_target();
+        if self.page == Page::Settings {
+            self.motion.shown(crate::motion::Lane::Sidebar, target)
+        } else {
+            target
+        }
+    }
+
+    fn sidebar_target(&self) -> f32 {
+        if matches!(self.focus, Target::Sidebar(_)) {
+            crate::layout::SIDEBAR_EXPANDED
+        } else {
+            crate::layout::SIDEBAR_COLLAPSED
         }
     }
 

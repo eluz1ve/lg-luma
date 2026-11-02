@@ -17,7 +17,8 @@ use std::{
 use time::OffsetDateTime;
 
 use crate::layout::{
-    CONTENT_TOP, GUTTER, HEADER_BOTTOM, SAFE_X, WIDTH, column as column_width, type_scale,
+    CONTENT_TOP, GUTTER, HEADER_BOTTOM, LIST_WIDTH, LIST_X, SAFE_X, SIDEBAR_COLLAPSED,
+    SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH, column as column_width, type_scale,
 };
 
 const MAIN_TOP: f32 = 108.8;
@@ -4090,136 +4091,196 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
 }
 
 fn settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let start = out.draw.len();
     settings_content(out, state, assets);
+    settings_title(out, state, assets, LIST_WIDTH);
+    // The open sidebar lies over the page, which steps back behind it.
+    let dim = sidebar_dim(state);
+    if dim < 1. {
+        out.fade(start, 1., dim);
+    }
     settings_sidebar(out, state, assets);
 }
 
+/// How bright the page under the sidebar is: full beside the icons, dimmed once it is open.
+fn sidebar_dim(state: &State) -> f32 {
+    let open = (state.sidebar_width() - SIDEBAR_COLLAPSED) / (SIDEBAR_EXPANDED - SIDEBAR_COLLAPSED);
+    1. - 0.45 * open.clamp(0., 1.)
+}
+
+const SECTIONS: [(&str, &str); 4] = [
+    ("interface", "settings"),
+    ("background", "photo"),
+    ("widgets", "sparkles"),
+    ("system", "tv"),
+];
+
+/// The page's title: the section, then the open subpage's path ("Widgets › Weather").
+fn breadcrumb(state: &State) -> Vec<&str> {
+    let language = state.preferences.language;
+    let mut path = vec![language.t(SECTIONS[state.section.min(SECTIONS.len() - 1)].0)];
+    match &state.subpage {
+        Some(Subpage::DateFormat) => path.extend([language.t("date"), language.t("dateFormat")]),
+        Some(Subpage::ClockFormat) => {
+            path.extend([language.t("clock"), language.t("clockFormat")])
+        }
+        Some(Subpage::TimeFormat) => path.extend([language.t("clock"), language.t("timeFormat")]),
+        Some(Subpage::WeatherLocation) => {
+            path.extend([language.t("weather"), language.t("location")])
+        }
+        Some(Subpage::Temperature) => {
+            path.extend([language.t("weather"), language.t("temperature")])
+        }
+        Some(Subpage::Input(id)) => path.extend([
+            language.t("inputs"),
+            state
+                .inventory
+                .inputs
+                .iter()
+                .find(|input| &input.id == id)
+                .map_or(language.t("inputs"), |input| {
+                    state.preferences.input_title(input)
+                }),
+        ]),
+        Some(subpage) => path.push(match subpage {
+            Subpage::AppNames => language.t("appNames"),
+            Subpage::Greeting => language.t("greeting"),
+            Subpage::Date => language.t("date"),
+            Subpage::Weather => language.t("weather"),
+            Subpage::Shortcuts => language.t("shortcuts"),
+            Subpage::Crypto => language.t("crypto"),
+            Subpage::Inputs => language.t("inputs"),
+            Subpage::Clock => language.t("clock"),
+            Subpage::Cs2 => language.t("cs2Score"),
+            Subpage::Shows => language.t("shows"),
+            Subpage::Language => language.t("language"),
+            Subpage::Appearance => language.t("uiScale"),
+            Subpage::TextRendering => language.t("textRendering"),
+            Subpage::HomeTakeover => language.t("homeTakeover"),
+            _ => "",
+        }),
+        None => {}
+    }
+    path.retain(|part| !part.is_empty());
+    path
+}
+
+/// The section's name, or the subpage's path, large above the list; it shrinks to `width`.
+fn settings_title(out: &mut Scene, state: &State, assets: &Assets, width: f32) {
+    const SEPARATOR: f32 = 26.;
+    const GAP: f32 = 10.;
+    let path = breadcrumb(state);
+    let separators = path.len().saturating_sub(1) as f32 * (SEPARATOR + GAP * 2.);
+    let mut style = text(type_scale::PAGE_TITLE, 600, -0.02).shadow();
+    let words: f32 = path.iter().map(|part| assets.width(part, style)).sum();
+    if words > 0. {
+        style.size *= ((width - separators) / words).min(1.);
+    }
+    let height = (type_scale::PAGE_TITLE * 1.2).ceil();
+    let muted = c(0xffffff, 0.62);
+    let mut x = LIST_X;
+    for (position, part) in path.iter().enumerate() {
+        if position > 0 {
+            out.shadowed_icon(
+                assets,
+                "right",
+                Rect::new(
+                    x + GAP,
+                    CONTENT_TOP + (height - SEPARATOR) / 2.,
+                    SEPARATOR,
+                    SEPARATOR,
+                ),
+                muted,
+            );
+            x += SEPARATOR + GAP * 2.;
+        }
+        let part_width = assets.width(part, style);
+        out.text(
+            *part,
+            Rect::new(x, CONTENT_TOP, part_width + 2., height),
+            style,
+            if position + 1 == path.len() {
+                WHITE
+            } else {
+                muted
+            },
+            false,
+        );
+        x += part_width;
+    }
+}
+
+/// The sections: icons in a column while the page has focus, opening over the page, with their
+/// names, while the sidebar has it.
 fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
     let language = state.preferences.language;
-    for (index, key) in ["interface", "background", "widgets", "system"]
-        .into_iter()
-        .enumerate()
-    {
-        let label = language.t(key);
-        let rect = Rect::new(160., 164.8 + index as f32 * 84., 403.2, 72.);
+    let width = state.sidebar_width();
+    let open = ((width - SIDEBAR_COLLAPSED) / (SIDEBAR_EXPANDED - SIDEBAR_COLLAPSED)).clamp(0., 1.);
+    let panel = Rect::new(
+        SAFE_X,
+        CONTENT_TOP,
+        width,
+        8. + SECTIONS.len() as f32 * SIDEBAR_PITCH,
+    );
+    let radius = SIDEBAR_COLLAPSED / 2.;
+    out.shadow(panel, radius, 24., 6., 0.10 + 0.14 * open);
+    out.shape(panel, radius, c(0x14181d, 0.92));
+    out.border(panel, radius, 1., c(0xffffff, 0.08));
+    // Names are laid out at the open width; while it opens they are cut at its edge.
+    let opening = open > 0. && open < 1.;
+    if opening {
+        out.draw.push(Draw::Clip(Some(panel)));
+    }
+    for (index, (key, icon)) in SECTIONS.into_iter().enumerate() {
+        let rect = Rect::new(
+            SAFE_X + 8.,
+            CONTENT_TOP + 8. + index as f32 * SIDEBAR_PITCH,
+            width - 16.,
+            SIDEBAR_ITEM,
+        );
         let focused = state.focus == Target::Sidebar(index);
-        out.pill(rect, focused, state.section == index);
-        let color = if focused {
+        let selected = state.section == index;
+        if focused {
+            out.draw.push(Draw::RoundedGradient(
+                rect,
+                SIDEBAR_ITEM / 2.,
+                c(0xfafafa, 1.),
+                c(0xe5e5e5, 1.),
+            ));
+        } else if selected {
+            out.shape(rect, SIDEBAR_ITEM / 2., c(0xffffff, 0.16));
+        }
+        let ink = if focused {
             c(0x2c2c2c, 1.)
-        } else if state.section == index {
+        } else if selected {
             WHITE
         } else {
             c(0xeeeeee, 0.73)
         };
-        if state.section == index && state.subpage.is_some() {
-            let nested_path = match &state.subpage {
-                Some(Subpage::DateFormat) => {
-                    Some(vec![language.t("date"), language.t("dateFormat")])
-                }
-                Some(Subpage::ClockFormat) => {
-                    Some(vec![language.t("clock"), language.t("clockFormat")])
-                }
-                Some(Subpage::TimeFormat) => {
-                    Some(vec![language.t("clock"), language.t("timeFormat")])
-                }
-                Some(Subpage::WeatherLocation | Subpage::Temperature) => Some(vec![
-                    language.t("weather"),
-                    language.t(if state.subpage == Some(Subpage::WeatherLocation) {
-                        "location"
-                    } else {
-                        "temperature"
-                    }),
-                ]),
-                Some(Subpage::Input(id)) => Some(vec![
-                    language.t("inputs"),
-                    state
-                        .inventory
-                        .inputs
-                        .iter()
-                        .find(|input| &input.id == id)
-                        .map_or(language.t("inputs"), |input| {
-                            state.preferences.input_title(input)
-                        }),
-                ]),
-                _ => None,
-            };
-            let sub = match &state.subpage {
-                Some(Subpage::AppNames) => language.t("appNames"),
-                Some(Subpage::Greeting) => language.t("greeting"),
-                Some(Subpage::Date) => language.t("date"),
-                Some(Subpage::Weather) => language.t("weather"),
-                Some(Subpage::Shortcuts) => language.t("shortcuts"),
-                Some(Subpage::Crypto) => language.t("crypto"),
-                Some(Subpage::Inputs) => language.t("inputs"),
-                Some(Subpage::Clock) => language.t("clock"),
-                Some(Subpage::Cs2) => language.t("cs2Score"),
-                Some(Subpage::Shows) => language.t("shows"),
-                Some(Subpage::Language) => language.t("language"),
-                Some(Subpage::Appearance) => language.t("uiScale"),
-                Some(Subpage::TextRendering) => language.t("textRendering"),
-                Some(Subpage::HomeTakeover) => language.t("homeTakeover"),
-                _ => "",
-            };
-            let mut path = vec![label];
-            path.extend(nested_path.unwrap_or_else(|| vec![sub]));
-            let gap = 6.;
-            let chevron_size = 17.;
-            let separators_width = (path.len() - 1) as f32 * (gap * 2. + chevron_size);
-            let mut style = text(20.8, 550, -0.02);
-            let text_width: f32 = path.iter().map(|part| assets.width(part, style)).sum();
-            style.size *= ((rect.w - 48.4 - separators_width) / text_width).min(1.);
-            let muted = if focused {
-                c(0x2c2c2c, 0.7)
-            } else {
-                c(0xeeeeee, 0.73)
-            };
-            let mut x = rect.x + 24.2;
-            for (position, &part) in path.iter().enumerate() {
-                if position > 0 {
-                    out.icon(
-                        assets,
-                        "right",
-                        Rect::new(x + gap, rect.y + 27., chevron_size, chevron_size),
-                        muted,
-                    );
-                    x += gap * 2. + chevron_size;
-                }
-                let width = assets.width(part, style);
-                out.text(
-                    part,
-                    Rect::new(x, rect.y + 23.5, width + 2., 25.),
-                    style,
-                    if position == path.len() - 1 {
-                        color
-                    } else {
-                        muted
-                    },
-                    false,
-                );
-                x += width;
-            }
-        } else {
+        out.icon(
+            assets,
+            icon,
+            Rect::new(rect.x + 16., rect.y + 16., 28., 28.),
+            ink,
+        );
+        if open > 0. {
+            let label = language.t(key);
+            // Measured at the open width, so the names do not shrink while the sidebar opens.
+            let room = SIDEBAR_EXPANDED - 16. - 76.;
+            let mut color = ink;
+            color[3] *= open;
             out.text(
                 label,
-                Rect::new(rect.x + 24.2, rect.y + 23.5, 330., 25.),
-                text(20.8, 550, -0.02),
+                Rect::new(rect.x + 60., rect.y + 14.5, room, 31.),
+                assets.fit_text(label, text(type_scale::BODY, 550, -0.02), room),
                 color,
                 false,
             );
-            if state.section == index {
-                out.icon(
-                    assets,
-                    "right",
-                    Rect::new(rect.x + rect.w - 42.6, rect.y + 26.8, 18.4, 18.4),
-                    if focused {
-                        c(0x2c2c2c, 0.6)
-                    } else {
-                        c(0xeeeeee, 0.5)
-                    },
-                );
-            }
         }
         out.control(Target::Sidebar(index), rect, false);
+    }
+    if opening {
+        out.draw.push(Draw::Clip(None));
     }
 }
 
@@ -5716,55 +5777,41 @@ mod tests {
         state.open(2);
         state.section = 2;
         state.subpage = Some(Subpage::DateFormat);
+        state.focus = Target::Choice(0);
         for language in Language::ALL {
             state.preferences.language = language;
-            for focused in [false, true] {
-                state.focus = if focused {
-                    Target::Sidebar(2)
-                } else {
-                    Target::Setting(0)
-                };
-                let mut scene = Scene::new();
-                settings_sidebar(&mut scene, &state, &assets);
-                let parts: Vec<_> = scene
-                    .draw
-                    .iter()
-                    .filter_map(|draw| match draw {
-                        Draw::Text(label, rect, style, color, _)
-                            if (rect.y - 356.3).abs() < 0.001 =>
-                        {
-                            Some((label, rect, style, color))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(parts.len(), 3);
-                assert_eq!(parts[0].0, language.t("widgets"));
-                assert_eq!(parts[1].0, language.t("date"));
-                assert_eq!(parts[2].0, language.t("dateFormat"));
-                assert_eq!(parts[0].3, parts[1].3);
-                assert!(parts[2].3[3] > parts[1].3[3]);
-                let chevrons: Vec<_> = scene
-                    .draw
-                    .iter()
-                    .filter_map(|draw| match draw {
-                        Draw::TintedImage(_, rect, _, _, color)
-                            if (rect.y - 359.8).abs() < 0.001 =>
-                        {
-                            assert_eq!(color, parts[0].3);
-                            Some(rect)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(chevrons.len(), 2);
-                for (index, chevron) in chevrons.iter().enumerate() {
-                    let (label, rect, style, _) = parts[index];
-                    let left_gap = chevron.x - rect.x - assets.width(label, *style);
-                    let right_gap = parts[index + 1].1.x - chevron.x - chevron.w;
-                    assert!((left_gap - 6.).abs() < 0.001);
-                    assert!((right_gap - 6.).abs() < 0.001);
-                }
+            let mut scene = Scene::new();
+            settings_title(&mut scene, &state, &assets, LIST_WIDTH);
+            let parts: Vec<_> = scene
+                .draw
+                .iter()
+                .filter_map(|draw| match draw {
+                    Draw::Text(label, rect, style, color, _) => Some((label, rect, style, color)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(parts.len(), 3);
+            assert_eq!(parts[0].0, language.t("widgets"));
+            assert_eq!(parts[1].0, language.t("date"));
+            assert_eq!(parts[2].0, language.t("dateFormat"));
+            assert_eq!(parts[0].3, parts[1].3);
+            assert!(parts[2].3[0] > parts[1].3[0], "the leaf is brighter");
+            let chevrons: Vec<_> = scene
+                .draw
+                .iter()
+                .filter_map(|draw| match draw {
+                    // The chevrons themselves, not their shadow.
+                    Draw::TintedImage(_, rect, _, _, color) if color[0] > 0.5 => Some(rect),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(chevrons.len(), 2);
+            for (index, chevron) in chevrons.iter().enumerate() {
+                let (label, rect, style, _) = parts[index];
+                let left_gap = chevron.x - rect.x - assets.width(label, *style);
+                let right_gap = parts[index + 1].1.x - chevron.x - chevron.w;
+                assert!((left_gap - 10.).abs() < 0.001);
+                assert!((right_gap - 10.).abs() < 0.001);
             }
         }
     }

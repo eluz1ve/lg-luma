@@ -61,6 +61,8 @@ pub enum Lane {
     Shows,
     /// The tab bar (and Apps' filters) sliding away once the page has scrolled.
     Chrome,
+    /// Settings' sidebar, in pixels: a column of icons, or open with the sections' names.
+    Sidebar,
 }
 
 #[derive(Default)]
