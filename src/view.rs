@@ -262,6 +262,30 @@ impl Scene {
         self.draw
             .push(Draw::TintedImage(path, rect, 0., true, color));
     }
+    /// Moves what was drawn and registered since `draws` and `controls` up by `dy`: chrome that
+    /// slides away with the page.
+    fn slide(&mut self, draws: usize, controls: usize, dy: f32) {
+        if dy == 0. {
+            return;
+        }
+        for draw in &mut self.draw[draws..] {
+            match draw {
+                Draw::Shape(rect, ..)
+                | Draw::RoundedGradient(rect, ..)
+                | Draw::Shadow(rect, ..)
+                | Draw::Text(_, rect, ..)
+                | Draw::Image(_, rect, ..)
+                | Draw::TintedImage(_, rect, ..)
+                | Draw::AppImage(_, rect, ..)
+                | Draw::Picture(_, rect, ..)
+                | Draw::Cover(_, rect, ..) => rect.y -= dy,
+                Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => {}
+            }
+        }
+        for control in &mut self.controls[controls..] {
+            control.rect.y -= dy;
+        }
+    }
     fn control(&mut self, target: Target, rect: Rect, scrollable: bool) {
         self.controls.push(Control {
             target,
@@ -596,7 +620,7 @@ pub struct Navigation {
 }
 pub fn navigation(assets: &Assets, language: Language) -> Navigation {
     let widths = ["home", "apps", "settings"]
-        .map(|key| (assets.width(language.t(key), text(20.8, 550, -0.02)) + 46.4).max(99.2));
+        .map(|key| (assets.width(language.t(key), text(25., 500, -0.02)) + 46.4).max(99.2));
     let width = widths.iter().sum::<f32>() + 25.6 + 19.6;
     let mut x = (1920. - width) / 2. + 9.8;
     let items = widths.map(|width| {
@@ -707,7 +731,9 @@ pub fn scene_with_pill(
     }
     out.draw.push(Draw::EdgeFade(None));
     out.draw.push(Draw::Clip(None));
+    let (draws, controls) = (out.draw.len(), out.controls.len());
     header(&mut out, state, assets, now, pill_x, pill_width);
+    out.slide(draws, controls, state.chrome_offset());
     if let Some(
         overlay @ (Overlay::Options { .. }
         | Overlay::Delete { .. }
@@ -855,8 +881,8 @@ fn header(
         let rect = layout.items[index];
         out.text(
             language.t(key),
-            Rect::new(rect.x, 64.3, rect.w, 25.),
-            text(20.8, 550, -0.02),
+            Rect::new(rect.x, 61.8, rect.w, 30.),
+            text(25., 500, -0.02),
             if state.page_index() == index {
                 c(0x2c2c2c, 1.)
             } else {
@@ -1013,8 +1039,9 @@ fn tile(
     }
     let start = out.draw.len();
     let focused = state.focus == Target::App(app.id.clone());
-    let home = state.page == Page::Home;
-    let amount = if home {
+    // Home and Apps lift the focused card on the shared motion; previews keep the ring.
+    let lifted = matches!(state.page, Page::Home | Page::Apps);
+    let amount = if lifted {
         state.motion.focus(&Target::App(app.id.clone()))
     } else if focused {
         1.
@@ -1023,7 +1050,7 @@ fn tile(
     };
     let base_rect = rect;
     // Keep hitboxes and navigation geometry fixed, including when using the Magic Remote.
-    let rect = if home {
+    let rect = if lifted {
         let scale = 1. + 0.07 * amount;
         Rect::new(
             rect.x - rect.w * (scale - 1.) / 2.,
@@ -1042,7 +1069,7 @@ fn tile(
         0.165 + 0.235 * amount,
     );
 
-    if home {
+    if lifted {
         focus_glow(out, state, rect, 19.2, amount);
     }
     let favorite_color = app_face(out, assets, app, rect, state.preferences.language, 19.2);
@@ -1071,7 +1098,7 @@ fn tile(
             c(0xededed, 1.),
         );
     }
-    if home {
+    if lifted {
         lift_edge(out, rect, 19.2, amount);
     } else if focused {
         out.ring(rect, 19.2);
@@ -3225,7 +3252,10 @@ fn weather_summary(
 
 fn library(out: &mut Scene, state: &State, assets: &Assets) {
     library_grid(out, state, assets);
+    // The filters go up with the grid, like the tab bar.
+    let (draws, controls) = (out.draw.len(), out.controls.len());
     library_toolbar(out, state, assets);
+    out.slide(draws, controls, state.chrome_offset());
 }
 
 /// The toolbar stays centred on the line it sits on at normal scale, clear of the grid.

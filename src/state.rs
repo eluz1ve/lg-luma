@@ -17,6 +17,10 @@ pub const HOME_TAKEOVER_ROW: usize = 9;
 pub const SECTION_COUNT: usize = 4;
 /// System row turning automatic Homebrew app updates on or off (homebrew_updates.rs).
 pub const HOMEBREW_UPDATES_ROW: usize = 13;
+/// How far the tab bar and Apps' filters (down to y 210) slide up to be gone.
+pub const CHROME_TRAVEL: f32 = 220.;
+/// The tvOS safe area's top and bottom margin.
+const SAFE_TOP: f32 = 60.;
 /// Settings › General's focus glow colour row.
 pub const FOCUS_GLOW_ROW: usize = 14;
 pub const SETTINGS_BOTTOM_PADDING: f32 = 64.;
@@ -529,7 +533,8 @@ impl State {
     pub fn animate(&mut self, dt: f32) {
         use crate::motion::Lane;
         let home = self.page == Page::Home;
-        let selected = (home && self.overlay.is_none())
+        let apps = self.page == Page::Apps;
+        let selected = ((home || apps) && self.overlay.is_none())
             .then_some(&self.focus)
             .filter(|target| {
                 matches!(
@@ -549,6 +554,12 @@ impl State {
                 (Lane::Favorites, self.home_scroll),
                 (Lane::Cs2, self.cs2_first as f32),
                 (Lane::Shows, self.shows_first as f32),
+                (Lane::Chrome, self.chrome_target()),
+            ]
+        } else if apps {
+            vec![
+                (Lane::Page, self.scroll),
+                (Lane::Chrome, self.chrome_target()),
             ]
         } else {
             Vec::new()
@@ -559,7 +570,7 @@ impl State {
 
     /// Where the page is drawn: Home eases toward `scroll`, other pages are drawn at it.
     pub fn page_scroll(&self) -> f32 {
-        if self.page == Page::Home {
+        if matches!(self.page, Page::Home | Page::Apps) {
             self.motion.shown(crate::motion::Lane::Page, self.scroll)
         } else {
             self.scroll
@@ -653,7 +664,25 @@ impl State {
     }
 
     pub fn content_viewport(&self) -> Rect {
-        Rect::new(64., 108.8, 1792., 1080. - 108.8)
+        // The tab bar slides away with Home's and Apps' content, giving it the screen's top.
+        let top = (108.8 - self.chrome_offset()).max(0.);
+        Rect::new(64., top, 1792., 1080. - top)
+    }
+
+    /// How far the tab bar (and Apps' filters) has slid up. As in tvOS it is either shown or
+    /// gone: it slides away whole once the page scrolls, never left half on screen, and comes
+    /// back at the top. Settings keep theirs.
+    pub fn chrome_offset(&self) -> f32 {
+        match self.page {
+            Page::Home | Page::Apps => self
+                .motion
+                .shown(crate::motion::Lane::Chrome, self.chrome_target()),
+            Page::Settings => 0.,
+        }
+    }
+
+    fn chrome_target(&self) -> f32 {
+        if self.scroll > 0. { CHROME_TRAVEL } else { 0. }
     }
 
     fn scroll_bottom(&self) -> f32 {
@@ -684,8 +713,10 @@ impl State {
 
     pub fn apps_viewport(&self) -> Rect {
         let content = self.content_viewport();
-        // Below the filters, with room for the focused card's lift.
-        Rect::new(content.x, 236., content.w, content.y + content.h - 236.)
+        // Below the filters, with room for the focused card's lift; up to the top once they
+        // have slid away.
+        let top = (236. - self.chrome_offset()).max(0.);
+        Rect::new(content.x, top, content.w, content.y + content.h - top)
     }
 
     pub fn backgrounds_viewport(&self) -> Rect {
@@ -936,21 +967,36 @@ impl State {
             ) {
                 self.scroll = 0.;
             } else if control.scrollable {
+                let apps = self.page == Page::Apps;
+                let first_row = apps
+                    && matches!(&self.focus, Target::App(id)
+                        if self.apps().iter().position(|app| &app.id == id)
+                            .is_some_and(|index| index < APPS_COLUMNS));
                 let top = if matches!(self.focus, Target::Background(_)) {
                     self.backgrounds_viewport().y + 8.
-                } else if self.page == Page::Apps {
-                    self.apps_viewport().y + 8.
+                } else if apps {
+                    // The bar has slid away: cards may rise to the safe area.
+                    SAFE_TOP
                 } else {
                     120.8
                 };
-                // Home may still be easing: measure where the card is once it settles.
+                // The page may still be easing: measure where the card is once it settles.
                 let y = control.rect.y + self.page_scroll() - self.scroll;
-                if y < top {
-                    self.scroll = (self.scroll + y - top).max(0.);
-                }
-                let bottom = self.scroll_bottom();
-                if y + control.rect.h > bottom {
-                    self.scroll += y + control.rect.h - bottom;
+                if first_row {
+                    // The first row brings the page, and its bar, back to the top.
+                    self.scroll = 0.;
+                } else {
+                    if y < top {
+                        self.scroll = (self.scroll + y - top).max(0.);
+                    }
+                    let bottom = if apps {
+                        1080. - SAFE_TOP
+                    } else {
+                        self.scroll_bottom()
+                    };
+                    if y + control.rect.h > bottom {
+                        self.scroll += y + control.rect.h - bottom;
+                    }
                 }
             }
         }

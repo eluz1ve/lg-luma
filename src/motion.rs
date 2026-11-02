@@ -59,6 +59,8 @@ pub enum Lane {
     Favorites,
     Cs2,
     Shows,
+    /// The tab bar (and Apps' filters) sliding away once the page has scrolled.
+    Chrome,
 }
 
 #[derive(Default)]

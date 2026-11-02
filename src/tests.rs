@@ -46,7 +46,8 @@ fn home_focus_animation_preserves_hitboxes_and_stops_off_home() {
             (b.rect.x, b.rect.y, b.rect.w, b.rect.h)
         );
     }
-    state.page = Page::Apps;
+    // Settings lift nothing (Home and Apps do).
+    state.page = Page::Settings;
     state.animate(2.);
     assert_eq!(state.motion.focus(&Target::App("netflix".into())), 0.);
     assert!(!state.motion.animating());
@@ -66,15 +67,10 @@ fn reduced_home_focus_uses_glow_and_grid_keeps_its_ring() {
         )
     };
     assert!(has_glow(scene(&state)));
+    // Apps lift the focused card the same way, at once with reduced motion.
     state.page = Page::Apps;
     state.animate(0.);
-    assert!(!has_glow(scene(&state)));
-    assert!(
-        scene(&state)
-            .draw
-            .iter()
-            .any(|draw| { matches!(draw, Draw::Shape(_, _, width, _) if *width == 3.2) })
-    );
+    assert!(has_glow(scene(&state)));
 }
 
 #[test]
@@ -3011,7 +3007,7 @@ fn apps_scroll_behind_navigation_without_a_top_cutoff_or_fade() {
 }
 
 #[test]
-fn apps_toolbar_stays_fixed_above_scrolling_cards_and_keeps_pointer_priority() {
+fn apps_toolbar_slides_with_scrolling_cards_and_keeps_pointer_priority() {
     for with_clear_controls in [false, true] {
         let mut state = ready();
         state.open(1);
@@ -3020,7 +3016,8 @@ fn apps_toolbar_stays_fixed_above_scrolling_cards_and_keeps_pointer_priority() {
             state.query = "n".into();
         }
         let before = controls(&state);
-        state.scroll = 200.;
+        // Part of the way: the filters have risen, but not out of sight.
+        state.scroll = 100.;
         let rendered = scene(&state);
         for control in before.iter().filter(|control| {
             matches!(
@@ -3033,7 +3030,7 @@ fn apps_toolbar_stays_fixed_above_scrolling_cards_and_keeps_pointer_priority() {
                 .iter()
                 .find(|item| item.target == control.target)
                 .unwrap();
-            assert_eq!(fixed.rect.y, control.rect.y);
+            assert_eq!(fixed.rect.y, control.rect.y - state.chrome_offset());
             assert!(!fixed.scrollable);
             let (x, y) = fixed.rect.center();
             assert_eq!(
@@ -3041,7 +3038,6 @@ fn apps_toolbar_stays_fixed_above_scrolling_cards_and_keeps_pointer_priority() {
                 Some(fixed.target.clone())
             );
         }
-        assert_eq!(state.hit_test(&rendered.controls, 1400., 230.), None);
         let first = before
             .iter()
             .find(|control| matches!(control.target, Target::App(_)))
@@ -4254,4 +4250,96 @@ fn empty_states_sit_below_the_filters() {
         })
         .fold(f32::MAX, f32::min);
     assert!((250. ..1020.).contains(&top), "{top}");
+}
+
+fn settle(state: &mut State) {
+    for _ in 0..120 {
+        state.animate(1. / 60.);
+    }
+}
+
+fn control_rect(state: &State, target: &Target) -> Option<crate::state::Rect> {
+    controls(state)
+        .into_iter()
+        .find(|c| c.target == *target)
+        .map(|c| c.rect)
+}
+
+#[test]
+fn the_tab_bar_and_filters_slide_away_with_the_grid() {
+    let mut state = apps_page(30);
+    settle(&mut state);
+    // Down from the fourth row to the fifth, below the screen.
+    state.focus = Target::App(state.apps()[18].id.clone());
+    state.direction(Direction::Down, &controls(&state));
+    let controls_now = controls(&state);
+    state.reveal_focus(&controls_now);
+    settle(&mut state);
+    assert!(state.scroll > 0.);
+    for target in [Target::Nav(0), Target::Filter(0)] {
+        let rect = control_rect(&state, &target).unwrap();
+        assert!(
+            rect.y + rect.h <= 0.,
+            "{target:?} still at {}",
+            rect.y + rect.h
+        );
+    }
+    let focused = control_rect(&state, &state.focus.clone()).unwrap();
+    assert!(focused.y >= 60. && focused.y + focused.h <= 1020.);
+}
+
+#[test]
+fn up_from_the_first_row_brings_the_bar_back() {
+    let mut state = apps_page(30);
+    settle(&mut state);
+    state.scroll = 400.;
+    settle(&mut state);
+    state.focus = Target::App(state.apps()[1].id.clone());
+    let controls_now = controls(&state);
+    state.reveal_focus(&controls_now);
+    assert_eq!(state.scroll, 0., "the first row brings the page to its top");
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Filter(0));
+    settle(&mut state);
+    assert_eq!(state.chrome_offset(), 0.);
+}
+
+#[test]
+fn a_hidden_tab_cannot_be_clicked() {
+    let mut state = apps_page(30);
+    settle(&mut state);
+    state.scroll = 600.;
+    settle(&mut state);
+    let hit = state.hit_test(&controls(&state), 900., 76.);
+    assert!(!matches!(hit, Some(Target::Nav(_))), "{hit:?}");
+}
+
+#[test]
+fn apps_scroll_and_focus_ease_like_home() {
+    let mut state = apps_page(30);
+    settle(&mut state);
+    state.focus = Target::App(state.apps()[0].id.clone());
+    state.scroll = 300.;
+    state.animate(1. / 60.);
+    assert!(state.page_scroll() > 0. && state.page_scroll() < 300.);
+    let lift = state.motion.focus(&state.focus.clone());
+    assert!(lift > 0. && lift < 1.);
+    state.preferences.reduced_motion = true;
+    state.scroll = 0.;
+    state.animate(1. / 60.);
+    assert_eq!(state.page_scroll(), 0.);
+}
+
+#[test]
+fn a_slightly_scrolled_home_hides_the_whole_tab_bar_never_half() {
+    let mut state = ready();
+    settle(&mut state);
+    state.scroll = 30.;
+    settle(&mut state);
+    assert_eq!(state.chrome_offset(), crate::state::CHROME_TRAVEL);
+    let tab = control_rect(&state, &Target::Nav(0)).unwrap();
+    assert!(tab.y + tab.h <= 0., "{tab:?}");
+    state.scroll = 0.;
+    settle(&mut state);
+    assert_eq!(state.chrome_offset(), 0.);
 }
