@@ -140,7 +140,8 @@ fn lampa_lines(cub: &Cub, now: i64, date: Date) -> [Vec<Line>; 3] {
     let mut watched: Vec<_> = cub
         .watched
         .iter()
-        .filter(|watched| watched.episode.is_some() && watched.at >= now - CONTINUE_WITHIN)
+        // Series only: whether a film was watched to the end is not known.
+        .filter(|watched| watched.card.starts_with("tv_") && watched.at >= now - CONTINUE_WITHIN)
         .filter(|watched| !cards.contains(&watched.card.as_str()))
         .collect();
     watched.sort_by_key(|watched| std::cmp::Reverse(watched.at));

@@ -598,17 +598,33 @@ pub fn parse_history(reply: &Value) -> Vec<Watched> {
         .iter()
         .filter_map(|entry| {
             let card = entry.get("card")?;
-            let last = entry.get("last").unwrap_or(entry);
+            let last = entry
+                .get("last")
+                .filter(|last| last.is_object())
+                .unwrap_or(entry);
             let millis =
                 number(last.get("watched_at")).or_else(|| number(entry.get("watched_at")))?;
-            let (season, episode) = (small(last.get("season")), small(last.get("episode")));
+            let known = |season: u32, episode: u32| season > 0 && episode > 0;
+            // Without its last episode, the latest of the episodes watched.
+            let episode = Some((small(last.get("season")), small(last.get("episode"))))
+                .filter(|&(season, episode)| known(season, episode))
+                .or_else(|| {
+                    entry
+                        .get("episodes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|e| (small(e.get("season")), small(e.get("episode"))))
+                        .filter(|&(season, episode)| known(season, episode))
+                        .max()
+                });
             Some(Watched {
                 card: text(entry.get("card_id"), 40)
                     .or_else(|| card_id(card, entry.get("card_type")))?,
                 title: text(card.get("name"), 120)
                     .or_else(|| text(card.get("original_name"), 120))?,
                 poster: poster_path(card.get("poster_path")),
-                episode: (season > 0 && episode > 0).then_some((season, episode)),
+                episode,
                 at: millis / 1000,
             })
         })

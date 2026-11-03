@@ -144,6 +144,21 @@ fn the_history_gives_each_card_its_last_episode() {
 }
 
 #[test]
+fn a_series_without_its_last_episode_takes_the_latest_of_its_episodes() {
+    let entry = |episodes: Value| {
+        json!({"history": [{
+            "card_id": "tv_1", "card_type": "tv", "watched_at": 1_000_000i64,
+            "last": null, "season": null, "episode": null, "episodes": episodes,
+            "card": {"id": 1, "name": "Show"}
+        }]})
+    };
+    let episodes = json!([{"season": 1, "episode": 9}, {"season": 2, "episode": 3}, {"season": 2, "episode": 1}]);
+    assert_eq!(parse_history(&entry(episodes))[0].episode, Some((2, 3)));
+    let none = parse_history(&entry(json!([])));
+    assert_eq!((none.len(), none[0].episode, none[0].at), (1, None, 1_000));
+}
+
+#[test]
 fn posters_come_from_tmdb_at_card_size() {
     assert_eq!(
         poster_urls("/1XS1.jpg"),

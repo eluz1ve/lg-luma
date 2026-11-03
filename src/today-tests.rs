@@ -238,6 +238,18 @@ fn lampa_lists_todays_releases_then_unwatched_ones_then_what_to_continue() {
 }
 
 #[test]
+fn series_without_a_known_episode_are_continued_and_films_are_not() {
+    let mut state = state();
+    signed_in(&mut state);
+    let mut film = watched("movie_550", 1);
+    film.episode = None;
+    let mut series = watched("tv_1399", 3);
+    series.episode = None;
+    state.cub.watched = vec![film, series];
+    assert_eq!(today(&state, NOW, DAY, DATE).lines, [resume("tv_1399")]);
+}
+
+#[test]
 fn each_kind_of_line_gets_one_before_any_gets_two() {
     let mut state = state();
     signed_in(&mut state);
