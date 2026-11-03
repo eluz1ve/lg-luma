@@ -28,6 +28,7 @@ mod layout;
 mod luna;
 mod model;
 mod motion;
+mod perf_log;
 mod platform;
 mod raster;
 mod recents;
@@ -854,6 +855,7 @@ fn run() -> Result<(), String> {
     } else {
         storage::load(&preferences_path)?
     };
+    let mut perf_log = preferences_path.parent().and_then(perf_log::PerfLog::open);
     let public_update_checks = update::public_checks_enabled(
         !options.script.is_empty(),
         options.test_update_version.is_some(),
@@ -2074,21 +2076,34 @@ fn run() -> Result<(), String> {
                 }
                 presented += 1;
                 last_present = Instant::now();
+                let timing = diagnostics::Frame {
+                    interval_ms: 0.,
+                    compose_ms,
+                    render_ms: renderer.stats().cpu_submission_ms,
+                    swap_ms,
+                    redrawn: renderer.stats().redrawn_fraction,
+                    glyph_ms: renderer.stats().glyph_ms,
+                    vector_ms: renderer.stats().vector_load_ms,
+                    image_ms: renderer.stats().image_load_ms,
+                };
+                if let Some(log) = &mut perf_log {
+                    let label = format!(
+                        "{:?}{}",
+                        state.page,
+                        if state.overlay.is_some() {
+                            "+overlay"
+                        } else {
+                            ""
+                        }
+                    );
+                    log.record(last_present, &label, &timing);
+                }
                 if options.profile_frames.is_some() {
                     profile.record(
                         Instant::now(),
                         renderer.stats().cpu_submission_ms,
                         final_frame && options.screenshot.is_some(),
-                        diagnostics::Frame {
-                            interval_ms: 0.,
-                            compose_ms,
-                            render_ms: renderer.stats().cpu_submission_ms,
-                            swap_ms,
-                            redrawn: renderer.stats().redrawn_fraction,
-                            glyph_ms: renderer.stats().glyph_ms,
-                            vector_ms: renderer.stats().vector_load_ms,
-                            image_ms: renderer.stats().image_load_ms,
-                        },
+                        timing,
                     );
                 }
                 let drawable = Size::new(width, height);
