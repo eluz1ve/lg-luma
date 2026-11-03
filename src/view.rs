@@ -830,8 +830,9 @@ pub fn scene_with_pill(
     let mut out = Scene::new();
     let key = state.background_key();
     let current = assets.background(state, &key);
-    // Glass blurs the wallpaper itself, not the shade under Home's text.
-    let behind = |key: &str| assets.background_shaded(state, key, false);
+    // Glass blurs the wallpaper as drawn, its gradient too, so a pane is no lighter than the
+    // ground around it.
+    let behind = |key: &str| assets.background(state, key);
     if let Some((previous, start)) = &state.previous_background {
         out.image(assets.background(state, previous), SCREEN, 0., false);
         let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
