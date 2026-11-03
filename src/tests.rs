@@ -419,11 +419,59 @@ fn hiding_restores_nearest_app_and_hidden_filter_can_restore_it() {
     assert_eq!(state.filter, 0);
 }
 
+/// Holding OK on a Home app opens its options, with Delete, as on the Apps page; Move there
+/// starts reordering.
+fn start_moving(state: &mut State, id: &str) {
+    state.focus = Target::App(id.into());
+    state.hold();
+    state.focus = Target::MoveApp;
+    state.activate();
+}
+
 #[test]
-fn reorder_persists_order_and_keeps_selected_identity() {
+fn holding_a_home_app_opens_its_options_with_delete_and_move() {
     let mut state = ready();
     state.focus = Target::App("netflix".into());
     state.hold();
+    assert!(matches!(
+        &state.overlay,
+        Some(Overlay::Options { id, .. }) if id == "netflix"
+    ));
+    assert!(state.moving.is_none());
+    let targets: Vec<_> = controls(&state).into_iter().map(|c| c.target).collect();
+    assert!(targets.contains(&Target::MoveApp));
+    assert!(targets.contains(&Target::Option(2)));
+    // Move sits under Open; Delete stays last.
+    let rows: Vec<_> = targets
+        .iter()
+        .filter(|t| matches!(t, Target::OpenApp | Target::MoveApp | Target::Option(_)))
+        .collect();
+    assert_eq!(rows[..2], [&Target::OpenApp, &Target::MoveApp]);
+    assert_eq!(rows.last(), Some(&&Target::Option(2)));
+}
+
+#[test]
+fn move_in_home_options_starts_reordering_that_app() {
+    let mut state = ready();
+    start_moving(&mut state, "netflix");
+    assert!(state.overlay.is_none());
+    assert_eq!(state.moving.as_deref(), Some("netflix"));
+    assert_eq!(state.focus, Target::App("netflix".into()));
+}
+
+#[test]
+fn apps_page_options_have_no_move() {
+    let mut state = ready();
+    state.open(1);
+    state.focus = Target::App("netflix".into());
+    state.hold();
+    assert!(!controls(&state).iter().any(|c| c.target == Target::MoveApp));
+}
+
+#[test]
+fn reorder_persists_order_and_keeps_selected_identity() {
+    let mut state = ready();
+    start_moving(&mut state, "netflix");
     assert_eq!(
         state.direction(Direction::Right, &controls(&state)),
         vec![Effect::Save]
@@ -685,8 +733,7 @@ fn reordering_skips_hidden_and_unavailable_favorite_slots() {
         "amazon".into(),
     ]);
     state.preferences.hidden.push("youtube.leanback.v4".into());
-    state.focus = Target::App("netflix".into());
-    state.hold();
+    start_moving(&mut state, "netflix");
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(
         state.preferences.favorites.unwrap(),

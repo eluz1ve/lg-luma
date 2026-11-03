@@ -101,6 +101,8 @@ pub enum Target {
     DismissNotice,
     Option(usize),
     OpenApp,
+    /// Options › Move: reorder a Home favorite with Left and Right.
+    MoveApp,
     ConfirmDelete,
     CancelDelete,
     Key(usize),
@@ -2237,16 +2239,9 @@ impl State {
         vec![Effect::Save, Effect::Refresh]
     }
 
+    /// Holding OK opens the focused item's options; a Home app's include Move.
     pub fn hold(&mut self) {
-        if self.page == Page::Home && self.overlay.is_none() {
-            if let Target::App(id) = &self.focus {
-                self.moving = Some(id.clone());
-                self.notice = None;
-                self.dirty = true;
-            }
-        } else {
-            self.options();
-        }
+        self.options();
     }
 
     pub fn text(&mut self, text: &str) {
@@ -2597,6 +2592,16 @@ impl State {
             Target::App(_) if self.page == Page::Apps && !self.launching => self.options(),
             Target::App(id) | Target::Input(id) if !self.launching => {
                 return vec![Effect::Launch(id)];
+            }
+            Target::MoveApp => {
+                if self.page == Page::Home
+                    && let Some(Overlay::Options { id, restore }) = self.overlay.take()
+                {
+                    self.panel_started = None;
+                    self.focus = restore;
+                    self.moving = Some(id);
+                    self.notice = None;
+                }
             }
             Target::OpenApp if !self.launching => {
                 if let Some(Overlay::Options { id, .. }) = &self.overlay

@@ -5856,15 +5856,46 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     let skippable = background
         && id == crate::aerials::ID
         && state.preferences.background == crate::aerials::ID;
-    let height = if shortcut {
-        176.
+    let hidden = state.preferences.hidden.iter().any(|item| item == id);
+    // Only Home's favorites row is reordered.
+    let movable = state.page == Page::Home && favorite && !hidden;
+    let actions = if shortcut {
+        vec![
+            (Target::TileTest(id.into()), language.t("testShortcut")),
+            (Target::TileRemove(id.into()), language.t("removeTile")),
+        ]
     } else if background {
-        if deletable || skippable { 176. } else { 99.2 }
-    } else if deletable {
-        329.6
+        let mut actions = vec![(Target::UseBackground, language.t("useBackground"))];
+        if deletable {
+            actions.push((Target::DeleteBackground, language.t("deleteBackground")));
+        }
+        if skippable {
+            actions.push((Target::NextAerial, language.t("nextAerial")));
+        }
+        actions
     } else {
-        252.8
+        let mut actions = vec![(Target::OpenApp, language.t("open"))];
+        if movable {
+            actions.push((Target::MoveApp, language.t("move")));
+        }
+        actions.push((
+            Target::Option(0),
+            if favorite {
+                language.t("removeFavorite")
+            } else {
+                language.t("addFavorite")
+            },
+        ));
+        actions.push((
+            Target::Option(1),
+            language.t(if hidden { "showApp" } else { "hideApp" }),
+        ));
+        if deletable {
+            actions.push((Target::Option(2), language.t("deleteApp")));
+        }
+        actions
     };
+    let height = 22.4 + 76.8 * actions.len() as f32;
     let card = anchor.unwrap_or(Rect::new(460., 380., 256., 153.6));
     let x = if card.x + card.w + 32. + 520. <= 1836. {
         card.x + card.w + 32.
@@ -5886,42 +5917,6 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     out.modal = Some(panel);
     out.shadow(panel, 27.2, 120., 25., 0.47);
     out.modal_glass(panel, 27.2);
-    let hidden = state.preferences.hidden.iter().any(|item| item == id);
-    let actions = if shortcut {
-        vec![
-            (Target::TileTest(id.into()), language.t("testShortcut")),
-            (Target::TileRemove(id.into()), language.t("removeTile")),
-        ]
-    } else if background {
-        let mut actions = vec![(Target::UseBackground, language.t("useBackground"))];
-        if deletable {
-            actions.push((Target::DeleteBackground, language.t("deleteBackground")));
-        }
-        if skippable {
-            actions.push((Target::NextAerial, language.t("nextAerial")));
-        }
-        actions
-    } else {
-        vec![
-            (Target::OpenApp, language.t("open")),
-            (
-                Target::Option(0),
-                if favorite {
-                    language.t("removeFavorite")
-                } else {
-                    language.t("addFavorite")
-                },
-            ),
-            (
-                Target::Option(1),
-                language.t(if hidden { "showApp" } else { "hideApp" }),
-            ),
-            (Target::Option(2), language.t("deleteApp")),
-        ]
-        .into_iter()
-        .take(if deletable { 4 } else { 3 })
-        .collect()
-    };
     for (row, (target, label)) in actions.into_iter().enumerate() {
         let rect = Rect::new(
             panel.x + 16.,
@@ -5966,6 +5961,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
             assets,
             match &target {
                 Target::OpenApp | Target::TileTest(_) => "arrow",
+                Target::MoveApp => "move",
                 Target::UseBackground => "check",
                 Target::NextAerial => "right",
                 Target::Option(0) => {
