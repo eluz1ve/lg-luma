@@ -4,15 +4,37 @@ use crate::app_artwork::Artwork;
 use crate::cub::{self, Account, CLIENT_ID, Failure, Grant, HOSTS, Login, Profile, SCOPE, Tokens};
 use serde_json::Value;
 use std::{
-    io::Read,
+    io::{Read, Write},
+    path::PathBuf,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
     thread,
     time::Duration,
 };
+
+static LOG: OnceLock<PathBuf> = OnceLock::new();
+
+/// Diagnostics: CUB's answers (statuses and error codes, never tokens) are appended to `path`.
+pub fn log_to(path: PathBuf) {
+    let _ = LOG.set(path);
+}
+
+pub fn log(line: impl AsRef<str>) {
+    let Some(path) = LOG.get() else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let _ = writeln!(file, "{now} {}", line.as_ref());
+    }
+}
 
 /// A month of releases or a page of history is well under this.
 const LIMIT: usize = 2 * 1024 * 1024;
@@ -46,13 +68,18 @@ impl Client {
     /// Runs `request` against each mirror until one answers, and reads its JSON.
     fn call(
         &self,
+        path: &str,
         request: impl Fn(&str) -> Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<(u16, Value), String> {
         let first = self.host.load(Ordering::Relaxed);
         for offset in 0..HOSTS.len() {
             let index = (first + offset) % HOSTS.len();
-            let Ok(mut response) = request(HOSTS[index]) else {
-                continue;
+            let mut response = match request(HOSTS[index]) {
+                Ok(response) => response,
+                Err(error) => {
+                    log(format!("{} {path}: {error}", HOSTS[index]));
+                    continue;
+                }
             };
             self.host.store(index, Ordering::Relaxed);
             let status = response.status().as_u16();
@@ -66,14 +93,21 @@ impl Client {
             if bytes.len() > LIMIT {
                 return Err("The CUB reply is too large".into());
             }
-            let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            log(format!(
+                "{} {path}: HTTP {status} error={} code={} bytes={}",
+                HOSTS[index],
+                value.get("error").unwrap_or(&Value::Null),
+                value.get("code").unwrap_or(&Value::Null),
+                bytes.len()
+            ));
             return Ok((status, value));
         }
         Err("CUB is unavailable.".into())
     }
 
     fn post(&self, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
-        self.call(|host| {
+        self.call(path, |host| {
             self.agent
                 .post(format!("https://{host}/api/{path}"))
                 .header("User-Agent", "LumaNative")
@@ -90,7 +124,7 @@ impl Client {
         profile: Option<&str>,
     ) -> Result<Value, Failure> {
         let (status, value) = self
-            .call(|host| {
+            .call(path, |host| {
                 let mut request = self
                     .agent
                     .get(format!("https://{host}/api/{path}"))

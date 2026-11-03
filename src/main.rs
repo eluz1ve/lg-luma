@@ -681,8 +681,18 @@ fn cub_tick(
     while let Ok(response) = service.receiver.try_recv() {
         state.dirty = true;
         match response {
-            cub_service::Response::Login(result) => state.cub.login(result, now),
+            cub_service::Response::Login(result) => {
+                cub_service::log(match &result {
+                    Ok(login) => format!("login: {} every {} s", login.uri, login.interval),
+                    Err(error) => format!("login: {error}"),
+                });
+                state.cub.login(result, now)
+            }
             cub_service::Response::Grant { device_code, grant } => {
+                cub_service::log(match &grant {
+                    cub::Grant::Tokens(_) => "grant: tokens".to_owned(),
+                    other => format!("grant: {other:?}"),
+                });
                 if state.cub.grant(&device_code, grant, now).is_some() {
                     keep(&state.cub);
                     state.cub_signed_in();
@@ -692,11 +702,23 @@ fn cub_tick(
                 id,
                 refreshed,
                 result,
-            } => match state.cub.account(id, refreshed, result, now) {
-                cub::Saved::Tokens => keep(&state.cub),
-                cub::Saved::Forget => cub::forget(path),
-                cub::Saved::Nothing => {}
-            },
+            } => {
+                cub_service::log(match &result {
+                    Ok(account) => format!(
+                        "account: profile {} releases {} watched {} renewed {}",
+                        account.profile.id,
+                        account.releases.len(),
+                        account.watched.len(),
+                        refreshed.is_some()
+                    ),
+                    Err(failure) => format!("account: {failure:?}"),
+                });
+                match state.cub.account(id, refreshed, result, now) {
+                    cub::Saved::Tokens => keep(&state.cub),
+                    cub::Saved::Forget => cub::forget(path),
+                    cub::Saved::Nothing => {}
+                }
+            }
             cub_service::Response::Poster { path, image } => {
                 state.cub.accept_poster(path, image);
             }
@@ -949,6 +971,9 @@ fn run() -> Result<(), String> {
     let mut state = State::new(initial_preferences);
     // Lampa's CUB sign-in, kept beside the preferences and never in them.
     let cub_path = preferences_path.with_file_name("cub.json");
+    if preferences_path.with_file_name("perf").exists() {
+        cub_service::log_to(preferences_path.with_file_name("cub.log"));
+    }
     if let Some((tokens, profile)) = cub::load(&cub_path) {
         state.cub.sign_in_with(tokens, profile);
     }
