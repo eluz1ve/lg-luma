@@ -327,6 +327,35 @@ impl BackButton {
     }
 }
 
+/// Opens an app, and Lampa on `card`; on the desktop, a notice names it.
+fn launch(state: &mut State, platform: &Platform, id: String, card: Option<String>) {
+    if scroll_preview::is_placeholder(&id) {
+        state.notify(state.preferences.language.t("scrollTestOnly"));
+        return;
+    }
+    if state.launching {
+        return;
+    }
+    if platform.webos {
+        state.launching = true;
+        state.notify(state.preferences.language.t("opening"));
+        platform.send(Request::Launch(id, card));
+    } else {
+        let title = state
+            .inventory
+            .apps
+            .iter()
+            .find(|a| a.id == id)
+            .map_or(id.as_str(), |app| app.title.as_str());
+        state.notify(
+            state
+                .preferences
+                .language
+                .format("desktopPreview", &[("app", title)]),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn effects(
     effects: Vec<Effect>,
@@ -356,32 +385,8 @@ fn effects(
                     platform.send(Request::Refresh);
                 }
             }
-            Effect::Launch(id) => {
-                if scroll_preview::is_placeholder(&id) {
-                    state.notify(state.preferences.language.t("scrollTestOnly"));
-                    continue;
-                }
-                if !state.launching {
-                    if platform.webos {
-                        state.launching = true;
-                        state.notify(state.preferences.language.t("opening"));
-                        platform.send(Request::Launch(id));
-                    } else {
-                        let title = state
-                            .inventory
-                            .apps
-                            .iter()
-                            .find(|a| a.id == id)
-                            .map_or(id.as_str(), |app| app.title.as_str());
-                        state.notify(
-                            state
-                                .preferences
-                                .language
-                                .format("desktopPreview", &[("app", title)]),
-                        );
-                    }
-                }
-            }
+            Effect::Launch(id) => launch(state, platform, id, None),
+            Effect::OpenCard { app, card } => launch(state, platform, app, Some(card)),
             Effect::FireWebhook(tile) => webhook.send(tile),
             Effect::UpdateDownload(release) => updates.request(update::Request::Download(release)),
             Effect::Quit => return false,
@@ -593,29 +598,16 @@ fn shows_tick(
     offset: time::UtcOffset,
 ) {
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let installed: Vec<(String, String)> = state
-        .inventory
-        .apps
-        .iter()
-        .map(|app| (app.id.clone(), app.title.clone()))
-        .collect();
-    let country = shows_country(state.preferences.language);
     let (command, changed) = state.shows.sync(
         state.preferences.show_shows,
         visible && state.page == state::Page::Home,
-        country,
-        &installed,
         now,
     );
     state.dirty |= changed;
     service.generation(state.shows.generation());
     if let Some(mut command) = command {
-        // The schedules follow the TV's own day.
-        let local = OffsetDateTime::now_utc().to_offset(offset);
-        command.date = local.date();
-        command.until = local.date().next_day().map_or(i64::MAX, |day| {
-            day.midnight().assume_offset(offset).unix_timestamp()
-        });
+        // What is new follows the TV's own day.
+        command.date = OffsetDateTime::now_utc().to_offset(offset).date();
         service.send(command);
     }
     while let Ok(response) = service.receiver.try_recv() {
@@ -627,12 +619,14 @@ fn shows_tick(
                     .min(state.shows.list.len().saturating_sub(shows::VISIBLE));
                 accepted
             }
-            shows_service::Response::Poster { url, image } => state.shows.accept_poster(url, image),
+            shows_service::Response::Poster { path, image } => {
+                state.shows.accept_poster(path, image)
+            }
         };
     }
     if state.preferences.show_shows && visible {
-        for url in state.shows.wanted_posters(state.shows_first) {
-            service.poster(url);
+        for path in state.shows.wanted_posters(state.shows_first) {
+            service.poster(path);
         }
     }
 }
@@ -734,21 +728,6 @@ fn cub_tick(
 }
 
 /// The country whose TV schedule joins the streaming one, from the UI language.
-fn shows_country(language: i18n::Language) -> &'static str {
-    match language.code() {
-        "pt" => "BR",
-        "de" => "DE",
-        "fr" => "FR",
-        "es" => "ES",
-        "it" => "IT",
-        "pl" => "PL",
-        "nl" => "NL",
-        "sv" => "SE",
-        "ru" => "RU",
-        _ => "US",
-    }
-}
-
 fn cs2_tick(state: &mut State, service: &cs2_service::Service, visible: bool) {
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let (command, changed) = state.cs2.sync(

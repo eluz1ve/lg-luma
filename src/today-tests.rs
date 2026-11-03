@@ -1,12 +1,11 @@
 use super::*;
 use crate::{
     model::{Preferences, demo_inventory},
-    shows::{Episode, Show},
+    shows::Show,
 };
 
 /// 1 November 2026, 20:00 UTC; the TV's day is that UTC day.
 const NOW: i64 = 1_793_563_200;
-const DAY: (i64, i64) = (1_793_491_200, 1_793_491_200 + 86_400);
 const DATE: time::Date = match time::Date::from_calendar_date(2026, time::Month::November, 1) {
     Ok(date) => date,
     Err(_) => panic!(),
@@ -48,23 +47,21 @@ fn feed(state: &mut State, matches: &[(&str, &str, i64)]) {
     state.cs2.accept(command.id, Ok(feed), NOW);
 }
 
-fn show(id: i64, app: bool, airs: &[i64]) -> Show {
+/// A series of TV Shows whose latest episode came out `days` before today.
+fn show(id: i64, days: i64) -> Show {
     Show {
         id,
-        title: format!("Show {id}"),
+        name: format!("Show {id}"),
+        original: format!("Show {id}"),
         poster: None,
-        meta: String::new(),
-        service: Some("Netflix"),
-        app: app.then(|| "netflix".to_owned()),
-        episodes: airs
-            .iter()
-            .map(|&airs| Episode {
-                airs,
-                season: Some(1),
-                number: Some(2),
-            })
-            .collect(),
+        season: Some(1),
+        aired: DATE - time::Duration::days(days),
+        rating: None,
     }
+}
+
+fn episode(show: i64) -> Line {
+    Line::Episode { show }
 }
 
 fn matched(id: &str) -> Line {
@@ -72,7 +69,7 @@ fn matched(id: &str) -> Line {
 }
 
 #[test]
-fn live_matches_come_first_then_events_by_time_then_aired_episodes() {
+fn live_matches_come_first_then_matches_by_time_then_new_episodes() {
     let mut state = state();
     feed(
         &mut state,
@@ -83,25 +80,12 @@ fn live_matches_come_first_then_events_by_time_then_aired_episodes() {
             ("later", "upcoming", NOW + 13 * 3600),
         ],
     );
-    state.shows.list = vec![
-        show(1, true, &[NOW - 5 * 3600]),
-        show(2, true, &[NOW + 3600]),
-    ];
-    let today = today(&state, NOW, DAY, DATE);
+    state.shows.list = vec![show(1, 1), show(2, 0)];
+    let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
-        [
-            matched("live"),
-            Line::Episode {
-                show: 2,
-                airs: NOW + 3600
-            },
-            matched("soon"),
-            Line::Episode {
-                show: 1,
-                airs: NOW - 5 * 3600
-            },
-        ]
+        [matched("live"), matched("soon"), episode(1), episode(2)],
+        "the series in the feed's order"
     );
     assert_eq!(today.more, 0);
 }
@@ -121,7 +105,7 @@ fn crypto_beside_is_always_the_last_line_and_the_rest_counts_as_more() {
             ("e", "live", NOW),
         ],
     );
-    let today = today(&state, NOW, DAY, DATE);
+    let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
         [
@@ -139,44 +123,29 @@ fn crypto_beside_is_always_the_last_line_and_the_rest_counts_as_more() {
 fn the_center_widget_or_one_switched_off_adds_nothing() {
     let mut state = state();
     feed(&mut state, &[("a", "live", NOW)]);
-    state.shows.list = vec![show(1, true, &[NOW + 60])];
+    state.shows.list = vec![show(1, 0)];
     state.preferences.show_crypto = true;
     state.preferences.crypto_beside = false;
     state.preferences.cs2_today = false;
     state.preferences.shows_today = false;
     // Only one widget stands in the center, CS2 first; the others stay in Today.
-    assert_eq!(
-        today(&state, NOW, DAY, DATE).lines,
-        [
-            Line::Episode {
-                show: 1,
-                airs: NOW + 60
-            },
-            Line::Crypto
-        ]
-    );
+    assert_eq!(today(&state, NOW, DATE).lines, [episode(1), Line::Crypto]);
     state.preferences.show_crypto = false;
     state.preferences.cs2_today = true;
     state.preferences.shows_today = true;
     state.preferences.show_cs2 = false;
     state.preferences.show_shows = false;
-    assert_eq!(today(&state, NOW, DAY, DATE), Today::default());
+    assert_eq!(today(&state, NOW, DATE), Today::default());
 }
 
 #[test]
-fn episodes_need_an_installed_app_and_todays_air_time() {
+fn series_need_an_episode_out_today() {
     let mut state = state();
-    state.shows.list = vec![
-        show(1, false, &[NOW + 60]),
-        show(2, true, &[DAY.0 - 60, DAY.1]),
-        show(3, true, &[DAY.0 - 86_400, DAY.0 + 60]),
-    ];
+    state.shows.list = vec![show(1, 2), show(2, 1), show(3, 9), show(4, 0)];
     assert_eq!(
-        today(&state, NOW, DAY, DATE).lines,
-        [Line::Episode {
-            show: 3,
-            airs: DAY.0 + 60
-        }]
+        today(&state, NOW, DATE).lines,
+        [episode(2), episode(4)],
+        "dated yesterday may be out today"
     );
 }
 
@@ -185,7 +154,7 @@ fn a_stale_feed_adds_no_matches() {
     let mut state = state();
     feed(&mut state, &[("a", "live", NOW)]);
     let later = NOW + crate::cs2::MAX_AGE + 1;
-    assert!(today(&state, later, DAY, DATE).lines.is_empty());
+    assert!(today(&state, later, DATE).lines.is_empty());
 }
 
 #[test]
@@ -259,7 +228,7 @@ fn lampa_lists_todays_releases_then_unwatched_ones_then_what_to_continue() {
         watched("tv_last", 30),
         watched("tv_month", 24 * 30),
     ];
-    let today = today(&state, NOW, DAY, DATE);
+    let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
         [fresh("tv_today", 0), fresh("tv_week", 3), resume("tv_last")]
@@ -276,7 +245,7 @@ fn series_without_a_known_episode_are_continued_and_films_are_not() {
     let mut series = watched("tv_1399", 3);
     series.episode = None;
     state.cub.watched = vec![film, series];
-    assert_eq!(today(&state, NOW, DAY, DATE).lines, [resume("tv_1399")]);
+    assert_eq!(today(&state, NOW, DATE).lines, [resume("tv_1399")]);
 }
 
 #[test]
@@ -293,7 +262,7 @@ fn each_kind_of_line_gets_one_before_any_gets_two() {
     );
     state.cub.releases = vec![release("tv_a", 0, false), release("tv_b", 0, false)];
     state.cub.watched = vec![watched("tv_c", 5)];
-    let today = today(&state, NOW, DAY, DATE);
+    let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
         [
@@ -308,20 +277,14 @@ fn each_kind_of_line_gets_one_before_any_gets_two() {
 }
 
 #[test]
-fn with_lampa_in_today_tvmaze_episodes_leave_it() {
+fn with_lampa_in_today_the_feeds_series_leave_it() {
     let mut state = state();
-    state.shows.list = vec![show(1, true, &[NOW + 60])];
+    state.shows.list = vec![show(1, 0)];
     signed_in(&mut state);
-    assert_eq!(today(&state, NOW, DAY, DATE), Today::default());
+    assert_eq!(today(&state, NOW, DATE), Today::default());
     state.preferences.lampa_today = false;
     state.cub.watched = vec![watched("tv_c", 5)];
-    assert_eq!(
-        today(&state, NOW, DAY, DATE).lines,
-        [Line::Episode {
-            show: 1,
-            airs: NOW + 60
-        }]
-    );
+    assert_eq!(today(&state, NOW, DATE).lines, [episode(1)]);
 }
 
 #[test]
@@ -339,30 +302,18 @@ fn opened_the_card_lists_the_whole_day_by_section() {
             ("later", "upcoming", NOW + 7200),
         ],
     );
-    state.shows.list = vec![show(1, true, &[NOW - 3600]), show(2, true, &[NOW + 600])];
+    state.shows.list = vec![show(1, 0), show(2, 1)];
     // The card keeps five lines; opened, nothing is left out.
-    assert_eq!(today(&state, NOW, DAY, DATE).more, 3);
+    assert_eq!(today(&state, NOW, DATE).more, 3);
     assert_eq!(
-        sections(&state, NOW, DAY, DATE),
+        sections(&state, NOW, DATE),
         [
             (
                 Section::Live,
                 vec![matched("a"), matched("b"), matched("c")]
             ),
             (Section::Matches, vec![matched("soon"), matched("later")]),
-            (
-                Section::Episodes,
-                vec![
-                    Line::Episode {
-                        show: 2,
-                        airs: NOW + 600
-                    },
-                    Line::Episode {
-                        show: 1,
-                        airs: NOW - 3600
-                    }
-                ]
-            ),
+            (Section::Episodes, vec![episode(1), episode(2)]),
             (Section::Prices, vec![Line::Crypto]),
         ]
     );
@@ -375,7 +326,7 @@ fn opened_with_lampa_its_releases_and_series_to_continue_have_their_sections() {
     state.cub.releases = vec![release("tv_a", 0, false), release("tv_b", 2, false)];
     state.cub.watched = vec![watched("tv_c", 5)];
     assert_eq!(
-        sections(&state, NOW, DAY, DATE),
+        sections(&state, NOW, DATE),
         [
             (Section::Episodes, vec![fresh("tv_a", 0), fresh("tv_b", 2)]),
             (Section::Continue, vec![resume("tv_c")]),

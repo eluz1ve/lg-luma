@@ -3688,14 +3688,29 @@ fn airplay_input_is_optional_and_uses_native_receiver_launch() {
     assert_eq!(&inputs[..original.len()], original.as_slice());
     assert_eq!(inputs.last().unwrap().id, "airplay");
     assert_eq!(
-        crate::platform::launch_request("airplay"),
+        crate::platform::launch_request("airplay", None),
         ("luna://airplay.service/showAirplayPage", json!({}))
     );
     assert_eq!(
-        crate::platform::launch_request("com.webos.app.hdmi2"),
+        crate::platform::launch_request("com.webos.app.hdmi2", None),
         (
             "luna://com.webos.applicationManager/launch",
             json!({"id":"com.webos.app.hdmi2"})
+        )
+    );
+    // Lampa reads a card from its start: the same keys as in its own links.
+    assert_eq!(
+        crate::platform::launch_request("com.lampa.app", Some("tv_2190")),
+        (
+            "luna://com.webos.applicationManager/launch",
+            json!({"id":"com.lampa.app","params":{"card":"2190","media":"tv","source":"cub"}})
+        )
+    );
+    assert_eq!(
+        crate::platform::launch_request("com.lampa.app", Some("bad")),
+        (
+            "luna://com.webos.applicationManager/launch",
+            json!({"id":"com.lampa.app"})
         )
     );
 }
@@ -3984,22 +3999,18 @@ fn home_and_its_rows_ease_to_their_scroll_unless_motion_is_reduced() {
 }
 
 #[test]
-fn tv_shows_slide_six_at_a_time_and_open_their_app() {
+fn tv_shows_slide_six_at_a_time_and_open_in_lampa() {
     use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
     state.preferences.shows_today = false;
     state.shows.list = (0..10)
-        .map(|index| Show {
-            id: index,
-            title: format!("Show {index}"),
-            poster: None,
-            meta: "Drama · 2024".into(),
-            service: Some("Netflix"),
-            app: (index != 3).then(|| "netflix".to_owned()),
-            episodes: Vec::new(),
-        })
+        .map(|index| Show::sample(index, &format!("Show {index}"), time::Date::MIN))
         .collect();
+    state
+        .inventory
+        .apps
+        .push(crate::model::App::new("com.lampa.app", "Lampa"));
     let shows = |state: &State| {
         controls(state)
             .into_iter()
@@ -4015,13 +4026,39 @@ fn tv_shows_slide_six_at_a_time_and_open_their_app() {
     assert_eq!(state.focus, Target::Show(6));
     assert_eq!(state.shows_first, 1);
     assert_eq!(shows(&state), [1, 2, 3, 4, 5, 6]);
-    assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
-    state.focus = Target::Show(3);
-    assert!(state.activate().is_empty());
-    assert!(
-        state.notice.is_some(),
-        "a show no app plays says which service has it"
+    assert_eq!(
+        state.activate(),
+        vec![Effect::OpenCard {
+            app: "com.lampa.app".into(),
+            card: "tv_6".into()
+        }]
     );
+    state.inventory.apps.retain(|app| app.title != "Lampa");
+    assert!(state.activate().is_empty());
+    assert!(state.notice.is_some(), "without Lampa, a notice says so");
+}
+
+#[test]
+fn a_long_show_title_is_cut_with_an_ellipsis_not_shrunk() {
+    use crate::shows::Show;
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.preferences.shows_today = false;
+    let long = "Работа с призрачными перспективами";
+    state.shows.list = vec![Show::sample(1, long, time::Date::MIN)];
+    let drawn = scene(&state);
+    let (label, style) = drawn
+        .draw
+        .iter()
+        .find_map(|draw| match draw {
+            crate::renderer::Draw::Text(label, _, style, ..) if label.starts_with("Работа") => {
+                Some((label.clone(), *style))
+            }
+            _ => None,
+        })
+        .expect("the title is drawn");
+    assert!(label.ends_with('…') && label.len() < long.len(), "{label}");
+    assert_eq!(style.size, 19.2, "at its own size");
 }
 
 #[test]
@@ -4031,15 +4068,7 @@ fn carousels_slide_the_same_way_left_and_right() {
     state.preferences.show_shows = true;
     state.preferences.shows_today = false;
     state.shows.list = (0..12)
-        .map(|index| Show {
-            id: index,
-            title: format!("Show {index}"),
-            poster: None,
-            meta: String::new(),
-            service: None,
-            app: None,
-            episodes: Vec::new(),
-        })
+        .map(|index| Show::sample(index, &format!("Show {index}"), time::Date::MIN))
         .collect();
     let drawn_x = |state: &State| {
         scene(state).draw.iter().find_map(|draw| match draw {

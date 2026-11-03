@@ -417,7 +417,7 @@ pub fn forget(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-fn text(value: Option<&Value>, limit: usize) -> Option<String> {
+pub(crate) fn text(value: Option<&Value>, limit: usize) -> Option<String> {
     let text: String = value?
         .as_str()?
         .chars()
@@ -442,7 +442,7 @@ fn small(value: Option<&Value>) -> u32 {
 }
 
 /// A TMDB poster path: one file name under the root.
-fn poster_path(value: Option<&Value>) -> Option<String> {
+pub(crate) fn poster_path(value: Option<&Value>) -> Option<String> {
     let path = value?.as_str()?;
     let name = path.strip_prefix('/')?;
     (!name.is_empty()
@@ -540,7 +540,7 @@ fn card_id(card: &Value, kind: Option<&Value>) -> Option<String> {
 }
 
 /// "2026-11-03".
-fn day(value: Option<&Value>) -> Option<Date> {
+pub(crate) fn day(value: Option<&Value>) -> Option<Date> {
     let mut parts = value?.as_str()?.splitn(3, '-').map(str::parse::<i32>);
     let (year, month, day) = (
         parts.next()?.ok()?,

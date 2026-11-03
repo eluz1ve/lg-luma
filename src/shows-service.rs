@@ -1,7 +1,7 @@
-//! The TV Shows worker: TVmaze's schedules off the SDL thread, newest request wins, and posters
+//! The TV Shows worker: CUB's feed of series off the SDL thread, newest request wins, and posters
 //! one at a time on their own worker.
 use crate::app_artwork::Artwork;
-use crate::shows::{Command, POSTER_ORIGIN, Show, parse_schedules};
+use crate::shows::{Command, PAGES, Show, parse_feed, poster_urls};
 use serde_json::Value;
 use std::{
     io::Read,
@@ -14,15 +14,11 @@ use std::{
     time::Duration,
 };
 
-const API: &str = "https://api.tvmaze.com";
-/// A day's streaming schedule is a few hundred kilobytes.
-const LIMIT: usize = 2 * 1024 * 1024;
+/// A page of twenty series is about fifty kilobytes.
+const LIMIT: usize = 1024 * 1024;
 const POSTER_LIMIT: usize = 1024 * 1024;
 /// Posters are drawn about 256 px wide; a little more keeps them sharp when the card lifts.
 const POSTER_WIDTH: u32 = 320;
-/// Days of the streaming schedule read, up to today; tomorrow's is read too, since west of UTC
-/// this evening's episodes are on tomorrow's.
-const DAYS: i64 = 7;
 
 #[derive(Clone)]
 pub struct Client {
@@ -38,14 +34,15 @@ impl Client {
             .new_agent();
         Self { agent }
     }
-    fn get(&self, url: &str, query: &[(&str, &str)], limit: usize) -> Result<Vec<u8>, String> {
-        let mut request = self.agent.get(url).header("User-Agent", "LumaNative");
-        for (key, value) in query {
-            request = request.query(key, value);
-        }
-        let mut response = request.call().map_err(|_| "TVmaze is unavailable.")?;
+    fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, String> {
+        let mut response = self
+            .agent
+            .get(url)
+            .header("User-Agent", "LumaNative")
+            .call()
+            .map_err(|_| "CUB is unavailable.")?;
         if !response.status().is_success() {
-            return Err("TVmaze is unavailable.".into());
+            return Err("CUB is unavailable.".into());
         }
         let mut bytes = Vec::new();
         response
@@ -53,37 +50,35 @@ impl Client {
             .as_reader()
             .take(limit as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| "The TVmaze reply could not be read")?;
+            .map_err(|_| "The CUB reply could not be read")?;
         if bytes.len() > limit {
-            return Err("The TVmaze reply is too large".into());
+            return Err("The CUB reply is too large".into());
         }
         Ok(bytes)
     }
-    /// The week's streaming schedule up to tomorrow, and today's TV in `country`.
+    /// The feed's first pages, from the first of CUB's hosts that answers.
     pub fn shows(&self, command: &Command) -> Result<Vec<Show>, String> {
-        let mut replies = Vec::new();
         let mut error = None;
-        for (url, query) in requests(command) {
-            let query: Vec<(&str, &str)> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            match self.get(&url, &query, LIMIT).and_then(|bytes| {
-                serde_json::from_slice::<Value>(&bytes)
-                    .map_err(|_| "TVmaze returned unreadable data".into())
-            }) {
-                Ok(value) => replies.push(value),
+        for host in crate::cub::HOSTS {
+            let pages: Result<Vec<Value>, String> = (1..=PAGES)
+                .map(|page| {
+                    let bytes = self.get(&feed_url(host, page), LIMIT)?;
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| "CUB returned unreadable data".into())
+                })
+                .collect();
+            match pages {
+                Ok(pages) => return Ok(parse_feed(&pages, command.date)),
                 Err(message) => error = Some(message),
             }
         }
-        if replies.is_empty() {
-            return Err(error.unwrap_or_else(|| "TVmaze is unavailable.".into()));
-        }
-        Ok(parse_schedules(&replies, &command.installed, command.until))
+        Err(error.unwrap_or_else(|| "CUB is unavailable.".into()))
     }
-    /// A poster from TVmaze's image CDN, decoded and scaled on this worker.
-    pub fn poster(&self, url: &str) -> Option<Arc<Artwork>> {
-        if !url.starts_with(POSTER_ORIGIN) {
-            return None;
-        }
-        let bytes = self.get(url, &[], POSTER_LIMIT).ok()?;
+    /// A poster from TMDB (or its mirror), decoded and scaled on this worker.
+    pub fn poster(&self, path: &str) -> Option<Arc<Artwork>> {
+        let bytes = poster_urls(path)
+            .iter()
+            .find_map(|url| self.get(url, POSTER_LIMIT).ok())?;
         let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
             .with_guessed_format()
             .ok()?;
@@ -99,31 +94,16 @@ impl Client {
             image.into_rgba8()
         };
         Some(Arc::new(Artwork {
-            key: format!("show-poster:{url}"),
+            key: format!("show-poster:{path}"),
             pixels,
             backdrop: [[0; 3]; 2],
         }))
     }
 }
 
-/// What a refresh asks TVmaze for: the streaming schedule from the TV's tomorrow back over the
-/// week, and the TV schedule of the TV's today in its country. Dates are the TV's own, so evening
-/// shows are not lost where the UTC date is already another.
-fn requests(command: &Command) -> Vec<(String, Vec<(&'static str, String)>)> {
-    let mut requests: Vec<_> = (-1..DAYS)
-        .map(|day| {
-            let date = (command.date - time::Duration::days(day)).to_string();
-            (format!("{API}/schedule/web"), vec![("date", date)])
-        })
-        .collect();
-    requests.push((
-        format!("{API}/schedule"),
-        vec![
-            ("country", command.country.clone()),
-            ("date", command.date.to_string()),
-        ],
-    ));
-    requests
+/// A page of the series Lampa's viewers watch now, as Lampa itself asks for it.
+fn feed_url(host: &str, page: u32) -> String {
+    format!("https://tmdb.{host}/?cat=tv&sort=now_playing&page={page}&email=")
 }
 
 pub enum Response {
@@ -132,7 +112,7 @@ pub enum Response {
         result: Result<Vec<Show>, String>,
     },
     Poster {
-        url: String,
+        path: String,
         image: Option<Arc<Artwork>>,
     },
 }
@@ -153,10 +133,10 @@ impl Service {
         let poster_client = client.clone();
         let poster_responses = responses.clone();
         thread::spawn(move || {
-            for url in wanted {
-                let image = poster_client.poster(&url);
+            for path in wanted {
+                let image = poster_client.poster(&path);
                 if poster_responses
-                    .send(Response::Poster { url, image })
+                    .send(Response::Poster { path, image })
                     .is_err()
                 {
                     break;
@@ -193,9 +173,9 @@ impl Service {
     pub fn generation(&self, id: u64) {
         self.generation.store(id, Ordering::SeqCst);
     }
-    pub fn poster(&self, url: String) {
+    pub fn poster(&self, path: String) {
         if let Some(posters) = &self.posters {
-            let _ = posters.send(url);
+            let _ = posters.send(path);
         }
     }
     pub fn send(&self, command: Command) {
@@ -218,25 +198,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_schedules_are_asked_for_the_tvs_local_days() {
-        let command = Command {
-            id: 1,
-            country: "US".into(),
-            installed: Vec::new(),
-            date: time::Date::from_calendar_date(2026, time::Month::November, 1).unwrap(),
-            until: 0,
-        };
-        let asked = requests(&command);
-        let dates = |path: &str| -> Vec<String> {
-            asked
-                .iter()
-                .filter(|(url, _)| url.ends_with(path))
-                .map(|(_, query)| query.iter().find(|(k, _)| *k == "date").unwrap().1.clone())
-                .collect()
-        };
-        assert_eq!(dates("/schedule"), ["2026-11-01"]);
-        let web = dates("/schedule/web");
-        assert_eq!(web.first().map(String::as_str), Some("2026-11-02"));
-        assert_eq!(web.last().map(String::as_str), Some("2026-10-26"));
+    fn the_feed_is_asked_for_as_lampa_asks_for_it() {
+        assert_eq!(
+            feed_url("cub.red", 2),
+            "https://tmdb.cub.red/?cat=tv&sort=now_playing&page=2&email="
+        );
     }
 }

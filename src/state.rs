@@ -137,7 +137,7 @@ pub enum Target {
     TodayCard,
     /// A match line of the opened Today card, by the match's id.
     TodayMatch(String),
-    /// An episode line of the opened Today card, by the show's TVmaze id.
+    /// A TV Shows line of the opened Today card, by the series' TMDB id: opens Lampa.
     TodayShow(i64),
     /// A Lampa line of the opened Today card, by its CUB card ("tv_2190"): opens Lampa.
     TodayLampa(String),
@@ -346,6 +346,11 @@ pub enum Effect {
     /// Refresh apps: read the inventory and every app icon again.
     Reload,
     Launch(String),
+    /// Opens Lampa (`app`) on a card ("tv_2190").
+    OpenCard {
+        app: String,
+        card: String,
+    },
     Uninstall(String),
     DeleteWallpaper(String),
     Recent {
@@ -1507,19 +1512,21 @@ impl State {
     }
 
     /// Opens the app that plays a show, or says which service has it.
-    fn open_show(&mut self, show: &crate::shows::Show) -> Vec<Effect> {
-        if let Some(app) = show.app.clone() {
-            return vec![Effect::Launch(app)];
+    /// Lampa, where the shows of TV Shows and Today play, asked to open `card` ("tv_2190").
+    fn open_lampa(&mut self, card: &str) -> Vec<Effect> {
+        let lampa = self.inventory.apps.iter().find(|app| {
+            app.id.to_lowercase().contains("lampa") || app.title.to_lowercase().contains("lampa")
+        });
+        match lampa {
+            Some(app) => vec![Effect::OpenCard {
+                app: app.id.clone(),
+                card: card.to_owned(),
+            }],
+            None => {
+                self.notify(self.preferences.language.t("lampaNoApp").to_owned());
+                vec![]
+            }
         }
-        let message = match show.service {
-            Some(service) => self
-                .preferences
-                .language
-                .format("showsNoApp", &[("service", service)]),
-            None => self.preferences.language.t("showsNoService").to_owned(),
-        };
-        self.notify(message);
-        vec![]
     }
 
     /// The user confirmed CUB's code: the sign-in dialog gives way to Lampa's settings.
@@ -3069,21 +3076,8 @@ impl State {
                     }
                 }
             }
-            Target::TodayShow(id) => {
-                if let Some(show) = self.shows.list.iter().find(|show| show.id == id).cloned() {
-                    return self.open_show(&show);
-                }
-            }
-            Target::TodayLampa(_) => {
-                let lampa = self.inventory.apps.iter().find(|app| {
-                    app.id.to_lowercase().contains("lampa")
-                        || app.title.to_lowercase().contains("lampa")
-                });
-                match lampa {
-                    Some(app) => return vec![Effect::Launch(app.id.clone())],
-                    None => self.notify(self.preferences.language.t("lampaNoApp").to_owned()),
-                }
-            }
+            Target::TodayShow(id) => return self.open_lampa(&format!("tv_{id}")),
+            Target::TodayLampa(card) => return self.open_lampa(&card),
             Target::LampaAccount => {
                 if self.cub.signed_in() {
                     self.cub.sign_out();
@@ -3108,8 +3102,9 @@ impl State {
                 return vec![Effect::Save];
             }
             Target::Show(index) => {
-                if let Some(show) = self.shows.list.get(index).cloned() {
-                    return self.open_show(&show);
+                if let Some(show) = self.shows.list.get(index) {
+                    let card = format!("tv_{}", show.id);
+                    return self.open_lampa(&card);
                 }
             }
             Target::WeatherConfigure => {

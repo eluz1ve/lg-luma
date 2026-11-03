@@ -208,23 +208,13 @@ fn the_date_shares_the_clock_line_and_the_greeting_rises() {
 
 #[test]
 fn today_grows_up_to_five_lines_from_the_clock_line() {
-    use crate::shows::{Episode, Show};
+    use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
+    // New on the scene's day, the Unix epoch's.
+    let epoch = time::OffsetDateTime::UNIX_EPOCH.date();
     state.shows.list = (0..7)
-        .map(|id| Show {
-            id,
-            title: format!("Show {id}"),
-            poster: None,
-            meta: String::new(),
-            service: None,
-            app: Some("netflix".into()),
-            episodes: vec![Episode {
-                airs: 3600 * (id + 1),
-                season: Some(1),
-                number: Some(1),
-            }],
-        })
+        .map(|id| Show::sample(id, &format!("Show {id}"), epoch))
         .collect();
     let drawn = scene(&state);
     // The card, and the clip it is drawn under: nothing of it is cut off.

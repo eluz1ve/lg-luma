@@ -1,9 +1,8 @@
-//! What Home's Today card, beside the greeting, lists: live CS2 matches, then today's events by
-//! time (matches about to start, new episodes of shows an installed app plays), then the episodes
-//! that already aired today. Signed in to Lampa's CUB account, the user's own shows replace
-//! TVmaze's: today's releases, the week's unwatched ones and what to continue, each kind given a
-//! line before any gets a second. Crypto prices take the last line when they sit beside the
-//! greeting.
+//! What Home's Today card, beside the greeting, lists: live CS2 matches, then matches about to
+//! start by time, then series of TV Shows with a new episode today. Signed in to Lampa's CUB
+//! account, the user's own shows replace those: today's releases, the week's unwatched ones and
+//! what to continue, each kind given a line before any gets a second. Crypto prices take the last
+//! line when they sit beside the greeting.
 use crate::{cs2, cub::Cub, state::State};
 use time::Date;
 
@@ -12,9 +11,9 @@ pub enum Line {
     Match {
         id: String,
     },
+    /// A series of TV Shows with a new episode out today.
     Episode {
         show: i64,
-        airs: i64,
     },
     /// A bookmarked card's release on `date`, not watched yet.
     Release {
@@ -49,7 +48,7 @@ pub enum Section {
     Live,
     /// Matches about to start.
     Matches,
-    /// Today's episodes, or Lampa's releases.
+    /// Today's new episodes, or Lampa's releases.
     Episodes,
     /// Lampa's series to pick up.
     Continue,
@@ -72,25 +71,24 @@ impl Section {
 /// The day's lines by kind, before the card picks from them.
 struct Day {
     live: Vec<Line>,
-    /// Matches and episodes still to come, by time.
+    /// Matches still to come, by time.
     coming: Vec<Line>,
-    /// Episodes that aired today, latest first.
+    /// Series with a new episode today, the most watched first.
     aired: Vec<Line>,
     /// Lampa's releases today, the week's earlier ones and series to continue.
     lampa: Option<[Vec<Line>; 3]>,
     crypto: bool,
 }
 
-/// The card's lines at `now`; `day` is the TV's local day, from midnight to midnight, and `date`
-/// its date.
-pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
+/// The card's lines at `now`; `date` is the TV's local date.
+pub fn today(state: &State, now: i64, date: Date) -> Today {
     let Day {
         live,
         coming,
         aired,
         lampa,
         crypto,
-    } = gather(state, now, day, date);
+    } = gather(state, now, date);
     let events: Vec<Line> = coming.into_iter().chain(aired).collect();
     let groups = match lampa {
         Some([fresh, week, resume]) => vec![fresh, events, week, resume],
@@ -108,14 +106,14 @@ pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
 }
 
 /// The whole day for the opened card, by section, nothing left out; empty sections are dropped.
-pub fn sections(state: &State, now: i64, day: (i64, i64), date: Date) -> Vec<(Section, Vec<Line>)> {
+pub fn sections(state: &State, now: i64, date: Date) -> Vec<(Section, Vec<Line>)> {
     let Day {
         live,
         coming,
         aired,
         lampa,
         crypto,
-    } = gather(state, now, day, date);
+    } = gather(state, now, date);
     let (matches, mut episodes): (Vec<_>, Vec<_>) = coming
         .into_iter()
         .partition(|line| matches!(line, Line::Match { .. }));
@@ -141,12 +139,11 @@ pub fn sections(state: &State, now: i64, day: (i64, i64), date: Date) -> Vec<(Se
     .collect()
 }
 
-fn gather(state: &State, now: i64, day: (i64, i64), date: Date) -> Day {
+fn gather(state: &State, now: i64, date: Date) -> Day {
     let preferences = &state.preferences;
     let lampa = preferences.lampa_today && state.cub.signed_in();
     let mut live = Vec::new();
     let mut coming = Vec::new();
-    let mut aired = Vec::new();
     // An old feed's "live" may long be over.
     if preferences.in_today(crate::model::Center::Cs2)
         && !state.cs2.stale(now)
@@ -165,27 +162,22 @@ fn gather(state: &State, now: i64, day: (i64, i64), date: Date) -> Day {
             }
         }
     }
-    if preferences.in_today(crate::model::Center::Shows) && !lampa {
-        for show in state.shows.list.iter().filter(|show| show.app.is_some()) {
-            if let Some(episode) = show.today(day.0, day.1, now) {
-                let line = Line::Episode {
-                    show: show.id,
-                    airs: episode.airs,
-                };
-                if episode.airs >= now {
-                    coming.push((episode.airs, line));
-                } else {
-                    aired.push((episode.airs, line));
-                }
-            }
-        }
-    }
+    let aired = if preferences.in_today(crate::model::Center::Shows) && !lampa {
+        state
+            .shows
+            .list
+            .iter()
+            .filter(|show| show.new_on(date))
+            .map(|show| Line::Episode { show: show.id })
+            .collect()
+    } else {
+        Vec::new()
+    };
     coming.sort_by_key(|(time, _)| *time);
-    aired.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
     Day {
         live,
         coming: coming.into_iter().map(|(_, line)| line).collect(),
-        aired: aired.into_iter().map(|(_, line)| line).collect(),
+        aired,
         lampa: lampa.then(|| lampa_lines(&state.cub, now, date)),
         crypto: preferences.in_today(crate::model::Center::Crypto),
     }

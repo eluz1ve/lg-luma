@@ -110,24 +110,12 @@ fn left_from_the_first_card_in_the_center_opens_the_menu() {
 
 #[test]
 fn shows_in_the_center_have_smaller_posters() {
-    use crate::shows::{Episode, Show};
+    use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
     state.preferences.shows_today = false;
     state.shows.list = (0..8)
-        .map(|id| Show {
-            id,
-            title: format!("Show {id}"),
-            poster: None,
-            meta: String::new(),
-            service: None,
-            app: None,
-            episodes: vec![Episode {
-                airs: 0,
-                season: Some(1),
-                number: Some(1),
-            }],
-        })
+        .map(|id| Show::sample(id, &format!("Show {id}"), time::Date::MIN))
         .collect();
     let posters = rects(&state, |t| matches!(t, Target::Show(_)));
     assert!(!posters.is_empty());

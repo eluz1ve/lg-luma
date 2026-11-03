@@ -175,7 +175,8 @@ pub fn redirect_to_home() -> Result<bool, String> {
 pub enum Request {
     Refresh,
     RefreshInputs,
-    Launch(String),
+    /// An app, and for Lampa the card to open.
+    Launch(String, Option<String>),
     Uninstall(String),
     SyncSplash(String),
     HomeTakeover(bool),
@@ -341,14 +342,14 @@ impl Platform {
                         });
                         Response::Uninstalled { id, result }
                     }
-                    Request::Launch(id) => Response::Launched(if webos {
+                    Request::Launch(id, card) => Response::Launched(if webos {
                         if crate::scroll_preview::is_placeholder(&id) {
                             Err("Scroll preview cards cannot be launched".into())
                         } else if !valid_app_id(&id) {
                             Err("Invalid application identifier".into())
                         } else {
                             {
-                                let (uri, payload) = launch_request(&id);
+                                let (uri, payload) = launch_request(&id, card.as_deref());
                                 call(uri, payload).map(|_| ())
                             }
                         }
@@ -882,15 +883,26 @@ pub fn with_airplay_input(
     inputs
 }
 
-pub fn launch_request(id: &str) -> (&'static str, Value) {
+/// The call that opens `id`; Lampa is given `card` ("tv_2190") as the keys of its own links.
+pub fn launch_request(id: &str, card: Option<&str>) -> (&'static str, Value) {
     if id == "airplay" {
-        ("luna://airplay.service/showAirplayPage", json!({}))
-    } else {
-        (
-            "luna://com.webos.applicationManager/launch",
-            json!({"id":id}),
-        )
+        return ("luna://airplay.service/showAirplayPage", json!({}));
     }
+    let card = card
+        .and_then(|card| card.split_once('_'))
+        .filter(|(media, number)| {
+            matches!(*media, "tv" | "movie")
+                && !number.is_empty()
+                && number.bytes().all(|b| b.is_ascii_digit())
+        });
+    let payload = match card {
+        Some((media, number)) => json!({
+            "id": id,
+            "params": {"card": number, "media": media, "source": "cub"}
+        }),
+        None => json!({"id": id}),
+    };
+    ("luna://com.webos.applicationManager/launch", payload)
 }
 
 fn title(value: Option<&str>, fallback: &str) -> String {

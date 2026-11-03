@@ -1,5 +1,5 @@
 use super::*;
-use crate::shows::{Episode, Show};
+use crate::shows::Show;
 
 /// 1 November 2026, 20:00 UTC; the TV is on UTC.
 const NOW: i64 = 1_793_563_200;
@@ -18,7 +18,8 @@ fn at(state: &State) -> view::Scene {
     )
 }
 
-/// Home with CS2 Score and TV Shows in Today: a live match, and an episode at 21:00 on Netflix.
+/// Home with CS2 Score and TV Shows in Today: a live match, and a series with a new episode;
+/// Lampa is installed.
 fn today_state() -> State {
     let mut state = ready();
     state.preferences.show_cs2 = true;
@@ -37,20 +38,27 @@ fn today_state() -> State {
         panic!("a fetch is due");
     };
     state.cs2.accept(command.id, Ok(feed), NOW);
-    state.shows.list = vec![Show {
-        id: 7,
-        title: "Severance".into(),
-        poster: None,
-        meta: String::new(),
-        service: Some("Netflix"),
-        app: Some("netflix".into()),
-        episodes: vec![Episode {
-            airs: NOW + 3600,
-            season: Some(2),
-            number: Some(5),
-        }],
-    }];
+    state.shows.list = vec![series(7, "Severance")];
     state
+        .inventory
+        .apps
+        .push(crate::model::App::new("com.lampa.app", "Lampa"));
+    state
+}
+
+/// A series of TV Shows with a new episode on the TV's day.
+fn series(id: i64, name: &str) -> Show {
+    Show {
+        id,
+        name: name.into(),
+        original: name.into(),
+        poster: None,
+        season: Some(2),
+        aired: time::OffsetDateTime::from_unix_timestamp(NOW)
+            .unwrap()
+            .date(),
+        rating: Some(8.3),
+    }
 }
 
 fn texts(scene: &view::Scene) -> Vec<String> {
@@ -107,8 +115,8 @@ fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
     assert!(texts.iter().any(|t| t == "TODAY"));
     assert!(texts.iter().any(|t| t == "NAVI 1–0 FaZe"), "{texts:?}");
     assert!(texts.iter().any(|t| t == "LIVE · Mirage"), "{texts:?}");
-    assert!(texts.iter().any(|t| t == "Severance — S2E5"));
-    assert!(texts.iter().any(|t| t == "Netflix · 9:00 PM"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Severance"));
+    assert!(texts.iter().any(|t| t == "S2 · New episode"), "{texts:?}");
     let card = today_controls(&scene);
     assert_eq!(card.len(), 1, "{card:?}");
     let (target, rect) = &card[0];
@@ -140,8 +148,8 @@ fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
         "Natus Vincere 1–0 FaZe Clan",
         "IEM · BO3",
         "Severance",
-        "S2E5 · Netflix",
-        "9:00 PM",
+        "S2 · ★ 8.3",
+        "New episode",
         "2 in all",
     ] {
         assert!(
@@ -173,10 +181,16 @@ fn a_match_opened_from_the_card_returns_to_it_and_back_collapses_it() {
 }
 
 #[test]
-fn an_episode_opened_from_the_card_launches_its_app_and_collapses_it() {
+fn a_series_opened_from_the_card_opens_it_in_lampa_and_collapses_it() {
     let mut state = opened();
     state.direction(Direction::Down, &at(&state).controls);
-    assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+    assert_eq!(
+        state.activate(),
+        vec![Effect::OpenCard {
+            app: "com.lampa.app".into(),
+            card: "tv_7".into()
+        }]
+    );
     assert!(state.overlay.is_none());
     assert_eq!(state.focus, Target::TodayCard);
 }
@@ -185,19 +199,7 @@ fn an_episode_opened_from_the_card_launches_its_app_and_collapses_it() {
 fn the_opened_card_scrolls_to_keep_the_focused_line_in_view() {
     let mut state = today_state();
     state.shows.list = (0..12)
-        .map(|id| Show {
-            id,
-            title: format!("Show {id}"),
-            poster: None,
-            meta: String::new(),
-            service: Some("Netflix"),
-            app: Some("netflix".into()),
-            episodes: vec![Episode {
-                airs: NOW + 600 + id * 60,
-                season: Some(1),
-                number: Some(1),
-            }],
-        })
+        .map(|id| series(id, &format!("Show {id}")))
         .collect();
     state.focus = Target::TodayCard;
     state.activate();

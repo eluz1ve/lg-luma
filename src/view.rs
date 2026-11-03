@@ -164,6 +164,23 @@ impl Assets {
         style
     }
 
+    /// `value` cut to `width` with an ellipsis, at its own size.
+    fn ellipsize(&self, value: &str, style: TextStyle, width: f32) -> String {
+        let available = width - 1.;
+        if self.width(value, style) <= available {
+            return value.to_owned();
+        }
+        let mut kept: Vec<char> = value.chars().collect();
+        while !kept.is_empty() {
+            kept.pop();
+            let cut = format!("{}…", kept.iter().collect::<String>().trim_end());
+            if self.width(&cut, style) <= available {
+                return cut;
+            }
+        }
+        "…".to_owned()
+    }
+
     fn lines(&self, value: &str, style: TextStyle, width: f32) -> usize {
         let key = format!(
             "{}{}",
@@ -1934,7 +1951,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     match center {
         Center::Crypto => crypto_row(out, state, y),
         Center::Cs2 => cs2_row(out, state, assets, y, now),
-        Center::Shows => shows_row(out, state, assets, y),
+        Center::Shows => shows_row(out, state, assets, y, now.date()),
     }
 }
 
@@ -1946,13 +1963,13 @@ const SHOW_PITCH: f32 = 210.;
 /// The title and details below a poster.
 const SHOW_CAPTION: f32 = 60.;
 
-/// Home's TV Shows: a heading crediting TVmaze, then posters in a row that slides six at a time.
-fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
+/// Home's TV Shows: a heading crediting Lampa, then posters in a row that slides six at a time.
+fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time::Date) {
     let language = state.preferences.language;
     let heading = language.t("shows");
     let style = row_heading(out, heading, y);
     out.text(
-        "TVmaze",
+        "Lampa",
         Rect::new(
             SAFE_X + assets.width(heading, style) + 20.,
             y + 5.,
@@ -2006,17 +2023,19 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
             card: Rect::new(SAFE_X, y + ROW_HEADING_GAP, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
             below: SHOW_CAPTION,
         },
-        |out, index, rect, hit| show_card(out, state, assets, &list[index], index, rect, hit),
+        |out, index, rect, hit| show_card(out, state, assets, &list[index], index, date, rect, hit),
     );
 }
 
-/// A show's card: its poster, then the title and its details below.
+/// A show's card: its poster, then the title and its details below; `date` is the TV's.
+#[allow(clippy::too_many_arguments)]
 fn show_card(
     out: &mut Scene,
     state: &State,
     assets: &Assets,
     show: &crate::shows::Show,
     index: usize,
+    date: time::Date,
     rect: Rect,
     hit: Option<Rect>,
 ) {
@@ -2045,25 +2064,38 @@ fn show_card(
         }
     }
     lift_edge(out, face, 18.4, lift_amount);
-    // Below the poster: the title, then genre, year and rating, then the service.
+    // Below the poster: the title, then its season and either today's news or its rating.
+    let language = state.preferences.language;
+    let style = text(19.2, 550, -0.01);
+    let title = assets.ellipsize(show.title(language), style, rect.w);
     let below = rect.y + rect.h + 12.;
     out.text(
-        &show.title,
+        &title,
         Rect::new(rect.x, below, rect.w, 26.),
-        assets.fit_text(&show.title, text(19.2, 550, -0.01), rect.w),
+        style,
         WHITE,
         false,
     );
-    let meta = match show.service {
-        Some(service) if !show.meta.is_empty() => format!("{} · {service}", show.meta),
-        Some(service) => service.to_owned(),
-        None => show.meta.clone(),
+    let new = show.new_on(date);
+    let news = if new {
+        Some(language.t("lampaNew").to_owned())
+    } else {
+        show.rating.map(|rating| format!("★ {rating:.1}"))
     };
+    let meta = [show.season.map(|season| format!("S{season}")), news]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
     out.text(
         &meta,
         Rect::new(rect.x, below + 29., rect.w, 20.),
         assets.fit_text(&meta, text(14.4, 400, 0.), rect.w),
-        c(0xf5f5f5, if show.app.is_some() { 0.6 } else { 0.4 }),
+        if new {
+            c(0x9fd0ff, 0.95)
+        } else {
+            c(0xf5f5f5, 0.6)
+        },
         false,
     );
     if let Some(hit) = hit {
@@ -2192,15 +2224,9 @@ fn place(language: Language, state: &State, widget: crate::model::Center) -> &'s
     language.t(if center { "placeCenter" } else { "placeToday" })
 }
 
-/// The Today card's lines for this moment, over the TV's local day.
+/// The Today card's lines for this moment, on the TV's local day.
 fn today_lines(state: &State, now: OffsetDateTime) -> crate::today::Today {
-    let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
-    crate::today::today(
-        state,
-        now.unix_timestamp(),
-        (midnight, midnight + 86_400),
-        now.date(),
-    )
+    crate::today::today(state, now.unix_timestamp(), now.date())
 }
 
 /// A Lampa line's poster, or the TV icon until it loads.
@@ -2271,7 +2297,6 @@ fn today_card(
     );
     let main = text(type_scale::BODY, 550, -0.01);
     let side = text(type_scale::CAPTION, 450, 0.);
-    let unix = now.unix_timestamp();
     for (index, line) in today.lines.iter().enumerate() {
         let row = Rect::new(
             rect.x + 8.,
@@ -2314,7 +2339,7 @@ fn today_card(
                     (title, cs2_start(state, item.begins, now), c(0xe8e8e8, 0.62))
                 }
             }
-            Line::Episode { show, airs } => {
+            Line::Episode { show } => {
                 let Some(show) = state.shows.list.iter().find(|s| s.id == *show) else {
                     continue;
                 };
@@ -2322,29 +2347,11 @@ fn today_card(
                     Some(poster) => out.draw.push(Draw::Cover(poster, icon, 8., [1.; 4])),
                     None => out.icon(assets, "tv", icon.inset(6.), c(0xf5f5f5, 0.7)),
                 }
-                let episode = show.episodes.iter().find(|e| e.airs == *airs);
-                let title = match episode.and_then(|e| Some((e.season?, e.number?))) {
-                    Some((season, number)) => format!("{} — S{season}E{number}", show.title),
-                    None => show.title.clone(),
+                let when = match show.season {
+                    Some(season) => format!("S{season} · {}", language.t("lampaNew")),
+                    None => language.t("lampaNew").to_owned(),
                 };
-                let time = if *airs >= unix {
-                    OffsetDateTime::from_unix_timestamp(*airs)
-                        .map(|t| {
-                            language.clock(
-                                t.to_offset(now.offset()),
-                                state.preferences.hour_24,
-                                false,
-                            )
-                        })
-                        .unwrap_or_default()
-                } else {
-                    language.t("aired").to_owned()
-                };
-                let when = match show.service {
-                    Some(service) => format!("{service} · {time}"),
-                    None => time,
-                };
-                (title, when, c(0xe8e8e8, 0.62))
+                (show.title(language).to_owned(), when, c(0x9fd0ff, 0.95))
             }
             Line::Release { card, date } => {
                 let Some(release) = state
@@ -2477,13 +2484,7 @@ fn today_open(
     use crate::state::{TODAY_LIST, TODAY_PANEL};
     use crate::today::{Line, Section};
     let language = state.preferences.language;
-    let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
-    let sections = crate::today::sections(
-        state,
-        now.unix_timestamp(),
-        (midnight, midnight + 86_400),
-        now.date(),
-    );
+    let sections = crate::today::sections(state, now.unix_timestamp(), now.date());
     out.controls.clear();
     let coins = &state.preferences.crypto_coins;
     let rows = |section: &Section, lines: &Vec<Line>| match section {
@@ -2695,7 +2696,7 @@ fn today_line(
                 (focused, title, detail, when, c(0xe8e8e8, 0.62))
             }
         }
-        Line::Episode { show, airs } => {
+        Line::Episode { show } => {
             let Some(show) = state.shows.list.iter().find(|s| s.id == *show) else {
                 return false;
             };
@@ -2704,25 +2705,17 @@ fn today_line(
                 Some(poster) => out.draw.push(Draw::Cover(poster, picture, 10., [1.; 4])),
                 None => out.icon(assets, "tv", picture.inset(10.), today_ink(focused, 0.7)),
             }
-            let episode = show.episodes.iter().find(|e| e.airs == *airs);
-            let number = episode
-                .and_then(|e| Some((e.season?, e.number?)))
-                .map(|(season, number)| format!("S{season}E{number}"));
-            let detail = [number, show.service.map(str::to_owned)]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" · ");
-            let when = if *airs >= now.unix_timestamp() {
-                OffsetDateTime::from_unix_timestamp(*airs)
-                    .map(|t| {
-                        language.clock(t.to_offset(now.offset()), state.preferences.hour_24, false)
-                    })
-                    .unwrap_or_default()
-            } else {
-                language.t("aired").to_owned()
-            };
-            (focused, show.title.clone(), detail, when, c(0xe8e8e8, 0.62))
+            let detail = [
+                show.season.map(|season| format!("S{season}")),
+                show.rating.map(|rating| format!("★ {rating:.1}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            let when = language.t("lampaNew").to_owned();
+            let title = show.title(language).to_owned();
+            (focused, title, detail, when, c(0x9fd0ff, 0.95))
         }
         Line::Release { card, date } => {
             let Some(release) = state

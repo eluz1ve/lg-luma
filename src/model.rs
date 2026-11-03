@@ -367,7 +367,7 @@ pub struct Preferences {
     pub show_greeting: bool,
     pub show_date: bool,
     pub date_format: DateFormat,
-    /// Home's TV Shows row: series streaming this week, from TVmaze.
+    /// Home's TV Shows row: series with a new episode that Lampa watches now, from CUB.
     #[serde(deserialize_with = "crate::cs2::deserialize_flag")]
     pub show_shows: bool,
     /// Home's CS2 Score row below the inputs, and what it lists.
@@ -375,9 +375,9 @@ pub struct Preferences {
     pub show_cs2: bool,
     /// CS2 Score's live and coming matches in the Today card instead of a row of their own.
     pub cs2_today: bool,
-    /// Today's episodes in the Today card instead of TV Shows' own row.
+    /// Today's new episodes in the Today card instead of TV Shows' own row.
     pub shows_today: bool,
-    /// Lampa's releases and history (from CUB) in the Today card, in place of TVmaze's episodes.
+    /// Lampa's releases and history (from CUB) in the Today card, in place of TV Shows' series.
     pub lampa_today: bool,
     /// Liquipedia's tier 1 and 2 events only.
     #[serde(deserialize_with = "crate::cs2::deserialize_enabled")]
