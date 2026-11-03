@@ -297,11 +297,18 @@ fn plain_radius(radius: f32) -> f32 {
     if radius > 0. { radius } else { -1. }
 }
 
+static PROFILE_SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// The TV's way to set LUMA_PROFILE_SKIP (its launcher passes no environment); before the
+/// first frame.
+pub fn set_profile_skip(kinds: Vec<String>) {
+    let _ = PROFILE_SKIP.set(kinds);
+}
+
 /// Measurement aid: LUMA_PROFILE_SKIP=wallpaper,image,app,shape,gradient,shadow,text,glass or all
 /// leaves those draws out, to find which part of the scene costs the GPU time.
 fn profile_skip(command: &Draw) -> bool {
-    static SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let skip = SKIP.get_or_init(|| {
+    let skip = PROFILE_SKIP.get_or_init(|| {
         std::env::var("LUMA_PROFILE_SKIP")
             .map(|value| value.split(',').map(str::to_owned).collect())
             .unwrap_or_default()

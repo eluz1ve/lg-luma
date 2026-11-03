@@ -861,6 +861,10 @@ fn run() -> Result<(), String> {
         && let Some(directory) = preferences_path.parent()
     {
         options.script.extend(perf_log::script(directory));
+        let skip = perf_log::skip(directory);
+        if !skip.is_empty() {
+            renderer::set_profile_skip(skip);
+        }
     }
     let public_update_checks = update::public_checks_enabled(
         !options.script.is_empty(),

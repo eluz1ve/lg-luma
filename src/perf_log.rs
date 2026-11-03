@@ -100,15 +100,24 @@ impl PerfLog {
 
 /// The presses a `script=a,b,c` line of the switch file asks for.
 pub fn script(directory: &Path) -> Vec<String> {
+    list(directory, "script=")
+}
+
+/// The draw kinds a `skip=glass,shadow` line leaves out, as LUMA_PROFILE_SKIP does.
+pub fn skip(directory: &Path) -> Vec<String> {
+    list(directory, "skip=")
+}
+
+fn list(directory: &Path, key: &str) -> Vec<String> {
     let Ok(switch) = std::fs::read_to_string(directory.join("perf")) else {
         return Vec::new();
     };
     switch
         .lines()
-        .filter_map(|line| line.strip_prefix("script="))
-        .flat_map(|actions| actions.split(','))
+        .filter_map(|line| line.strip_prefix(key))
+        .flat_map(|items| items.split(','))
         .map(str::trim)
-        .filter(|action| !action.is_empty())
+        .filter(|item| !item.is_empty())
         .map(String::from)
         .collect()
 }

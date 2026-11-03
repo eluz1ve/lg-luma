@@ -43,9 +43,10 @@ fn the_switch_file_may_carry_a_script_to_measure() {
     assert!(script(&directory).is_empty());
     std::fs::write(
         directory.join("perf"),
-        "note\nscript= home, down ,right,wait\n",
+        "note\nscript= home, down ,right,wait\nskip=glass,shadow\n",
     )
     .unwrap();
     assert_eq!(script(&directory), ["home", "down", "right", "wait"]);
+    assert_eq!(skip(&directory), ["glass", "shadow"]);
     std::fs::remove_dir_all(&directory).unwrap();
 }
