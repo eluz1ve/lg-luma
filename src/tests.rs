@@ -938,8 +938,11 @@ fn input_name_actions_only_highlight_the_focused_row_and_keep_the_saved_mode() {
             .draw
             .iter()
             .filter_map(|draw| match draw {
-                crate::renderer::Draw::RoundedGradient(rect, ..)
-                    if rect.x == crate::layout::LIST_X && rect.w == crate::layout::LIST_WIDTH =>
+                // The focus fill, not glass's faint sheen.
+                crate::renderer::Draw::RoundedGradient(rect, _, top, _)
+                    if rect.x == crate::layout::LIST_X
+                        && rect.w == crate::layout::LIST_WIDTH
+                        && top[3] > 0.5 =>
                 {
                     Some(rect.y)
                 }
@@ -980,8 +983,11 @@ fn clock_choices_only_highlight_focus_while_preserving_saved_checkmarks() {
             .draw
             .iter()
             .filter_map(|draw| match draw {
-                crate::renderer::Draw::RoundedGradient(rect, ..)
-                    if rect.x == crate::layout::LIST_X && rect.w == crate::layout::LIST_WIDTH =>
+                // The focus fill, not glass's faint sheen.
+                crate::renderer::Draw::RoundedGradient(rect, _, top, _)
+                    if rect.x == crate::layout::LIST_X
+                        && rect.w == crate::layout::LIST_WIDTH
+                        && top[3] > 0.5 =>
                 {
                     Some(rect.y)
                 }
@@ -1092,7 +1098,7 @@ fn system_version_is_in_the_summary_without_a_separate_row() {
         draw,
         crate::renderer::Draw::Shape(rect, _, width, color)
             if rect.x == PREVIEW_X && rect.y == PREVIEW_Y && rect.w == PREVIEW_WIDTH
-                && *width == 0. && color[3] == 0.46
+                && *width == 0. && color[3] == 0.24
     )));
     assert!(system.draw.iter().any(|draw| matches!(
         draw,
@@ -1938,7 +1944,7 @@ fn settings_order_language_sort_and_shortcut_empty_card() {
     assert!(empty.draw.iter().any(|draw| matches!(draw,
         Draw::Shape(rect, radius, stroke, color) if rect.x == crate::layout::LIST_X
             && rect.y == crate::layout::LIST_TOP + 78. && rect.h == 220.
-            && *radius == 20. && *stroke == 0. && color[3] == 0.46
+            && *radius == 20. && *stroke == 0. && color[3] == 0.24
     )));
     assert!(empty.draw.iter().any(|draw| matches!(draw,
         Draw::Text(label, _, style, ..) if label == state.preferences.language.t("noTiles") && style.size == 24.
@@ -2689,7 +2695,7 @@ fn shortcut_settings_offer_qr_editing_and_a_test_remove_popup() {
     assert!(page.draw.iter().any(|draw| matches!(draw,
         crate::renderer::Draw::Shape(rect, radius, _, color)
             if rect.x == crate::layout::LIST_X && rect.h == crate::layout::ROW_GROWN
-                && *radius == 16. && color[3] == 0.46
+                && *radius == 16. && color[3] == 0.24
     )));
     assert!(
         !page
@@ -3142,7 +3148,7 @@ fn app_categories_and_search_use_matching_pills_and_larger_heavier_labels() {
         assert_eq!(control.rect.y, 150.);
         assert!(rendered.draw.iter().any(|draw| matches!(draw,
             Draw::Shape(rect, radius, _, color) if rect.x == control.rect.x && rect.y == control.rect.y
-                && rect.w == control.rect.w && (*radius == 48. || *radius == 30.) && color[3] >= 0.46
+                && rect.w == control.rect.w && (*radius == 48. || *radius == 30.) && color[3] >= 0.24
         )));
         assert!(rendered.draw.iter().any(|draw| matches!(draw,
             Draw::Text(_, rect, style, ..) if rect.x >= control.rect.x && rect.x < control.rect.x + control.rect.w

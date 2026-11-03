@@ -31,9 +31,19 @@ fn wallpaper(scene: &view::Scene) -> String {
     }
 }
 
+/// The wallpaper without the shade Home lays under its text: glass blurs what lies behind it,
+/// not the darkened copy.
+fn unshaded(path: &str) -> String {
+    if path.ends_with("-plain.jpg") {
+        path.into()
+    } else {
+        path.replace(".jpg", "-plain.jpg")
+    }
+}
+
 /// Asserts a glass draw lies exactly under `rect`, over the screen's wallpaper.
 fn on_glass(scene: &view::Scene, rect: Rect, what: &str) {
-    let path = wallpaper(scene);
+    let path = unshaded(&wallpaper(scene));
     assert!(
         glass(scene).iter().any(|(p, r, source, _)| *p == path
             && xywh(r) == xywh(&rect)
@@ -169,8 +179,8 @@ fn glass_cross_fades_with_the_wallpaper() {
         .map(|(path, _, _, tint)| (path, tint[3]))
         .collect();
     assert_eq!(layers.len(), 2, "{layers:?}");
-    assert_eq!(layers[0], (previous, 1.));
-    assert_eq!(layers[1].0, current);
+    assert_eq!(layers[0], (unshaded(&previous), 1.));
+    assert_eq!(layers[1].0, unshaded(&current));
     assert!((layers[1].1 - alpha).abs() < 0.05, "{layers:?} vs {alpha}");
 }
 
@@ -244,5 +254,23 @@ fn the_preview_samples_its_own_wallpaper() {
     );
     for (_, rect, source, _) in inside {
         assert_eq!(xywh(&source), xywh(&wallpaper), "{:?}", xywh(&rect));
+    }
+}
+
+#[test]
+fn glass_blurs_the_wallpaper_without_its_shade() {
+    let mut state = home();
+    state.preferences.background = "forest".into();
+    for gradient in [true, false] {
+        state.preferences.wallpaper_gradient = gradient;
+        let drawn = scene(&state);
+        let paths: Vec<_> = glass(&drawn).into_iter().map(|(path, ..)| path).collect();
+        assert!(!paths.is_empty());
+        assert!(
+            paths
+                .iter()
+                .all(|path| path.ends_with("wallpapers/forest-plain.jpg")),
+            "{paths:?}"
+        );
     }
 }

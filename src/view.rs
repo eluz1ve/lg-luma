@@ -81,13 +81,18 @@ impl Assets {
     }
 
     fn background(&self, state: &State, id: &str) -> String {
+        self.background_shaded(state, id, state.preferences.wallpaper_gradient)
+    }
+
+    /// The wallpaper `id`, with or without the shade laid under Home's text.
+    fn background_shaded(&self, state: &State, id: &str, shaded: bool) -> String {
         // An Apple TV still: `aerials#place`.
         if let Some(place) = id
             .strip_prefix(crate::aerials::ID)
             .and_then(|rest| rest.strip_prefix('#'))
             && let Some(still) = state.aerials.iter().find(|still| still.id == place)
         {
-            return if state.preferences.wallpaper_gradient {
+            return if shaded {
                 still.image()
             } else {
                 still.unshaded_image()
@@ -99,11 +104,11 @@ impl Assets {
             && let Ok(frame) = frame.parse::<usize>()
             && frame < item.frames.len()
         {
-            return item.frame(frame, state.preferences.wallpaper_gradient);
+            return item.frame(frame, shaded);
         }
         let id = id.split_once('#').map_or(id, |(id, _)| id);
         if let Some(item) = state.wallpapers.iter().find(|item| item.id == id) {
-            return if state.preferences.wallpaper_gradient {
+            return if shaded {
                 item.image()
             } else {
                 item.unshaded_image()
@@ -114,11 +119,7 @@ impl Assets {
         } else {
             "dunes"
         };
-        let suffix = if state.preferences.wallpaper_gradient {
-            ""
-        } else {
-            "-plain"
-        };
+        let suffix = if shaded { "" } else { "-plain" };
         self.path(format!("wallpapers/{id}{suffix}.jpg"))
     }
 
@@ -361,13 +362,23 @@ impl Scene {
     /// Chrome over the wallpaper: its blurred copy, tinted, with a hairline border and a
     /// highlight along the top (spec, «Материалы»).
     fn glass(&mut self, rect: Rect, radius: f32) {
-        self.glass_tinted(rect, radius, GLASS_TINT, 0.10);
+        self.glass_tinted(rect, radius, GLASS_TINT, 0.14);
     }
     /// Glass under a lighter tint or a stronger border, e.g. a focused chip.
     fn glass_tinted(&mut self, rect: Rect, radius: f32, tint: Color, border: f32) {
         self.frost(rect, radius);
         self.shape(rect, radius, tint);
+        self.glass_sheen(rect, radius);
         self.glass_edge(rect, radius, border);
+    }
+    /// Light falling on the glass from above: brighter at the top, gone by the bottom.
+    fn glass_sheen(&mut self, rect: Rect, radius: f32) {
+        self.draw.push(Draw::RoundedGradient(
+            rect,
+            radius,
+            c(0xffffff, GLASS_SHEEN),
+            c(0xffffff, 0.),
+        ));
     }
     /// An overlay's panel: glass under a heavier grey, so its text reads on any wallpaper.
     fn modal_glass(&mut self, rect: Rect, radius: f32) {
@@ -375,10 +386,11 @@ impl Scene {
         self.draw.push(Draw::RoundedGradient(
             rect,
             radius,
-            c(0x34383b, 0.86),
-            c(0x24282d, 0.90),
+            c(0x2a2e33, 0.78),
+            c(0x1c2025, 0.86),
         ));
-        self.glass_edge(rect, radius, 0.12);
+        self.glass_sheen(rect, radius);
+        self.glass_edge(rect, radius, 0.14);
     }
     /// The wallpaper's blurred copy under `rect`, layered as the wallpapers are.
     fn frost(&mut self, rect: Rect, radius: f32) {
@@ -399,7 +411,7 @@ impl Scene {
         self.shape(
             Rect::new(rect.x + corner, rect.y, rect.w - 2. * corner, 1.),
             0.5,
-            c(0xffffff, 0.16),
+            c(0xffffff, GLASS_RIM),
         );
     }
     fn fade(&mut self, from: usize, alpha: f32, brightness: f32) {
@@ -688,7 +700,10 @@ fn aerials_caption(out: &mut Scene, assets: &Assets, state: &State, rect: Rect) 
 /// The whole screen, where the wallpaper is laid out.
 const SCREEN: Rect = Rect::new(0., 0., 1920., 1080.);
 /// Glass's tint over the wallpaper's blurred copy: `rgba(18,22,30,.46)`.
-const GLASS_TINT: Color = [18. / 255., 22. / 255., 30. / 255., 0.46];
+const GLASS_TINT: Color = [14. / 255., 17. / 255., 22. / 255., 0.24];
+/// The sheen's opacity at the glass's top edge, and the rim light along it.
+const GLASS_SHEEN: f32 = 0.10;
+const GLASS_RIM: f32 = 0.34;
 /// A focused chip's lighter tint.
 const GLASS_FOCUSED: Color = [52. / 255., 58. / 255., 66. / 255., 0.50];
 
@@ -729,22 +744,24 @@ pub fn scene_with_pill(
     now: OffsetDateTime,
 ) -> Scene {
     let mut out = Scene::new();
-    let current = assets.background(state, &state.background_key());
+    let key = state.background_key();
+    let current = assets.background(state, &key);
+    // Glass blurs the wallpaper itself, not the shade under Home's text.
+    let behind = |key: &str| assets.background_shaded(state, key, false);
     if let Some((previous, start)) = &state.previous_background {
-        let previous = assets.background(state, previous);
-        out.image(previous.clone(), SCREEN, 0., false);
+        out.image(assets.background(state, previous), SCREEN, 0., false);
         let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
         out.draw.push(Draw::TintedImage(
-            current.clone(),
+            current,
             SCREEN,
             0.,
             false,
             [1., 1., 1., alpha],
         ));
-        out.backdrop = vec![(previous, 1.), (current, alpha)];
+        out.backdrop = vec![(behind(previous), 1.), (behind(&key), alpha)];
     } else {
-        out.image(current.clone(), SCREEN, 0., false);
-        out.backdrop = vec![(current, 1.)];
+        out.image(current, SCREEN, 0., false);
+        out.backdrop = vec![(behind(&key), 1.)];
     }
     let content_start = out.draw.len();
     if recents_replaces_page(state) {
