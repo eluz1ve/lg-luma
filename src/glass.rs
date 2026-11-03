@@ -1,6 +1,7 @@
 //! Glass: chrome drawn over one blurred copy of the wallpaper, made once when the wallpaper
 //! loads, never per frame.
 use image::{Rgba, RgbaImage};
+use std::{collections::HashSet, sync::mpsc, thread};
 
 /// The copy's size: a quarter of 1080p each way, enough for a blur this soft.
 pub const WIDTH: u32 = 480;
@@ -22,6 +23,64 @@ pub fn frost(image: &RgbaImage) -> RgbaImage {
         let pixel = pixels[y as usize * width + x as usize];
         Rgba(pixel.map(|channel| channel.round().clamp(0., 255.) as u8))
     })
+}
+
+/// A wallpaper's copy, made off the GL thread: decoding a wallpaper and blurring it takes the
+/// TV several frames. Each path is asked for once until its reply is taken.
+#[derive(Default)]
+pub struct Worker {
+    requests: Option<mpsc::Sender<String>>,
+    replies: Option<mpsc::Receiver<(String, Option<RgbaImage>)>>,
+    pending: HashSet<String>,
+}
+
+impl Worker {
+    pub fn request(&mut self, path: &str) {
+        if !self.pending.insert(path.into()) {
+            return;
+        }
+        if self.requests.is_none() {
+            let (requests, inbox) = mpsc::channel::<String>();
+            let (outbox, replies) = mpsc::channel();
+            let spawned = thread::Builder::new()
+                .name("luma-glass".into())
+                .spawn(move || {
+                    for path in inbox {
+                        let copy = image::open(&path)
+                            .ok()
+                            .map(|image| frost(&image.into_rgba8()));
+                        if outbox.send((path, copy)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            if let Err(error) = spawned {
+                eprintln!("Luma glass worker: {error}");
+                return;
+            }
+            self.requests = Some(requests);
+            self.replies = Some(replies);
+        }
+        if let Some(requests) = &self.requests {
+            let _ = requests.send(path.into());
+        }
+    }
+
+    pub fn pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// The copies made since the last call; `None` for a wallpaper that could not be read.
+    pub fn ready(&mut self) -> Vec<(String, Option<RgbaImage>)> {
+        let Some(replies) = &self.replies else {
+            return Vec::new();
+        };
+        let ready: Vec<_> = replies.try_iter().collect();
+        for (path, _) in &ready {
+            self.pending.remove(path);
+        }
+        ready
+    }
 }
 
 /// Each output pixel is the mean of the source pixels its cell covers.

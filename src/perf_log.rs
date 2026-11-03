@@ -1,5 +1,6 @@
 //! On-TV frame timing, for measuring where no debugger reaches: while a `perf` file sits beside
-//! the preferences, each second that drew frames appends one line to `perf.log` there.
+//! the preferences, each second that drew frames appends one line to `perf.log` there. A
+//! `script=` line in that file plays remote presses at launch, as `--script` does.
 use crate::diagnostics::Frame;
 use std::{
     fs::File,
@@ -95,6 +96,21 @@ impl PerfLog {
             self.written += line.len() as u64;
         }
     }
+}
+
+/// The presses a `script=a,b,c` line of the switch file asks for.
+pub fn script(directory: &Path) -> Vec<String> {
+    let Ok(switch) = std::fs::read_to_string(directory.join("perf")) else {
+        return Vec::new();
+    };
+    switch
+        .lines()
+        .filter_map(|line| line.strip_prefix("script="))
+        .flat_map(|actions| actions.split(','))
+        .map(str::trim)
+        .filter(|action| !action.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 fn line(seconds: f64, label: &str, samples: &[Sample]) -> String {

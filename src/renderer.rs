@@ -364,6 +364,7 @@ pub struct Renderer {
     textures: HashMap<String, Option<Texture>>,
     vectors: HashMap<String, Option<vector::Mesh>>,
     artwork_variants: HashMap<String, String>,
+    glass_worker: crate::glass::Worker,
     vertices: Vec<f32>,
     batches: Vec<Batch>,
     clip: Option<Rect>,
@@ -485,6 +486,7 @@ impl Renderer {
             textures: HashMap::new(),
             vectors: HashMap::new(),
             artwork_variants: HashMap::new(),
+            glass_worker: crate::glass::Worker::default(),
             vertices: Vec::with_capacity(65536),
             batches: Vec::new(),
             clip: None,
@@ -1000,7 +1002,6 @@ impl Renderer {
             self.vector_image(path, rect, contain, tint);
             return;
         }
-        let original = path;
         let path = if self.stats.viewport.scale > 1.
             && self.info.max_texture_size >= 3840
             && Path::new(path)
@@ -1035,15 +1036,6 @@ impl Renderer {
             let loaded = match image::open(&path) {
                 Ok(image) => {
                     let image = image.into_rgba8();
-                    // A wallpaper brings its glass copy, made once from the pixels at hand.
-                    let glass = glass_key(original);
-                    if full_screen(&rect) && !contain && !self.textures.contains_key(&glass) {
-                        let copy = crate::glass::frost(&image);
-                        self.textures.insert(
-                            glass,
-                            Some(texture(copy.width(), copy.height(), copy.as_raw())),
-                        );
-                    }
                     Some(texture(image.width(), image.height(), image.as_raw()))
                 }
                 Err(error) => {
@@ -1073,19 +1065,30 @@ impl Renderer {
         }
     }
 
+    /// Uploads the glass copies the worker finished; true when any arrived, so the scene that
+    /// asked for them is drawn again.
+    pub fn receive_glass(&mut self) -> bool {
+        let ready = self.glass_worker.ready();
+        let arrived = !ready.is_empty();
+        for (path, copy) in ready {
+            let copy = copy.map(|copy| texture(copy.width(), copy.height(), copy.as_raw()));
+            self.textures.insert(glass_key(&path), copy);
+        }
+        arrived
+    }
+
+    pub fn glass_pending(&self) -> bool {
+        self.glass_worker.pending()
+    }
+
     /// A panel over the wallpaper's glass copy, sampled where the panel sits on it. The copy is
-    /// made when the wallpaper loads; one evicted since, or never drawn full screen, is made
-    /// again here. Without a copy (the wallpaper failed to load) nothing is drawn.
+    /// made off the GL thread; until it arrives, or if the wallpaper cannot be read, nothing is
+    /// drawn and the panel's tint stands alone.
     fn glass(&mut self, path: &str, rect: Rect, radius: f32, source: Rect, tint: Color) {
         let key = glass_key(path);
         if !self.textures.contains_key(&key) {
-            let started = Instant::now();
-            let copy = image::open(path)
-                .ok()
-                .map(|image| crate::glass::frost(&image.into_rgba8()))
-                .map(|copy| texture(copy.width(), copy.height(), copy.as_raw()));
-            self.textures.insert(key.clone(), copy);
-            self.stats.image_load_ms += started.elapsed().as_secs_f64() * 1000.;
+            self.glass_worker.request(path);
+            return;
         }
         let frame = self.frame;
         let Some(texture) = self.textures.get_mut(&key).and_then(Option::as_mut) else {

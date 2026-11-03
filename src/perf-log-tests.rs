@@ -33,3 +33,19 @@ fn the_log_needs_its_switch_file() {
     assert!(PerfLog::open(&directory).is_some());
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+#[test]
+fn the_switch_file_may_carry_a_script_to_measure() {
+    let directory = std::env::temp_dir().join(format!("luma-perf-script-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    assert!(script(&directory).is_empty());
+    std::fs::write(directory.join("perf"), "").unwrap();
+    assert!(script(&directory).is_empty());
+    std::fs::write(
+        directory.join("perf"),
+        "note\nscript= home, down ,right,wait\n",
+    )
+    .unwrap();
+    assert_eq!(script(&directory), ["home", "down", "right", "wait"]);
+    std::fs::remove_dir_all(&directory).unwrap();
+}

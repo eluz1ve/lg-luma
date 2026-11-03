@@ -39,3 +39,45 @@ fn frost_takes_any_wallpaper_size() {
         }
     }
 }
+
+fn wait_ready(worker: &mut Worker) -> Vec<(String, Option<RgbaImage>)> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let ready = worker.ready();
+        if !ready.is_empty() || std::time::Instant::now() > deadline {
+            return ready;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn the_worker_makes_each_copy_once_off_the_frame() {
+    let directory = std::env::temp_dir().join(format!("luma-glass-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("wall.png");
+    RgbaImage::from_pixel(64, 36, Rgba([40, 90, 160, 255]))
+        .save(&path)
+        .unwrap();
+    let path = path.to_string_lossy().into_owned();
+    let mut worker = Worker::default();
+    assert!(!worker.pending());
+    worker.request(&path);
+    worker.request(&path);
+    assert!(worker.pending());
+    let ready = wait_ready(&mut worker);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].0, path);
+    assert_eq!(
+        ready[0].1.as_ref().map(RgbaImage::dimensions),
+        Some((480, 270))
+    );
+    assert!(!worker.pending());
+    // A wallpaper that cannot be read gives no copy, once.
+    let missing = directory.join("missing.jpg").to_string_lossy().into_owned();
+    worker.request(&missing);
+    let ready = wait_ready(&mut worker);
+    assert_eq!(ready.len(), 1);
+    assert!(ready[0].1.is_none());
+    std::fs::remove_dir_all(&directory).unwrap();
+}

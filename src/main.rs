@@ -856,6 +856,12 @@ fn run() -> Result<(), String> {
         storage::load(&preferences_path)?
     };
     let mut perf_log = preferences_path.parent().and_then(perf_log::PerfLog::open);
+    if webos
+        && options.script.is_empty()
+        && let Some(directory) = preferences_path.parent()
+    {
+        options.script.extend(perf_log::script(directory));
+    }
     let public_update_checks = update::public_checks_enabled(
         !options.script.is_empty(),
         options.test_update_version.is_some(),
@@ -1981,6 +1987,9 @@ fn run() -> Result<(), String> {
             }
             text_active = keyboard;
         }
+        if renderer.receive_glass() {
+            state.dirty = true;
+        }
         let dt = last_frame.elapsed().as_secs_f32().min(0.1);
         last_frame = Instant::now();
         // Update after input so a focus change starts in this frame, without an idle wait.
@@ -2180,6 +2189,7 @@ fn run() -> Result<(), String> {
             || back_button.press.is_some()
             || options.frames.is_some()
             || assets.artwork.pending()
+            || renderer.glass_pending()
         {
             8
         } else if !prewarm.is_empty() {
