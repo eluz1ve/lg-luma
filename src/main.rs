@@ -22,6 +22,7 @@ mod diagnostics;
 mod egl_damage;
 mod font;
 mod glass;
+mod glyph_atlas;
 mod homebrew_updates;
 mod i18n;
 #[path = "input-refresh.rs"]

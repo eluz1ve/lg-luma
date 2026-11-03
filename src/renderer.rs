@@ -1,7 +1,8 @@
-//! A small GLES2-compatible GPU painter. Rust owns vector glyphs and the draw list;
+//! A small GLES2-compatible GPU painter. Rust owns the glyph atlas and the draw list;
 //! SDL only supplies the context. No browser, LVGL or Qt runtime.
 use crate::{
     font::Font,
+    glyph_atlas::{self, Contours, Shelves},
     raster::{Size, Viewport},
     state::Rect,
     vector,
@@ -18,8 +19,10 @@ use std::{
 
 pub type Color = [f32; 4];
 pub const WHITE: Color = [0.96, 0.96, 0.96, 1.];
-const GLYPH_GEOMETRY_BUDGET: usize = 8 * 1024 * 1024;
-const TEXT_GEOMETRY_BUDGET: usize = 32 * 1024 * 1024;
+/// The glyph atlas's side: one byte a pixel, 4 MiB.
+const ATLAS_SIZE: u32 = 2048;
+/// GLES2's one-channel texture format; the core desktop profile has GL_RED instead.
+const LUMINANCE: GLenum = 0x1909;
 const TEXTURE_BUDGET: usize = 48 * 1024 * 1024;
 /// How dark a text shadow is where all its taps overlap, under the glyphs.
 const SHADOW_DEPTH: f32 = 0.55;
@@ -107,9 +110,25 @@ impl Drop for Texture {
     }
 }
 
-struct Glyph {
-    geometry: Vec<luma_vector_geometry::Vertex>,
-    frame: u64,
+/// A glyph at one drawn size, or its shadow.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct GlyphKey {
+    character: char,
+    font: u16,
+    // Logical size and physical pixels per logical one, as bits.
+    size: u32,
+    scale: u32,
+    shadow: bool,
+}
+
+/// Where a glyph's bitmap sits in the atlas, and where it goes from the pen in pixels.
+#[derive(Clone, Copy)]
+struct AtlasGlyph {
+    uv: [f32; 4],
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -121,10 +140,10 @@ struct TextKey {
     flags: u8,
 }
 
+/// A laid-out run: each glyph's character, pen position from the run's origin and font.
 struct TextRun {
-    mesh: Option<vector::Mesh>,
+    glyphs: Vec<(char, f32, f32, u16)>,
     missing_glyphs: usize,
-    failures: usize,
     frame: u64,
 }
 
@@ -174,7 +193,7 @@ impl RenderStats {
         Self {
             target,
             viewport: Viewport::new(target),
-            font_antialiasing: "vector grayscale coverage",
+            font_antialiasing: "glyph atlas, exact area coverage",
             multisample_samples: 0,
             max_logical_font_px: 0.,
             max_physical_font_px: 0.,
@@ -212,11 +231,6 @@ enum BatchKind {
     Vector {
         path: String,
         rect: Rect,
-        tint: Color,
-    },
-    Text {
-        key: TextKey,
-        origin: [f32; 2],
         tint: Color,
     },
 }
@@ -358,15 +372,19 @@ fn snap_rect(rect: Rect, scale: f32) -> Rect {
 pub struct Renderer {
     program: GLuint,
     vector_program: GLuint,
-    text_program: GLuint,
     text_embolden: f32,
+    gles: bool,
     buffer: GLuint,
     vao: GLuint,
     white: Texture,
     font_directory: PathBuf,
     fonts: HashMap<u16, Font>,
     failed_fonts: HashSet<u16>,
-    glyphs: HashMap<(char, u16), Glyph>,
+    atlas: Texture,
+    shelves: Shelves,
+    atlas_glyphs: HashMap<GlyphKey, Option<AtlasGlyph>>,
+    // Set when a glyph found no room; the frame is built again on an emptied atlas.
+    atlas_full: bool,
     text_runs: HashMap<TextKey, TextRun>,
     textures: HashMap<String, Option<Texture>>,
     vectors: HashMap<String, Option<vector::Mesh>>,
@@ -442,20 +460,6 @@ impl Renderer {
                 return Err(error);
             }
         };
-        let text_program = match link(
-            &(vertex_prefix + include_str!("shaders/text.vert")),
-            &(fragment_prefix + include_str!("shaders/vector.frag")),
-            &[c"a_position", c"a_offset", c"a_origin", c"a_coverage"],
-        ) {
-            Ok(program) => program,
-            Err(error) => {
-                unsafe {
-                    gl::DeleteProgram(program);
-                    gl::DeleteProgram(vector_program);
-                }
-                return Err(error);
-            }
-        };
         let mut buffer = 0;
         let mut vao = 0;
         unsafe {
@@ -477,18 +481,23 @@ impl Renderer {
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
         }
         let white = texture(1, 1, &[255; 4]);
+        let atlas_size = ATLAS_SIZE.min(max_texture_size.max(256) as u32);
+        let atlas = atlas_texture(atlas_size, gles);
         Ok(Self {
             program,
             vector_program,
-            text_program,
             text_embolden,
+            gles,
             buffer,
             vao,
             white,
             font_directory: directory.into(),
             fonts,
             failed_fonts: HashSet::new(),
-            glyphs: HashMap::new(),
+            atlas,
+            shelves: Shelves::new(atlas_size),
+            atlas_glyphs: HashMap::new(),
+            atlas_full: false,
             text_runs: HashMap::new(),
             textures: HashMap::new(),
             vectors: HashMap::new(),
@@ -531,50 +540,77 @@ impl Renderer {
         }
     }
 
-    fn glyph(&mut self, c: char, font: u16) -> Result<&[luma_vector_geometry::Vertex], String> {
-        let key = (c, font);
-        if !self.glyphs.contains_key(&key) {
-            let started = Instant::now();
-            let geometry = self.fonts[&font].geometry(c)?;
-            self.stats.glyph_ms += started.elapsed().as_secs_f64() * 1000.;
-            self.glyphs.insert(
-                key,
-                Glyph {
-                    geometry,
-                    frame: self.frame,
-                },
-            );
-            self.stats.glyph_tessellations += 1;
+    /// The glyph's place in the atlas, rasterized on first use; `None` for a space, or when
+    /// the atlas is full (then `atlas_full` asks for the frame again).
+    fn atlas_glyph(&mut self, key: GlyphKey) -> Option<AtlasGlyph> {
+        if let Some(glyph) = self.atlas_glyphs.get(&key) {
+            return *glyph;
         }
-        let glyph = self.glyphs.get_mut(&key).unwrap();
-        glyph.frame = self.frame;
-        Ok(&glyph.geometry)
+        if self.atlas_full {
+            return None;
+        }
+        let started = Instant::now();
+        let (size, scale) = (f32::from_bits(key.size), f32::from_bits(key.scale));
+        let physical = size * scale;
+        let font = &self.fonts[&key.font];
+        let mut contours = Contours::new(physical / font.units_per_em());
+        let bitmap = font
+            .outline(key.character, &mut contours)
+            .then(|| contours.rasterize(embolden(physical, self.text_embolden)))
+            .flatten()
+            .map(|bitmap| {
+                if key.shadow {
+                    let (taps, alpha) = shadow_taps(size);
+                    let taps: Vec<_> = taps.iter().map(|[x, y]| [x * scale, y * scale]).collect();
+                    glyph_atlas::shadow(&bitmap, &taps, alpha)
+                } else {
+                    bitmap
+                }
+            });
+        let glyph = match bitmap {
+            None => None,
+            Some(bitmap) => {
+                let Some([x, y]) = self.shelves.allocate(bitmap.width, bitmap.height) else {
+                    self.atlas_full = true;
+                    return None;
+                };
+                unsafe {
+                    gl::BindTexture(gl::TEXTURE_2D, self.atlas.id);
+                    gl::TexSubImage2D(
+                        gl::TEXTURE_2D,
+                        0,
+                        x as i32,
+                        y as i32,
+                        bitmap.width as i32,
+                        bitmap.height as i32,
+                        if self.gles { LUMINANCE } else { gl::RED },
+                        gl::UNSIGNED_BYTE,
+                        bitmap.pixels.as_ptr().cast(),
+                    );
+                }
+                let side = self.shelves.size() as f32;
+                Some(AtlasGlyph {
+                    uv: [
+                        x as f32 / side,
+                        y as f32 / side,
+                        (x + bitmap.width) as f32 / side,
+                        (y + bitmap.height) as f32 / side,
+                    ],
+                    left: bitmap.left,
+                    top: bitmap.top,
+                    width: bitmap.width,
+                    height: bitmap.height,
+                })
+            }
+        };
+        self.stats.glyph_ms += started.elapsed().as_secs_f64() * 1000.;
+        self.stats.glyph_tessellations += 1;
+        self.atlas_glyphs.insert(key, glyph);
+        glyph
     }
 
-    fn trim_text_geometry(&mut self) {
-        let glyph_bytes =
-            |glyph: &Glyph| glyph.geometry.len() * size_of::<luma_vector_geometry::Vertex>();
-        let mut bytes: usize = self.glyphs.values().map(glyph_bytes).sum();
-        if bytes > GLYPH_GEOMETRY_BUDGET || self.glyphs.len() > 4096 {
-            let mut old: Vec<_> = self
-                .glyphs
-                .iter()
-                .filter(|(_, glyph)| glyph.frame != self.frame)
-                .map(|(key, glyph)| (*key, glyph.frame))
-                .collect();
-            old.sort_by_key(|(_, frame)| *frame);
-            for (key, _) in old {
-                if bytes <= GLYPH_GEOMETRY_BUDGET && self.glyphs.len() <= 4096 {
-                    break;
-                }
-                if let Some(glyph) = self.glyphs.remove(&key) {
-                    bytes -= glyph_bytes(&glyph);
-                }
-            }
-        }
-        let run_bytes = |run: &TextRun| run.mesh.as_ref().map_or(0, |mesh| mesh.bytes);
-        let mut bytes: usize = self.text_runs.values().map(run_bytes).sum();
-        if bytes > TEXT_GEOMETRY_BUDGET || self.text_runs.len() > 512 {
+    fn trim_text(&mut self) {
+        if self.text_runs.len() > 512 {
             let mut old: Vec<_> = self
                 .text_runs
                 .iter()
@@ -583,18 +619,17 @@ impl Renderer {
                 .collect();
             old.sort_by_key(|(_, frame)| *frame);
             for (key, _) in old {
-                if bytes <= TEXT_GEOMETRY_BUDGET && self.text_runs.len() <= 512 {
+                if self.text_runs.len() <= 512 {
                     break;
                 }
-                if let Some(run) = self.text_runs.remove(&key) {
-                    bytes -= run_bytes(&run);
-                }
+                self.text_runs.remove(&key);
             }
         }
-        self.stats.cached_glyphs = self.glyphs.len();
-        self.stats.glyph_geometry_bytes = self.glyphs.values().map(glyph_bytes).sum();
+        self.stats.cached_glyphs = self.atlas_glyphs.len();
+        self.stats.glyph_geometry_bytes = self.shelves.used() as usize;
         self.stats.cached_text_runs = self.text_runs.len();
-        self.stats.text_geometry_bytes = self.text_runs.values().map(run_bytes).sum();
+        let side = self.shelves.size() as usize;
+        self.stats.text_geometry_bytes = side * side;
     }
 
     fn quad(
@@ -771,9 +806,7 @@ impl Renderer {
                 rect.w.to_bits(),
                 rect.h.to_bits(),
             ],
-            flags: u8::from(style.align_right)
-                | (u8::from(centered) << 1)
-                | (u8::from(self.stats.multisample_samples > 1) << 2),
+            flags: u8::from(style.align_right) | (u8::from(centered) << 1),
         };
         if self.text_runs.contains_key(&key) {
             self.submit_shadowed(key, origin, color, style);
@@ -902,94 +935,99 @@ impl Renderer {
                 previous = Some(c);
             }
         }
-        let mut vertices = Vec::new();
-        let mut missing_glyphs = 0;
-        let mut failures = 0;
-        let multisampled = self.stats.multisample_samples > 1;
-        for (c, x, baseline, selected) in placed {
-            if self.fonts[&selected].lookup_glyph_index(c) == 0 && !c.is_whitespace() {
-                missing_glyphs += 1;
-            }
-            match self.glyph(c, selected) {
-                Ok(geometry) => {
-                    for triangle in geometry.chunks_exact(3) {
-                        // True sample coverage needs only the original fill.
-                        // Exclude the boundary fringe, not just its alpha.
-                        if multisampled && triangle.iter().any(|vertex| vertex.coverage < 1.) {
-                            continue;
-                        }
-                        for vertex in triangle {
-                            vertices.extend_from_slice(&[
-                                vertex.position.x * size_f,
-                                vertex.position.y * size_f,
-                                if multisampled { 0. } else { vertex.offset[0] },
-                                if multisampled { 0. } else { vertex.offset[1] },
-                                x,
-                                baseline,
-                                0.,
-                                0.,
-                                vertex.coverage,
-                            ]);
-                        }
-                    }
-                }
-                Err(error) => {
-                    eprintln!("Luma glyph {c:?}: {error}");
-                    failures += 1;
-                }
-            }
-        }
-        let mesh = if vertices.is_empty() {
-            None
-        } else {
-            match vector::Mesh::upload(1., 1., &vertices) {
-                Ok(mesh) => Some(mesh),
-                Err(error) => {
-                    eprintln!("Luma text: {error}");
-                    failures += 1;
-                    None
-                }
-            }
-        };
+        let missing_glyphs = placed
+            .iter()
+            .filter(|(c, _, _, selected)| {
+                self.fonts[selected].lookup_glyph_index(*c) == 0 && !c.is_whitespace()
+            })
+            .count();
         self.text_runs.insert(
             key.clone(),
             TextRun {
-                mesh,
+                glyphs: placed,
                 missing_glyphs,
-                failures,
                 frame: self.frame,
             },
         );
         self.submit_shadowed(key, origin, color, style);
     }
 
-    /// A shadowed run is first drawn faint and dark on rings around a point a little below it:
-    /// the taps add up like a blur, darkest under the glyphs and fading outwards, without
-    /// rendering one. Large text gets more rings so its wider shadow stays smooth.
+    /// A shadowed run lays down its glyphs' shadows first: each glyph faint and dark on rings
+    /// around a point a little below it, which add up like a blur, darkest under the glyphs
+    /// and fading outwards. The atlas holds that as one bitmap a glyph (`shadow_taps`).
     fn submit_shadowed(&mut self, key: TextKey, origin: [f32; 2], tint: Color, style: TextStyle) {
-        if style.shadow && tint[3] > 0. {
-            let (taps, alpha) = shadow_taps(style.size);
-            let shade = [0., 0., 0., alpha * tint[3]];
-            for [dx, dy] in taps {
-                self.submit_text(key.clone(), [origin[0] + dx, origin[1] + dy], shade);
-            }
-        }
-        self.submit_text(key, origin, tint);
+        let shadow = (style.shadow && tint[3] > 0.).then_some([0., 0., 0., tint[3]]);
+        self.submit_text(&key, origin, tint, shadow);
     }
 
-    fn submit_text(&mut self, key: TextKey, origin: [f32; 2], tint: Color) {
-        let run = self.text_runs.get_mut(&key).unwrap();
+    /// The run's glyphs as atlas quads, each placed at its pen position snapped to the pixel
+    /// grid, so the bitmap's pixels land on the screen's.
+    fn submit_text(&mut self, key: &TextKey, origin: [f32; 2], tint: Color, shadow: Option<Color>) {
+        let Some(run) = self.text_runs.get_mut(key) else {
+            return;
+        };
         run.frame = self.frame;
         self.stats.missing_glyphs += run.missing_glyphs;
-        self.stats.glyph_failures += run.failures;
-        if let Some(mesh) = &run.mesh {
-            self.stats.text_triangles += mesh.vertices as usize / 3;
-            self.batches.push(Batch {
-                kind: BatchKind::Text { key, origin, tint },
-                clip: self.clip,
-                fade: self.fade,
-            });
+        let glyphs = std::mem::take(&mut run.glyphs);
+        let viewport = self.stats.viewport;
+        let (sx, sy) = (
+            viewport.width as f32 / 1920.,
+            viewport.height as f32 / 1080.,
+        );
+        let size = key.layout[0];
+        let passes = shadow.map(|shade| (true, shade)).into_iter();
+        for (is_shadow, color) in passes.chain([(false, tint)]) {
+            for &(character, x, baseline, font) in &glyphs {
+                let Some(glyph) = self.atlas_glyph(GlyphKey {
+                    character,
+                    font,
+                    size,
+                    scale: sy.to_bits(),
+                    shadow: is_shadow,
+                }) else {
+                    continue;
+                };
+                let pen = [
+                    ((origin[0] + x) * sx).round(),
+                    ((origin[1] + baseline) * sy).round(),
+                ];
+                let rect = Rect::new(
+                    (pen[0] + glyph.left as f32) / sx,
+                    (pen[1] + glyph.top as f32) / sy,
+                    glyph.width as f32 / sx,
+                    glyph.height as f32 / sy,
+                );
+                self.glyph_quad(rect, glyph.uv, color);
+            }
         }
+        if let Some(run) = self.text_runs.get_mut(key) {
+            run.glyphs = glyphs;
+        }
+    }
+
+    /// A glyph's atlas bitmap at `rect`, already on the pixel grid, in `color`.
+    fn glyph_quad(&mut self, rect: Rect, uv: [f32; 4], color: Color) {
+        let start = self.vertices.len() / 14;
+        for (x, y) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
+            self.vertices.extend_from_slice(&[
+                rect.x + x * rect.w,
+                rect.y + y * rect.h,
+                uv[0] + x * (uv[2] - uv[0]),
+                uv[1] + y * (uv[3] - uv[1]),
+                color[0],
+                color[1],
+                color[2],
+                color[3],
+                0.,
+                0.,
+                0.,
+                0.,
+                -3.,
+                0.,
+            ]);
+        }
+        self.stats.text_triangles += 2;
+        self.paint_batch(start, 6, self.atlas.id, None);
     }
 
     fn image(&mut self, path: &str, rect: Rect, radius: f32, contain: bool, tint: Color) {
@@ -1323,15 +1361,23 @@ impl Renderer {
     /// Lays out the scene into vertices and batches; commands entirely outside `area` are
     /// skipped.
     fn build(&mut self, commands: &[Draw], width: u32, height: u32, area: Option<Rect>) {
+        self.build_once(commands, width, height, area);
+        if self.atlas_full {
+            // No room for a glyph: start the atlas over with this frame's glyphs alone.
+            self.shelves.clear();
+            self.atlas_glyphs.clear();
+            self.atlas_full = false;
+            self.build_once(commands, width, height, area);
+        }
+    }
+
+    fn build_once(&mut self, commands: &[Draw], width: u32, height: u32, area: Option<Rect>) {
         self.stats = RenderStats::new(Size::new(width, height));
         // Captures can bind a single-sample FBO even when the actual TV window
         // is multisampled, so query the active target rather than assume.
         let mut samples = 0;
         unsafe { gl::GetIntegerv(gl::SAMPLES, &mut samples) };
         self.stats.multisample_samples = samples.max(0) as u32;
-        if samples > 1 {
-            self.stats.font_antialiasing = "multisample vector coverage";
-        }
         self.frame += 1;
         self.vertices.clear();
         self.batches.clear();
@@ -1485,7 +1531,7 @@ impl Renderer {
                     // The same cheap alpha mask applies to shapes, textures,
                     // icons and text; the unmasked wallpaper remains beneath.
                     let fade = batch.fade.unwrap_or([0.; 8]);
-                    for program in [self.program, self.vector_program, self.text_program] {
+                    for program in [self.program, self.vector_program] {
                         gl::UseProgram(program);
                         gl::Uniform4f(
                             gl::GetUniformLocation(program, c"u_edge_fade".as_ptr()),
@@ -1570,22 +1616,6 @@ impl Renderer {
                             mesh,
                             [rect.w / mesh.width, rect.h / mesh.height, rect.x, rect.y],
                             *tint,
-                            0.,
-                        );
-                        paint_bound = false;
-                    }
-                    BatchKind::Text { key, origin, tint } => {
-                        let Some(mesh) = self.text_runs.get(key).and_then(|run| run.mesh.as_ref())
-                        else {
-                            continue;
-                        };
-                        let size = f32::from_bits(key.layout[0]) * vh as f32 / 1080.;
-                        self.draw_mesh(
-                            self.text_program,
-                            mesh,
-                            [1., 1., origin[0], origin[1]],
-                            *tint,
-                            embolden(size, self.text_embolden),
                         );
                         paint_bound = false;
                     }
@@ -1620,7 +1650,7 @@ impl Renderer {
                 }
             }
         }
-        self.trim_text_geometry();
+        self.trim_text();
         self.stats.vector_meshes = self.vectors.values().flatten().count();
         self.stats.vector_bytes = self.vectors.values().flatten().map(|mesh| mesh.bytes).sum();
         self.stats.artwork_bytes = bytes + self.stats.vector_bytes;
@@ -1628,31 +1658,10 @@ impl Renderer {
         self.stats.cpu_submission_ms = started.elapsed().as_secs_f64() * 1000.;
     }
 
-    fn draw_mesh(
-        &self,
-        program: GLuint,
-        mesh: &vector::Mesh,
-        transform: [f32; 4],
-        tint: Color,
-        embolden: f32,
-    ) {
+    fn draw_mesh(&self, program: GLuint, mesh: &vector::Mesh, transform: [f32; 4], tint: Color) {
         let viewport = self.stats.viewport;
         unsafe {
             gl::UseProgram(program);
-            if program == self.text_program {
-                gl::Uniform1f(
-                    gl::GetUniformLocation(program, c"u_fringe".as_ptr()),
-                    if self.stats.multisample_samples > 1 {
-                        0.
-                    } else {
-                        0.5
-                    },
-                );
-                gl::Uniform1f(
-                    gl::GetUniformLocation(program, c"u_embolden".as_ptr()),
-                    embolden,
-                );
-            }
             gl::BindBuffer(gl::ARRAY_BUFFER, mesh.buffer);
             gl::DisableVertexAttribArray(4);
             let mut offset = 0;
@@ -1891,11 +1900,46 @@ impl Drop for Renderer {
             gl::DeleteBuffers(1, &self.buffer);
             gl::DeleteProgram(self.program);
             gl::DeleteProgram(self.vector_program);
-            gl::DeleteProgram(self.text_program);
             if self.vao != 0 {
                 gl::DeleteVertexArrays(1, &self.vao);
             }
         }
+    }
+}
+
+/// The glyph atlas: one channel, cleared, sampled at its texels' centres.
+fn atlas_texture(side: u32, gles: bool) -> Texture {
+    let zeros = vec![0u8; side as usize * side as usize];
+    let mut id = 0;
+    unsafe {
+        gl::GenTextures(1, &mut id);
+        gl::BindTexture(gl::TEXTURE_2D, id);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        let (internal, format) = if gles {
+            (LUMINANCE, LUMINANCE)
+        } else {
+            (gl::R8, gl::RED)
+        };
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            internal as i32,
+            side as i32,
+            side as i32,
+            0,
+            format,
+            gl::UNSIGNED_BYTE,
+            zeros.as_ptr().cast(),
+        );
+    }
+    Texture {
+        id,
+        width: side,
+        height: side,
+        frame: 0,
     }
 }
 

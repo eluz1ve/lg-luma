@@ -298,7 +298,6 @@ dependencies = [
  "image",
  "libc",
  "luma-tv-helper",
- "luma-vector-geometry",
  "owned_ttf_parser",
  "qrcodegen",
  "ring",

@@ -23,7 +23,6 @@ gl = "0.14"
 if-addrs = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 libc = { version = "0.2", optional = true }
-luma-vector-geometry = { path = "vector-geometry" }
 owned_ttf_parser = "0.25"
 qrcodegen = "1.8"
 ring = "0.17"
@@ -38,7 +37,7 @@ lto = "thin"
 strip = true
 codegen-units = 1
 
-# Keep on-demand glyph geometry responsive in desktop debug previews.
+# Keep the asset tool's tessellation and on-demand glyph outlines fast in debug builds.
 [profile.dev.package.lyon_tessellation]
 opt-level = 3
 

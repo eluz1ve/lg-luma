@@ -24,6 +24,12 @@ float edge_coverage() {
 }
 void main() {
     if (v_params.x < 0.0) {
+        // -3: a glyph from the atlas, its coverage in the first channel, in the colour.
+        if (v_params.x < -2.5) {
+            gl_FragColor = vec4(v_color.rgb, v_color.a * texture2D(u_texture, v_uv).r *
+                edge_coverage());
+            return;
+        }
         vec4 color = texture2D(u_texture, v_uv) * v_color;
         // -2: wallpaper with folded full-screen fills, p * m + k (k in v_shape).
         if (v_params.x < -1.5)
