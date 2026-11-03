@@ -469,7 +469,62 @@ impl Default for Preferences {
     }
 }
 
+/// A widget that can stand in the middle of Home; one at most does, the rest go into Today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Center {
+    Cs2,
+    Crypto,
+    Shows,
+}
+
 impl Preferences {
+    /// The widget in the middle of Home: the first shown outside Today, CS2, then crypto, then
+    /// shows. Rows saved before the center existed can leave several outside; the rest go
+    /// into Today.
+    pub fn center(&self) -> Option<Center> {
+        [Center::Cs2, Center::Crypto, Center::Shows]
+            .into_iter()
+            .find(|&widget| self.shown(widget) && !self.placed_in_today(widget))
+    }
+
+    /// Whether `widget` has lines in the Today card.
+    pub fn in_today(&self, widget: Center) -> bool {
+        self.shown(widget) && self.center() != Some(widget)
+    }
+
+    /// Puts `widget` in the middle of Home, or back into Today; the one it replaces moves
+    /// into Today.
+    pub fn place_in_center(&mut self, widget: Center, center: bool) {
+        if center && let Some(previous) = self.center() {
+            self.set_in_today(previous, true);
+        }
+        self.set_in_today(widget, !center);
+    }
+
+    fn shown(&self, widget: Center) -> bool {
+        match widget {
+            Center::Cs2 => self.show_cs2,
+            Center::Crypto => self.show_crypto && !self.crypto_coins.is_empty(),
+            Center::Shows => self.show_shows,
+        }
+    }
+
+    fn placed_in_today(&self, widget: Center) -> bool {
+        match widget {
+            Center::Cs2 => self.cs2_today,
+            Center::Crypto => self.crypto_beside,
+            Center::Shows => self.shows_today,
+        }
+    }
+
+    fn set_in_today(&mut self, widget: Center, today: bool) {
+        match widget {
+            Center::Cs2 => self.cs2_today = today,
+            Center::Crypto => self.crypto_beside = today,
+            Center::Shows => self.shows_today = today,
+        }
+    }
+
     pub fn splash_background(&self) -> &str {
         self.splash_background
             .as_deref()

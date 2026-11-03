@@ -1,0 +1,141 @@
+use super::*;
+use crate::model::Center;
+
+fn rects(state: &State, of: fn(&Target) -> bool) -> Vec<crate::state::Rect> {
+    controls(state)
+        .into_iter()
+        .filter(|control| of(&control.target))
+        .map(|control| control.rect)
+        .collect()
+}
+
+/// Crypto prices in the center, as Preferences place them by default.
+fn with_crypto() -> State {
+    let mut state = ready();
+    state.preferences.show_crypto = true;
+    state
+}
+
+#[test]
+fn one_widget_takes_the_center_cs2_then_crypto_then_shows() {
+    let mut preferences = Preferences::default();
+    assert_eq!(preferences.center(), None);
+    preferences.show_crypto = true;
+    assert_eq!(preferences.center(), Some(Center::Crypto));
+    assert!(!preferences.in_today(Center::Crypto));
+    // Saved from the days of rows: CS2 and shows both outside Today. CS2 comes first, and the
+    // others show in Today.
+    preferences.show_cs2 = true;
+    preferences.cs2_today = false;
+    preferences.show_shows = true;
+    preferences.shows_today = false;
+    assert_eq!(preferences.center(), Some(Center::Cs2));
+    assert!(preferences.in_today(Center::Crypto));
+    assert!(preferences.in_today(Center::Shows));
+    assert!(!preferences.in_today(Center::Cs2));
+    // Crypto without coins has nothing to show.
+    preferences.show_cs2 = false;
+    preferences.crypto_coins.clear();
+    assert_eq!(preferences.center(), Some(Center::Shows));
+    assert!(!preferences.in_today(Center::Crypto));
+}
+
+#[test]
+fn placing_a_widget_in_the_center_moves_the_one_there_into_today() {
+    let mut state = with_crypto();
+    state.preferences.show_cs2 = true;
+    assert_eq!(state.preferences.center(), Some(Center::Crypto));
+    state.open(2);
+    state.focus = Target::Cs2Layout;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert!(!state.preferences.cs2_today);
+    assert!(state.preferences.crypto_beside, "crypto moved into Today");
+    assert_eq!(state.preferences.center(), Some(Center::Cs2));
+    // And back: CS2 into Today leaves the center empty.
+    state.activate();
+    assert!(state.preferences.cs2_today);
+    assert_eq!(state.preferences.center(), None);
+}
+
+#[test]
+fn favorites_sit_at_the_bottom_and_home_has_no_inputs() {
+    let state = ready();
+    let cards = rects(&state, |t| matches!(t, Target::App(_)));
+    assert!(!cards.is_empty());
+    assert!(cards.iter().all(|card| card.y == 830. && card.h == 150.));
+    assert!(rects(&state, |t| matches!(t, Target::Input(_))).is_empty());
+    let heading = state.preferences.language.t("favorites");
+    assert!(scene(&state).draw.iter().any(|draw| matches!(draw,
+        crate::renderer::Draw::Text(text, rect, ..) if text == heading && rect.y == 780.)));
+}
+
+#[test]
+fn the_center_widget_sits_between_the_header_and_the_favorites() {
+    let state = with_crypto();
+    let coins = rects(&state, |t| matches!(t, Target::Coin(_)));
+    assert_eq!(coins.len(), 3);
+    let top = coins[0].y - 50.;
+    let bottom = coins[0].y + coins[0].h;
+    assert!(top >= 400. && bottom <= 780.);
+    assert!(
+        ((top - 400.) - (780. - bottom)).abs() < 1.,
+        "centered: {top}..{bottom}"
+    );
+    // Nothing in the center without a widget there.
+    assert!(rects(&ready(), |t| matches!(t, Target::Coin(_))).is_empty());
+}
+
+#[test]
+fn up_from_the_favorites_reaches_the_center_then_today_and_down_returns() {
+    let mut state = with_crypto();
+    state.focus = Target::App("netflix".into());
+    state.direction(Direction::Up, &controls(&state));
+    assert_eq!(state.focus, Target::Coin(0));
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::App("netflix".into()));
+    // Down from the favorites goes nowhere: nothing lies below.
+    state.direction(Direction::Down, &controls(&state));
+    assert_eq!(state.focus, Target::App("netflix".into()));
+}
+
+#[test]
+fn left_from_the_first_card_in_the_center_opens_the_menu() {
+    let mut state = with_crypto();
+    state.focus = Target::Coin(1);
+    state.direction(Direction::Left, &controls(&state));
+    assert_eq!(state.focus, Target::Coin(0));
+    state.direction(Direction::Left, &controls(&state));
+    assert!(matches!(state.overlay, Some(Overlay::Menu { .. })));
+}
+
+#[test]
+fn shows_in_the_center_have_smaller_posters() {
+    use crate::shows::{Episode, Show};
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.preferences.shows_today = false;
+    state.shows.list = (0..8)
+        .map(|id| Show {
+            id,
+            title: format!("Show {id}"),
+            poster: None,
+            meta: String::new(),
+            service: None,
+            app: None,
+            episodes: vec![Episode {
+                airs: 0,
+                season: Some(1),
+                number: Some(1),
+            }],
+        })
+        .collect();
+    let posters = rects(&state, |t| matches!(t, Target::Show(_)));
+    assert!(!posters.is_empty());
+    assert!(posters.iter().all(|p| p.w == 170.), "{posters:?}");
+    assert!(posters.windows(2).all(|pair| pair[1].x - pair[0].x == 210.));
+    let bottom = posters.iter().map(|p| p.y + p.h).fold(0., f32::max);
+    assert!(bottom <= 780., "{bottom}");
+    state.focus = Target::Show(0);
+    state.direction(Direction::Left, &controls(&state));
+    assert!(matches!(state.overlay, Some(Overlay::Menu { .. })));
+}

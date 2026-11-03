@@ -504,16 +504,18 @@ fn input_refresh_active(state: &State, webos: bool, focused: bool, visible: bool
         && focused
         && visible
         && !state.loading
-        && state.overlay.is_none()
         && state.moving.is_none()
         && state.pressed.is_none()
         && state.recents.visibility == 0.
-        && (state.page == state::Page::Home
-            || (state.page == state::Page::Settings
-                && matches!(
-                    state.subpage,
-                    Some(state::Subpage::Inputs | state::Subpage::Input(_))
-                )))
+        // The menu lists the inputs over any page.
+        && (matches!(state.overlay, Some(state::Overlay::Menu { .. }))
+            || (state.overlay.is_none()
+                && (state.page == state::Page::Home
+                    || (state.page == state::Page::Settings
+                        && matches!(
+                            state.subpage,
+                            Some(state::Subpage::Inputs | state::Subpage::Input(_))
+                        )))))
 }
 
 /// True when a renamed place needs the preferences saved.
@@ -1468,6 +1470,7 @@ fn run() -> Result<(), String> {
                             .filter_map(|app| app.icon.clone()),
                     );
                     if initial_focus
+                        && state.overlay.is_none()
                         && state.focus == Target::Nav(0)
                         && state.page == state::Page::Home
                     {

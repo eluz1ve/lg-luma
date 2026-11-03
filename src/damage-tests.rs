@@ -209,6 +209,38 @@ fn text_damages_the_full_width_of_its_line() {
 }
 
 #[test]
+fn text_under_an_unchanged_clip_damages_its_line_only_inside_the_clip() {
+    let mut tracker = Tracker::default();
+    let style = TextStyle {
+        size: 20.,
+        weight: 400,
+        tracking: 0.,
+        line_height: 1.2,
+        align_right: false,
+        shadow: false,
+    };
+    // A label sliding in with a panel, under a clip that stays put.
+    let label = |x: f32| {
+        [
+            Draw::Clip(Some(Rect::new(0., 0., 500., 1080.))),
+            Draw::Text(
+                "Apps".into(),
+                Rect::new(x, 140., 200., 30.),
+                style,
+                [1.; 4],
+                false,
+            ),
+            Draw::Clip(None),
+        ]
+    };
+    tracker.push(&[[wallpaper()].as_slice(), &label(-100.)].concat());
+    tracker.push(&[[wallpaper()].as_slice(), &label(-40.)].concat());
+    let damage = area(tracker.damage(1));
+    assert_eq!((damage.x, damage.w), (0., 500.));
+    assert_eq!((damage.y, damage.h), (120., 70.));
+}
+
+#[test]
 fn shadows_include_their_blur() {
     let mut tracker = Tracker::default();
     let shadow =

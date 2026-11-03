@@ -117,7 +117,7 @@ fn crypto_beside_is_always_the_last_line_and_the_rest_counts_as_more() {
 }
 
 #[test]
-fn widgets_kept_as_rows_or_switched_off_add_nothing() {
+fn the_center_widget_or_one_switched_off_adds_nothing() {
     let mut state = state();
     feed(&mut state, &[("a", "live", NOW)]);
     state.shows.list = vec![show(1, true, &[NOW + 60])];
@@ -125,7 +125,18 @@ fn widgets_kept_as_rows_or_switched_off_add_nothing() {
     state.preferences.crypto_beside = false;
     state.preferences.cs2_today = false;
     state.preferences.shows_today = false;
-    assert_eq!(today(&state, NOW, DAY, DATE), Today::default());
+    // Only one widget stands in the center, CS2 first; the others stay in Today.
+    assert_eq!(
+        today(&state, NOW, DAY, DATE).lines,
+        [
+            Line::Episode {
+                show: 1,
+                airs: NOW + 60
+            },
+            Line::Crypto
+        ]
+    );
+    state.preferences.show_crypto = false;
     state.preferences.cs2_today = true;
     state.preferences.shows_today = true;
     state.preferences.show_cs2 = false;

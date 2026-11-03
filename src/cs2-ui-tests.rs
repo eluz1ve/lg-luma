@@ -50,7 +50,7 @@ fn cs2_score_is_switched_in_widgets() {
 }
 
 #[test]
-fn cs2_cards_follow_inputs_and_open_their_match() {
+fn cs2_cards_stand_above_the_favorites_and_open_their_match() {
     let mut state = ready();
     let positions = |scene: &view::Scene| -> Vec<_> {
         scene
@@ -86,22 +86,26 @@ fn cs2_cards_follow_inputs_and_open_their_match() {
     ] {
         assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
     }
-    let input_bottom = after
+    let favorites_top = after
         .controls
         .iter()
-        .filter(|c| matches!(c.target, Target::Input(_)))
-        .map(|c| c.rect.y + c.rect.h)
-        .fold(0., f32::max);
+        .filter(|c| matches!(c.target, Target::App(_)))
+        .map(|c| c.rect.y)
+        .fold(f32::INFINITY, f32::min);
     let cards: Vec<_> = after
         .controls
         .iter()
         .filter(|c| matches!(c.target, Target::Cs2Match(_)))
         .collect();
     assert_eq!(cards.len(), 2);
-    assert!(cards.iter().all(|c| c.rect.y > input_bottom));
+    assert!(
+        cards
+            .iter()
+            .all(|c| c.rect.y > 400. && c.rect.y + c.rect.h < favorites_top)
+    );
 
-    state.focus = Target::Input("com.webos.app.hdmi1".into());
-    state.direction(Direction::Down, &controls(&state));
+    state.focus = Target::App("netflix".into());
+    state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::Cs2Match(0));
     let card = controls(&state)
         .into_iter()
@@ -212,7 +216,7 @@ fn cs2_cards_scroll_three_at_a_time() {
 }
 
 #[test]
-fn down_from_favorites_reaches_cs2_score_without_inputs() {
+fn up_from_favorites_reaches_cs2_score_without_inputs() {
     let mut state = ready();
     state.inventory.inputs.clear();
     state.preferences.show_cs2 = true;
@@ -220,7 +224,7 @@ fn down_from_favorites_reaches_cs2_score_without_inputs() {
     with_feed(&mut state);
     let favorite = state.apps()[2].id.clone();
     state.focus = Target::App(favorite);
-    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Up, &controls(&state));
     assert!(
         matches!(state.focus, Target::Cs2Match(_)),
         "{:?}",
@@ -234,7 +238,7 @@ fn down_from_favorites_reaches_cs2_score_without_inputs() {
 }
 
 #[test]
-fn cs2_and_shows_move_between_today_and_their_rows_from_widgets() {
+fn cs2_and_shows_take_turns_in_the_center_from_widgets() {
     let mut state = ready();
     state.preferences.show_cs2 = true;
     state.preferences.show_shows = true;
@@ -256,7 +260,8 @@ fn cs2_and_shows_move_between_today_and_their_rows_from_widgets() {
         assert_eq!(state.activate(), vec![Effect::Save]);
         state.direction(Direction::Left, &controls(&state));
     }
-    assert!(!state.preferences.cs2_today && !state.preferences.shows_today);
+    // One widget at a time: Shows in the center sent CS2 back into Today.
+    assert!(state.preferences.cs2_today && !state.preferences.shows_today);
     state.open(0);
-    assert!(heading(&state, "CS2 Score") && heading(&state, "TV Shows"));
+    assert!(!heading(&state, "CS2 Score") && heading(&state, "TV Shows"));
 }

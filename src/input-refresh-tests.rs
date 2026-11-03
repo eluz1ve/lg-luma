@@ -5,7 +5,7 @@ use crate::{
     model::{InputMode, Preferences, demo_inventory},
     platform::normalize_inputs,
     renderer::Draw,
-    state::{Overlay, Subpage, Target, WIDGETS_SECTION},
+    state::{Overlay, State, Subpage, Target, WIDGETS_SECTION},
     view::input_status,
 };
 use serde_json::json;
@@ -91,6 +91,7 @@ fn live_signal_keeps_card_geometry_names_apps_and_preferences() {
     let mut state = ready();
     let id = state.inventory.inputs[0].id.clone();
     state.preferences.set_input_name(&id, "Mac");
+    unfolded_menu(&mut state);
     state.focus = Target::Input(id.clone());
     let previous = controls(&state);
     let preferences = serde_json::to_value(&state.preferences).unwrap();
@@ -135,15 +136,20 @@ fn live_signal_keeps_card_geometry_names_apps_and_preferences() {
 }
 
 #[test]
-fn disconnect_reconciles_home_focus_and_preserves_visibility_overrides() {
+fn disconnect_reconciles_menu_focus_and_preserves_visibility_overrides() {
     let mut state = ready();
     let id = state.inventory.inputs[0].id.clone();
+    unfolded_menu(&mut state);
     state.focus = Target::Input(id.clone());
     let mut inputs = state.inventory.inputs.clone();
     inputs[0].connected = Some(false);
     inputs[0].signal = Some(true);
     state.set_inputs(inputs.clone());
-    assert_ne!(state.focus, Target::Input(id.clone()));
+    assert_eq!(
+        state.focus,
+        Target::MenuInputs,
+        "the focus stays in the menu"
+    );
     assert!(
         !controls(&state)
             .iter()
@@ -234,6 +240,17 @@ fn polling_only_runs_on_visible_focused_tv_input_screens_outside_interactions() 
     assert!(active(&state));
     state.subpage = Some(Subpage::Clock);
     assert!(!active(&state));
+    // The menu lists the inputs over any page.
+    state.open(1);
+    state.open_menu();
+    assert!(active(&state));
+}
+
+/// The menu open, its inputs unfolded, where Home's inputs are now.
+fn unfolded_menu(state: &mut State) {
+    state.open_menu();
+    state.menu_motion = None;
+    state.menu_inputs = true;
 }
 
 #[test]
@@ -281,6 +298,7 @@ fn snapshots_wait_for_release_and_yield_to_a_newer_full_inventory() {
 fn a_disconnect_snapshot_cannot_move_the_pressed_card_before_release() {
     let mut state = ready();
     let id = state.inventory.inputs[0].id.clone();
+    unfolded_menu(&mut state);
     state.pressed = Some(Target::Input(id.clone()));
     let mut inputs = state.inventory.inputs.clone();
     inputs[0].connected = Some(false);

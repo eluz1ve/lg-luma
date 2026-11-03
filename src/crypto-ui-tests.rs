@@ -31,7 +31,7 @@ fn crypto_coins_are_chosen_in_widgets_up_to_four() {
 }
 
 #[test]
-fn crypto_cards_follow_inputs_and_open_their_settings() {
+fn crypto_cards_stand_above_the_favorites_and_open_their_settings() {
     let mut state = ready();
     let positions = |scene: &view::Scene| -> Vec<_> {
         scene
@@ -78,23 +78,27 @@ fn crypto_cards_follow_inputs_and_open_their_settings() {
     ] {
         assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
     }
-    let input_bottom = after
+    let favorites_top = after
         .controls
         .iter()
-        .filter(|c| matches!(c.target, Target::Input(_)))
-        .map(|c| c.rect.y + c.rect.h)
-        .fold(0., f32::max);
+        .filter(|c| matches!(c.target, Target::App(_)))
+        .map(|c| c.rect.y)
+        .fold(f32::INFINITY, f32::min);
     let coins: Vec<_> = after
         .controls
         .iter()
         .filter(|c| matches!(c.target, Target::Coin(_)))
         .collect();
     assert_eq!(coins.len(), 3);
-    assert!(coins.iter().all(|c| c.rect.y > input_bottom));
+    assert!(
+        coins
+            .iter()
+            .all(|c| c.rect.y > 400. && c.rect.y + c.rect.h < favorites_top)
+    );
 
-    // Down from the inputs reaches the cards and scrolls them into view.
-    state.focus = Target::Input("com.webos.app.hdmi1".into());
-    state.direction(Direction::Down, &controls(&state));
+    // Up from the first favorite reaches the first card.
+    state.focus = Target::App("netflix".into());
+    state.direction(Direction::Up, &controls(&state));
     assert_eq!(state.focus, Target::Coin(0));
     let card = controls(&state)
         .into_iter()
@@ -118,13 +122,13 @@ fn drawn_text(scene: &view::Scene) -> Vec<String> {
 }
 
 #[test]
-fn down_from_favorites_reaches_crypto_prices_without_inputs() {
+fn up_from_favorites_reaches_crypto_prices_without_inputs() {
     let mut state = ready();
     state.inventory.inputs.clear();
     state.preferences.show_crypto = true;
     let favorite = state.apps()[2].id.clone();
     state.focus = Target::App(favorite);
-    state.direction(Direction::Down, &controls(&state));
+    state.direction(Direction::Up, &controls(&state));
     assert!(matches!(state.focus, Target::Coin(_)), "{:?}", state.focus);
     let card = controls(&state)
         .into_iter()
@@ -180,7 +184,7 @@ fn any_binance_coin_is_found_by_search_and_listed_after_the_usual_ones() {
 }
 
 #[test]
-fn crypto_can_sit_in_today_instead_of_below_the_inputs() {
+fn crypto_can_sit_in_today_instead_of_the_center() {
     let mut state = ready();
     state.preferences.show_crypto = true;
     let text_at = |state: &State, wanted: &str| {
@@ -191,7 +195,7 @@ fn crypto_can_sit_in_today_instead_of_below_the_inputs() {
             _ => None,
         })
     };
-    assert!(text_at(&state, "Crypto").is_some_and(|rect| rect.y > 600.));
+    assert!(text_at(&state, "Crypto").is_some_and(|rect| rect.y > 400.));
     state.open(2);
     state.focus = Target::Widget(5);
     state.activate();

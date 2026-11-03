@@ -9,6 +9,8 @@ pub const WIDTH: f32 = 1920. - SAFE_X * 2.;
 /// Below the tab bar, where the page starts; Home's header fills down to `HEADER_BOTTOM`.
 pub const CONTENT_TOP: f32 = 150.;
 pub const HEADER_BOTTOM: f32 = 400.;
+/// Home's foot: the favorites' focused name ends here, at the safe area.
+pub const HOME_BOTTOM: f32 = 1080. - 60.;
 
 /// One column's width when `count` of them span the safe area.
 pub fn column(count: usize) -> f32 {

@@ -306,7 +306,7 @@ fn the_menu_draws_its_items_on_glass_over_the_dimmed_page() {
             .into_iter()
             .all(|c| c.rect.y + c.rect.h < settings.rect.y)
     );
-    // The page behind moved aside by the menu's push.
+    // The page behind stays put: only the panel's strip is drawn again as it slides.
     let closed = scene(&ready());
     let greeting = |scene: &view::Scene| {
         scene.draw.iter().find_map(|draw| match draw {
@@ -314,7 +314,7 @@ fn the_menu_draws_its_items_on_glass_over_the_dimmed_page() {
             _ => None,
         })
     };
-    assert_eq!(greeting(&drawn).unwrap() - greeting(&closed).unwrap(), 56.);
+    assert_eq!(greeting(&drawn).unwrap(), greeting(&closed).unwrap());
 }
 
 #[test]
@@ -353,4 +353,32 @@ fn a_closing_menu_slides_out_and_leaves_the_page_its_controls() {
             .any(|c| c.target == Target::App("netflix".into()))
     );
     assert!(!drawn.controls.iter().any(|c| c.target == Target::Nav(0)));
+}
+
+#[test]
+fn while_the_menu_slides_only_its_strip_is_drawn_again() {
+    for page in [0, 1, 2] {
+        let mut state = ready();
+        state.preferences.reduced_motion = false;
+        state.open(page);
+        if page == 0 {
+            state.focus = Target::App("netflix".into());
+        }
+        for _ in 0..120 {
+            state.animate(1. / 60.);
+        }
+        state.open_menu();
+        let mut tracker = crate::damage::Tracker::default();
+        for ms in [60, 90, 120] {
+            state.menu_motion = Some((Instant::now() - Duration::from_millis(ms), true));
+            state.animate(1. / 60.);
+            tracker.push(&scene(&state).draw);
+        }
+        let area = tracker.damage(1).expect("a partial redraw");
+        let p = view::MENU_PANEL;
+        assert!(
+            area.x + area.w <= p.x + p.w + 80.,
+            "page {page}: {area:?} reaches past the panel"
+        );
+    }
 }

@@ -18,9 +18,9 @@ use time::OffsetDateTime;
 
 use crate::layout::{
     CONTENT_TOP, GALLERY_COLUMNS, GALLERY_GAP_X, GALLERY_GAP_Y, GALLERY_TILE_HEIGHT,
-    GALLERY_TILE_WIDTH, GALLERY_TOP, GUTTER, HEADER_BOTTOM, LIST_TOP, LIST_WIDTH, LIST_X,
-    PREVIEW_HEIGHT, PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT, ROW_SPACING,
-    SAFE_X, SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH,
+    GALLERY_TILE_WIDTH, GALLERY_TOP, GUTTER, HEADER_BOTTOM, HOME_BOTTOM, LIST_TOP, LIST_WIDTH,
+    LIST_X, PREVIEW_HEIGHT, PREVIEW_WIDTH, PREVIEW_X, PREVIEW_Y, ROW_GROWN, ROW_HEIGHT,
+    ROW_SPACING, SAFE_X, SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED, SIDEBAR_ITEM, SIDEBAR_PITCH, WIDTH,
     column as column_width, type_scale,
 };
 
@@ -300,36 +300,6 @@ impl Scene {
     }
     /// Moves what was drawn and registered since `draws` and `controls` up by `dy`: chrome that
     /// slides away with the page.
-    /// Moves what was drawn from `draws` on, and the controls from `controls` on, `dx` right.
-    fn shift_x(&mut self, draws: usize, controls: usize, dx: f32) {
-        if dx == 0. {
-            return;
-        }
-        for draw in &mut self.draw[draws..] {
-            match draw {
-                Draw::Shape(rect, ..)
-                | Draw::RoundedGradient(rect, ..)
-                | Draw::Shadow(rect, ..)
-                | Draw::Text(_, rect, ..)
-                | Draw::Image(_, rect, ..)
-                | Draw::TintedImage(_, rect, ..)
-                | Draw::AppImage(_, rect, ..)
-                | Draw::Picture(_, rect, ..)
-                | Draw::Cover(_, rect, ..)
-                | Draw::Glass(_, rect, ..)
-                | Draw::Clip(Some(rect)) => rect.x += dx,
-                Draw::EdgeFadeX(Some(stops)) => {
-                    for x in stops {
-                        *x += dx;
-                    }
-                }
-                Draw::Clip(None) | Draw::EdgeFade(_) | Draw::EdgeFadeX(None) => {}
-            }
-        }
-        for control in &mut self.controls[controls..] {
-            control.rect.x += dx;
-        }
-    }
     fn slide(&mut self, draws: usize, controls: usize, dy: f32) {
         if dy == 0. {
             return;
@@ -653,7 +623,7 @@ fn cub_sign_in(out: &mut Scene, state: &State, assets: &Assets) {
         }
     }
     let close = Rect::new(812., 862., 296., 56.);
-    out.pill(close, state.focus == Target::CloseDialog, false);
+    out.pill(close, *state.page_focus() == Target::CloseDialog, false);
     out.text(
         language.t("close"),
         Rect::new(close.x, close.y + 15., close.w, 28.),
@@ -740,7 +710,7 @@ fn companion(
         }
     }
     let close = Rect::new(812., 862., 296., 56.);
-    out.pill(close, state.focus == Target::CloseDialog, false);
+    out.pill(close, *state.page_focus() == Target::CloseDialog, false);
     out.text(
         language.t("close"),
         Rect::new(close.x, close.y + 15., close.w, 28.),
@@ -906,7 +876,7 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
             c(0xf3ddbd, 1.),
             true,
         );
-        if state.focus == Target::Retry {
+        if *state.page_focus() == Target::Retry {
             out.border(retry, 6.4, 2., WHITE);
         }
         out.control(Target::Retry, retry, false);
@@ -986,7 +956,7 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
             out.fade(start, (opened.elapsed().as_secs_f32() / 0.12).min(1.), 1.);
         }
     }
-    menu(&mut out, state, assets, now, content_start);
+    menu(&mut out, state, assets, now);
     if state.recents_open() || state.recents.visibility > 0. {
         // Crossfade the actual parent interface as well as the dimmed stage.
         // Retain outgoing visuals after dismissal, while input immediately
@@ -1052,26 +1022,28 @@ fn header(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) 
 
 /// Where the menu stands when open (spec, «Меню»).
 pub(crate) const MENU_PANEL: Rect = Rect::new(32., 32., 430., 1016.);
-/// How far the page moves aside for it.
-const MENU_PUSH: f32 = 56.;
 const MENU_ITEM: f32 = 76.;
 const MENU_PITCH: f32 = 84.;
 const MENU_INPUT: f32 = 64.;
 const MENU_INPUT_PITCH: f32 = 68.;
+/// The strip the panel and its shadow cross. The menu is drawn clipped to it, so its labels,
+/// which would otherwise count as changed across the screen's full width, stay inside it.
+const MENU_STRIP: Rect = Rect::new(0., 0., MENU_PANEL.x + MENU_PANEL.w + 48., 1080.);
 
-/// The menu on the left: the page slides aside and dims as it comes in. While it is open only
+/// The menu on the left. The page stays where it is, dimmed at once rather than step by step,
+/// so while the panel slides only the strip it crosses is drawn again. While it is open only
 /// its items take focus and clicks; a click beside it closes it.
-fn menu(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime, page: usize) {
+fn menu(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let amount = state.menu_amount();
     if amount <= 0. {
         return;
     }
     let open = matches!(state.overlay, Some(Overlay::Menu { .. }));
-    out.shift_x(page, 0, MENU_PUSH * amount);
     if open {
         out.controls.clear();
     }
-    out.shape(SCREEN, 0., c(0x05080c, 0.5 * amount));
+    out.shape(SCREEN, 0., c(0x05080c, 0.5));
+    out.draw.push(Draw::Clip(Some(MENU_STRIP)));
     let panel = Rect::new(
         MENU_PANEL.x - (MENU_PANEL.x + MENU_PANEL.w + 40.) * (1. - amount),
         MENU_PANEL.y,
@@ -1210,6 +1182,7 @@ fn menu(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime, pa
         language.t("tvSettings"),
         false,
     );
+    out.draw.push(Draw::Clip(None));
 }
 
 /// One of the menu's items: white when focused, faintly lit when it is the page in view.
@@ -1309,7 +1282,7 @@ fn lift_edge(out: &mut Scene, rect: Rect, radius: f32, amount: f32) {
 /// As on Apple TV, the focused card is named on one line below it, centred, as wide as a
 /// column and its gutters; other cards go unnamed.
 fn focused_name(out: &mut Scene, state: &State, assets: &Assets, app: &App, rect: Rect) {
-    if state.focus != Target::App(app.id.clone()) {
+    if *state.page_focus() != Target::App(app.id.clone()) {
         return;
     }
     let style = text(type_scale::CAPTION * caption_scale(state), 600, -0.01).shadow();
@@ -1380,7 +1353,7 @@ fn tile(
         return;
     }
     let start = out.draw.len();
-    let focused = state.focus == Target::App(app.id.clone());
+    let focused = *state.page_focus() == Target::App(app.id.clone());
     // Home and Apps lift the focused card on the shared motion; previews keep the ring.
     let lifted = matches!(state.page, Page::Home | Page::Apps);
     let amount = if lifted {
@@ -1568,7 +1541,7 @@ fn caption_height(state: &State, assets: &Assets, app: &App, width: f32) -> f32 
     );
     let style = text(
         20.8 * caption_scale(state),
-        if state.focus == Target::App(app.id.clone()) {
+        if *state.page_focus() == Target::App(app.id.clone()) {
             600
         } else {
             550
@@ -1701,14 +1674,11 @@ pub(crate) const TODAY_RECT: Rect =
     Rect::new(1160., CONTENT_TOP, 680., HEADER_BOTTOM - CONTENT_TOP);
 /// A row's heading, then its cards this far below the heading's top.
 const ROW_HEADING_GAP: f32 = 50.;
-/// Between one row's bottom and the next row's heading.
-const ROW_GAP: f32 = 48.;
 /// Room under the favorites for the focused card's name.
 const CAPTION_ROOM: f32 = 40.;
 const HOME_FACE_HEIGHT: f32 = 150.;
-/// Inputs and crypto prices: four chips a row.
+/// Crypto prices: four chips a row.
 const CHIP_HEIGHT: f32 = 96.;
-const CHIP_ROW_PITCH: f32 = 120.;
 
 /// A Home row's heading, straight on the wallpaper.
 fn row_heading(out: &mut Scene, label: &str, y: f32) -> TextStyle {
@@ -1821,7 +1791,16 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             top + date_height + greeting_height,
         );
     }
-    let heading_y = HEADER_BOTTOM + 16. - s;
+    let apps = state.apps();
+    let names = state.preferences.show_home_names;
+    let placeholders = state.loading && state.inventory.apps.is_empty();
+    // The favorites stand at the foot of the screen, with room below for the focused name.
+    let cards_y = if apps.is_empty() && !placeholders {
+        HOME_BOTTOM - 247.5
+    } else {
+        HOME_BOTTOM - HOME_FACE_HEIGHT - CAPTION_ROOM
+    } - s;
+    let heading_y = cards_y - ROW_HEADING_GAP;
     row_heading(out, language.t("favorites"), heading_y);
     if state.moving.is_some() {
         out.text(
@@ -1832,11 +1811,7 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             false,
         );
     }
-    let cards_y = heading_y + ROW_HEADING_GAP;
-    let apps = state.apps();
-    let names = state.preferences.show_home_names;
-    let mut grid_height = HOME_FACE_HEIGHT;
-    if state.loading && state.inventory.apps.is_empty() {
+    if placeholders {
         for index in 0..6 {
             out.shape(
                 Rect::new(
@@ -1871,10 +1846,6 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
                 action: Some(if error { Target::Retry } else { Target::Browse }),
             },
         );
-        grid_height = 247.5;
-    }
-    if !apps.is_empty() && names {
-        grid_height += CAPTION_ROOM;
     }
     let shown = apps.len().min(6) as f32;
     if shown > 0. {
@@ -1932,105 +1903,6 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     }
     out.draw.push(Draw::EdgeFadeX(None));
     out.draw.push(Draw::Clip(Some(state.content_viewport())));
-    let input_y = cards_y + grid_height + ROW_GAP;
-    let inputs: Vec<_> = state
-        .inventory
-        .inputs
-        .iter()
-        .filter(|input| state.preferences.input_visible(input))
-        .collect();
-    if !inputs.is_empty() {
-        row_heading(out, language.t("inputsHeading"), input_y);
-    }
-    let chip_width = column_width(4);
-    if !inputs.is_empty() {
-        let columns = inputs.len().min(4) as f32;
-        out.regions.push((
-            Region::Inputs,
-            Rect::new(
-                SAFE_X,
-                input_y + ROW_HEADING_GAP,
-                columns * (chip_width + GUTTER) - GUTTER,
-                (inputs.len().div_ceil(4) - 1) as f32 * CHIP_ROW_PITCH + CHIP_HEIGHT,
-            ),
-        ));
-    }
-    for (index, input) in inputs.iter().enumerate() {
-        let rect = Rect::new(
-            SAFE_X + (index % 4) as f32 * (chip_width + GUTTER),
-            input_y + ROW_HEADING_GAP + (index / 4) as f32 * CHIP_ROW_PITCH,
-            chip_width,
-            CHIP_HEIGHT,
-        );
-        let focused = state.focus == Target::Input(input.id.clone());
-        let hit = rect;
-        let (rect, lift_amount) = lift(out, state, &Target::Input(input.id.clone()), rect, 18.4);
-        if focused {
-            out.glass_tinted(rect, 18.4, GLASS_FOCUSED, 0.24);
-        } else {
-            out.glass(rect, 18.4);
-        }
-        let art = Rect::new(rect.x + 20., rect.y + 20., 56., 56.);
-        out.draw.push(Draw::RoundedGradient(
-            art,
-            12.8,
-            c(0xd6d6d6, 0.24),
-            c(0xa0a0a0, 0.10),
-        ));
-        let name = state.preferences.input_name(input);
-        let icon = input_icon(input, name);
-        let size = if icon == "apple-tv" { 41.6 } else { 35.2 };
-        out.icon(
-            assets,
-            &format!("input-{icon}"),
-            Rect::new(
-                art.x + (56. - size) / 2.,
-                art.y + (56. - size) / 2.,
-                size,
-                size,
-            ),
-            c(0xdedede, 1.),
-        );
-        // The status line grows with the setting, the larger title by half as much.
-        let k = state.preferences.ui_scale.scale();
-        let title_k = 1. + (k - 1.) / 2.;
-        let title_line = type_scale::BODY * 1.2 * title_k;
-        let status_line = type_scale::CAPTION * 1.2 * k;
-        let top = (CHIP_HEIGHT - title_line - status_line - 2.) / 2.;
-        let width = rect.w - 92. - 20.;
-        let title = state.preferences.input_title(input);
-        let title_style = text(type_scale::BODY * title_k, 550, -0.02);
-        out.text(
-            title,
-            Rect::new(rect.x + 92., rect.y + top, width, title_line),
-            assets.fit_text(title, title_style, width),
-            WHITE,
-            false,
-        );
-        let status = input_status(input, name.is_some(), language);
-        let status_style = text(type_scale::CAPTION * k, 450, 0.);
-        out.text(
-            &status,
-            Rect::new(
-                rect.x + 92.,
-                rect.y + top + title_line + 2.,
-                width,
-                status_line,
-            ),
-            assets.fit_text(&status, status_style, width),
-            c(0xe8e8e8, 0.62),
-            false,
-        );
-        lift_edge(out, rect, 18.4, lift_amount);
-        out.control(Target::Input(input.id.clone()), hit, true);
-    }
-    // Crypto prices, CS2 Score and TV Shows, stacked below the inputs.
-    let rows = inputs.len().div_ceil(4) as f32;
-    let mut y = if inputs.is_empty() {
-        input_y
-    } else {
-        input_y + ROW_HEADING_GAP + (rows - 1.) * CHIP_ROW_PITCH + CHIP_HEIGHT + ROW_GAP
-    };
     if let Some(card) = today_card(out, state, assets, &today, now) {
         use crate::today::Line;
         for (region, kind) in [(Region::Crypto, 0), (Region::Cs2, 1), (Region::Shows, 2)] {
@@ -2044,36 +1916,36 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
             }
         }
     }
-    let row_region = |out: &mut Scene, region, y: f32, height| {
-        out.regions.push((
-            region,
-            Rect::new(SAFE_X, y + ROW_HEADING_GAP, WIDTH, height),
-        ));
+    // One widget in the middle, between the header and the favorites, or none.
+    use crate::model::Center;
+    let Some(center) = state.preferences.center() else {
+        return;
     };
-    // Prices in the Today card have no row of their own.
-    if state.preferences.show_crypto
-        && !state.preferences.crypto_beside
-        && !state.preferences.crypto_coins.is_empty()
-    {
-        row_region(out, Region::Crypto, y, CHIP_HEIGHT);
-        crypto_row(out, state, y);
-        y += ROW_HEADING_GAP + CHIP_HEIGHT + ROW_GAP;
-    }
-    // Widgets in the Today card have no row of their own.
-    if state.preferences.show_cs2 && !state.preferences.cs2_today {
-        row_region(out, Region::Cs2, y, CS2_CARD_HEIGHT);
-        cs2_row(out, state, assets, y, now);
-        y += ROW_HEADING_GAP + CS2_CARD_HEIGHT + ROW_GAP;
-    }
-    if state.preferences.show_shows && !state.preferences.shows_today {
-        row_region(out, Region::Shows, y, SHOW_POSTER_HEIGHT);
-        shows_row(out, state, assets, y);
+    let (region, height) = match center {
+        Center::Crypto => (Region::Crypto, CHIP_HEIGHT),
+        Center::Cs2 => (Region::Cs2, CS2_CARD_HEIGHT),
+        Center::Shows => (Region::Shows, SHOW_POSTER_HEIGHT + SHOW_CAPTION),
+    };
+    let block = ROW_HEADING_GAP + height;
+    let y = HEADER_BOTTOM - s + ((heading_y + s - HEADER_BOTTOM - block) / 2.).max(0.);
+    out.regions.push((
+        region,
+        Rect::new(SAFE_X, y + ROW_HEADING_GAP, WIDTH, height),
+    ));
+    match center {
+        Center::Crypto => crypto_row(out, state, y),
+        Center::Cs2 => cs2_row(out, state, assets, y, now),
+        Center::Shows => shows_row(out, state, assets, y),
     }
 }
 
-/// Show cards share the favorites' width and pitch, with a poster's 2:3 face.
-const SHOW_WIDTH: f32 = HOME_TILE_WIDTH;
-const SHOW_POSTER_HEIGHT: f32 = HOME_TILE_WIDTH * 1.5;
+/// Show cards in the middle of Home: posters with a 2:3 face, smaller than the favorites so
+/// the row fits between the header and them.
+const SHOW_WIDTH: f32 = 170.;
+const SHOW_POSTER_HEIGHT: f32 = SHOW_WIDTH * 1.5;
+const SHOW_PITCH: f32 = 210.;
+/// The title and details below a poster.
+const SHOW_CAPTION: f32 = 60.;
 
 /// Home's TV Shows: a heading crediting TVmaze, then posters in a row that slides six at a time.
 fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
@@ -2131,9 +2003,9 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32) {
             first: state.shows_first,
             count: list.len(),
             visible,
-            pitch: HOME_TILE_PITCH,
+            pitch: SHOW_PITCH,
             card: Rect::new(SAFE_X, y + ROW_HEADING_GAP, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
-            below: 60.,
+            below: SHOW_CAPTION,
         },
         |out, index, rect, hit| show_card(out, state, assets, &list[index], index, rect, hit),
     );
@@ -2231,7 +2103,7 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
             rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
             title: language.t("cryptoLayout"),
             icon: Some("grid"),
-            value: Some(place(language, state.preferences.shows_today)),
+            value: Some(place(language, state, crate::model::Center::Shows)),
             description: None,
             selected: false,
             chevron: false,
@@ -2315,9 +2187,10 @@ fn lampa_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
 }
 
-/// Where a widget sits on Home: in the Today card, or in a row of its own.
-fn place(language: Language, today: bool) -> &'static str {
-    language.t(if today { "placeToday" } else { "placeRow" })
+/// Where a widget sits on Home: in the Today card, or in the middle.
+fn place(language: Language, state: &State, widget: crate::model::Center) -> &'static str {
+    let center = state.preferences.center() == Some(widget);
+    language.t(if center { "placeCenter" } else { "placeToday" })
 }
 
 /// The Today card's lines for this moment, over the TV's local day.
@@ -2604,7 +2477,7 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
             width,
             CHIP_HEIGHT,
         );
-        let focused = state.focus == Target::Coin(index) && !state.pointer;
+        let focused = *state.page_focus() == Target::Coin(index) && !state.pointer;
         let hit = rect;
         let (rect, lift_amount) = lift(out, state, &Target::Coin(index), rect, 18.4);
         if focused {
@@ -2840,7 +2713,7 @@ fn cs2_card(
 ) {
     use crate::cs2::State as Phase;
     let language = state.preferences.language;
-    let focused = state.focus == Target::Cs2Match(index) && !state.pointer;
+    let focused = *state.page_focus() == Target::Cs2Match(index) && !state.pointer;
     let live = item.state == Phase::Live;
     let (rect, lift_amount) = lift(out, state, &Target::Cs2Match(index), rect, 18.4);
     // A deep card, so scores stand out against any wallpaper, with the tournament's logo as a
@@ -3054,7 +2927,7 @@ fn cs2_dialog(out: &mut Scene, state: &State, assets: &Assets, id: &str, now: Of
     out.shadow(panel, 28., 100., 24., 0.47);
     out.modal_glass(panel, 28.);
     let close = Rect::new(panel.x + panel.w - 92., panel.y + 36., 56., 56.);
-    let close_focused = state.focus == Target::Cs2Close && !state.pointer;
+    let close_focused = *state.page_focus() == Target::Cs2Close && !state.pointer;
     out.shape(
         close,
         28.,
@@ -3751,7 +3624,7 @@ fn weather_summary(
     }
     if state.preferences.weather_location.is_none() {
         let rect = Rect::new(SAFE_X, y, summary.width, summary.height);
-        if state.focus == Target::WeatherConfigure
+        if *state.page_focus() == Target::WeatherConfigure
             && !state.pointer
             && let Some(label) = label_focus
         {
@@ -3785,7 +3658,7 @@ fn library_toolbar(out: &mut Scene, state: &State, assets: &Assets) {
     if state.filter != 0 {
         let h = TOOLBAR_HEIGHT * k;
         let rect = Rect::new(x, TOOLBAR_CENTER - h / 2., h, h);
-        let focused = state.focus == Target::ClearFilter;
+        let focused = *state.page_focus() == Target::ClearFilter;
         out.pill(rect, focused, false);
         out.icon(
             assets,
@@ -3861,7 +3734,7 @@ fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: 
     let k = state.preferences.ui_scale.scale();
     let h = TOOLBAR_HEIGHT * k;
     let search = Rect::new(right - 320. * k, y - h / 2., 320. * k, h);
-    let focused = live && matches!(state.focus, Target::Search | Target::ClearSearch);
+    let focused = live && matches!(state.page_focus(), Target::Search | Target::ClearSearch);
     let query = if live { state.query.as_str() } else { "" };
     if !focused {
         out.glass(search, 48.);
@@ -3907,7 +3780,7 @@ fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: 
         );
         out.shape(clear, 13.2 * k, c(0xffffff, 0.055));
         out.icon(assets, "close", clear.inset(5.2 * k), WHITE);
-        if state.focus == Target::ClearSearch {
+        if *state.page_focus() == Target::ClearSearch {
             out.border(clear.inset(-2.), 13.2 * k + 2., 2., WHITE);
         }
         out.control(Target::ClearSearch, clear, false);
@@ -3993,7 +3866,7 @@ fn library_grid(out: &mut Scene, state: &State, assets: &Assets) {
 }
 
 fn filter(out: &mut Scene, state: &State, target: Target, rect: Rect, label: &str, selected: bool) {
-    let focused = state.focus == target;
+    let focused = *state.page_focus() == target;
     let k = rect.h / TOOLBAR_HEIGHT;
     out.pill(rect, focused, selected);
     if selected && !focused {
@@ -4083,7 +3956,7 @@ const TWO_LINE_PITCH: f32 = ROW_GROWN + ROW_SPACING;
 fn row(out: &mut Scene, state: &State, assets: &Assets, row: Row<'_>) {
     const RADIUS: f32 = 16.;
     let rect = row.rect;
-    let focused = state.focus == row.target;
+    let focused = *state.page_focus() == row.target;
     if focused {
         out.draw.push(Draw::RoundedGradient(
             rect,
@@ -4247,7 +4120,7 @@ fn weather_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 city_lines as f32 * line,
             ),
             style.right(),
-            if state.focus == Target::WeatherLocation {
+            if *state.page_focus() == Target::WeatherLocation {
                 c(0x2c2c2c, 0.62)
             } else {
                 c(0xffffff, 0.62)
@@ -4320,7 +4193,7 @@ fn crypto_settings(out: &mut Scene, state: &State, assets: &Assets) {
         LIST_TOP + LIST_PITCH,
         language.t("cryptoLayout"),
         Some("sparkles"),
-        Some(place(language, state.preferences.crypto_beside)),
+        Some(place(language, state, crate::model::Center::Crypto)),
     );
     let mut y = LIST_TOP + 2. * LIST_PITCH + 16.;
     out.text(
@@ -4398,7 +4271,7 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
             Target::Cs2Layout,
             "cryptoLayout",
             "grid",
-            preferences.cs2_today,
+            preferences.center() == Some(crate::model::Center::Cs2),
         ),
         (
             Target::Cs2Major,
@@ -4432,7 +4305,7 @@ fn cs2_settings(out: &mut Scene, state: &State, assets: &Assets) {
                 title: language.t(key),
                 icon: Some(icon),
                 value: Some(if layout {
-                    place(language, on)
+                    place(language, state, crate::model::Center::Cs2)
                 } else {
                     language.t(if on { "stateOn" } else { "stateOff" })
                 }),
@@ -4490,14 +4363,14 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
         out.shape(clear, 24., c(0x23282c, 0.5));
         out.border(clear, 24., 1., c(0xffffff, 0.07));
         out.icon(assets, "close", clear.inset(14.), WHITE);
-        if state.focus == Target::WeatherClear {
+        if *state.page_focus() == Target::WeatherClear {
             out.border(clear.inset(-2.), 26., 2., c(0xf0f0f0, 0.95));
         }
         out.control(Target::WeatherClear, clear, true);
         y += 88. + 20.;
     }
     let query = Rect::new(LIST_X, y, LIST_WIDTH - 84., ROW_HEIGHT);
-    let focused = state.focus == Target::WeatherQuery;
+    let focused = *state.page_focus() == Target::WeatherQuery;
     if !focused {
         out.glass(query, query.h / 2.);
     } else {
@@ -4536,7 +4409,7 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
         search.inset(21.),
         WHITE,
     );
-    if state.focus == Target::WeatherSearch {
+    if *state.page_focus() == Target::WeatherSearch {
         out.border(search.inset(-7.), search.h / 2. + 7., 2., c(0xf0f0f0, 0.95));
     }
     out.control(Target::WeatherSearch, search, true);
@@ -4665,13 +4538,13 @@ fn gallery(out: &mut Scene, state: &State, assets: &Assets) {
             out.shape(check, 10.8, c(0xf3f3f3, 1.));
             out.icon(assets, "check", check.inset(3.6), c(0x333333, 1.));
         }
-        if state.focus == Target::Background(index) {
+        if *state.page_focus() == Target::Background(index) {
             out.ring(rect, 16.);
         }
         out.control(Target::Background(index), rect, true);
     }
     let rect = gallery_rect(state, state.background_count());
-    let focused = state.focus == Target::UploadWallpaper;
+    let focused = *state.page_focus() == Target::UploadWallpaper;
     if focused {
         out.shape(rect, 16., c(0xffffff, 0.10));
     }
@@ -4762,7 +4635,7 @@ fn gallery_action(
     title: &str,
     value: &str,
 ) {
-    let focused = state.focus == target;
+    let focused = *state.page_focus() == target;
     if focused {
         out.draw.push(Draw::RoundedGradient(
             rect,
@@ -4891,9 +4764,9 @@ fn preview_region(state: &State) -> Option<Region> {
             _ => None,
         };
     }
-    match state.focus {
+    match state.page_focus() {
         Target::Setting(0) | Target::Widget(2) => Some(Region::Favorites),
-        Target::Setting(index) if index == crate::state::FOCUS_GLOW_ROW => Some(Region::Favorites),
+        Target::Setting(index) if *index == crate::state::FOCUS_GLOW_ROW => Some(Region::Favorites),
         Target::Setting(1) => Some(Region::Clock),
         Target::Widget(4) => Some(Region::Date),
         Target::Widget(0) => Some(Region::Greeting),
@@ -5168,7 +5041,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
             width - 16.,
             SIDEBAR_ITEM,
         );
-        let focused = state.focus == Target::Sidebar(index);
+        let focused = *state.page_focus() == Target::Sidebar(index);
         let selected = state.section == index;
         if focused {
             out.draw.push(Draw::RoundedGradient(
@@ -6206,7 +6079,7 @@ fn empty(out: &mut Scene, state: &State, assets: &Assets, content: EmptyState<'_
         let width = assets.width(label, text(15.2, 600, 0.)) + 72.;
         let button = Rect::new(center - width / 2., top + 144.8, width, 46.8);
         out.shape(button, 11.2, c(0xededed, 1.));
-        if state.focus == target {
+        if *state.page_focus() == target {
             out.border(button.inset(-7.), 18.2, 2., WHITE);
         }
         out.text(
@@ -6318,7 +6191,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
             panel.w - 32.,
             67.2,
         );
-        let focused = state.focus == target;
+        let focused = *state.page_focus() == target;
         let destructive = matches!(
             target,
             Target::Option(2) | Target::DeleteBackground | Target::TileRemove(_)
@@ -6454,7 +6327,7 @@ fn delete_confirmation(out: &mut Scene, state: &State, assets: &Assets, id: &str
             panel.w - 56.,
             68.,
         );
-        let focused = state.focus == target;
+        let focused = *state.page_focus() == target;
         let disabled = target == Target::ConfirmDelete && deleting;
         let label_style = text(20.8, 600, -0.02);
         let label_height = label_style.size * label_style.line_height;
@@ -6520,7 +6393,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
     let close = Rect::new(1497., 328., 33.6, 33.6);
     out.icon(assets, "close", close.inset(7.6), WHITE);
     out.control(Target::CloseDialog, close, false);
-    if state.focus == Target::CloseDialog {
+    if *state.page_focus() == Target::CloseDialog {
         out.border(close, 16.8, 2., WHITE);
     }
     out.glass(Rect::new(389., 390., 1142., 56.), 28.);
@@ -6551,7 +6424,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
             101.6,
             60.,
         );
-        let focused = state.focus == Target::Key(index);
+        let focused = *state.page_focus() == Target::Key(index);
         out.pill(rect, focused, false);
         let mut style = text(18.4, 550, -0.02);
         let width = assets.width(label, style);
@@ -6587,7 +6460,7 @@ fn toast(out: &mut Scene, state: &State, assets: &Assets, notice: &str) {
         WHITE,
         true,
     );
-    if state.focus == Target::DismissNotice {
+    if *state.page_focus() == Target::DismissNotice {
         out.border(rect, 16., 2., WHITE);
     }
     if state.overlay.is_none() {

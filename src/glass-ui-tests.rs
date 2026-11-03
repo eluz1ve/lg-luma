@@ -69,9 +69,6 @@ fn chrome_sits_on_glass_over_the_wallpaper() {
     menu.open_menu();
     menu.menu_motion = None;
     on_glass(&scene(&menu), view::MENU_PANEL, "the menu");
-    for rect in rects(&drawn, |t| matches!(t, Target::Input(_))) {
-        on_glass(&drawn, rect, "an input chip");
-    }
     for rect in rects(&drawn, |t| matches!(t, Target::Coin(_))) {
         on_glass(&drawn, rect, "a coin chip");
     }
@@ -196,7 +193,8 @@ fn text_on_glass_has_no_shadow() {
 
 #[test]
 fn the_preview_samples_its_own_wallpaper() {
-    let mut state = ready();
+    // Coins in the center, on glass.
+    let mut state = home();
     state.page = Page::Settings;
     state.focus = Target::Setting(0);
     let mut drawn = scene(&state);

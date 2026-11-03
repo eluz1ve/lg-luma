@@ -1214,20 +1214,20 @@
     "nl": "In ‘Vandaag’",
     "sv": "I ”I dag”"
   },
-  "placeRow": {
-    "zh-tw": "單獨一列",
-    "en": "Separate row",
-    "de": "Eigene Reihe",
-    "zh": "单独一行",
-    "es": "Fila aparte",
-    "pt": "Linha própria",
-    "it": "Riga a parte",
-    "ru": "Отдельным рядом",
-    "pl": "Osobny rząd",
-    "fr": "Rangée à part",
-    "vi": "Hàng riêng",
-    "nl": "Eigen rij",
-    "sv": "Egen rad"
+  "placeCenter": {
+    "zh-tw": "在中央",
+    "en": "In the center",
+    "de": "In der Mitte",
+    "zh": "在中央",
+    "es": "En el centro",
+    "pt": "No centro",
+    "it": "Al centro",
+    "ru": "В центре",
+    "pl": "Na środku",
+    "fr": "Au centre",
+    "vi": "Ở giữa",
+    "nl": "In het midden",
+    "sv": "I mitten"
   },
   "todayMore": {
     "zh-tw": "還有 {count} 項",

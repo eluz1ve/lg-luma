@@ -51,8 +51,7 @@ pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
     let mut coming = Vec::new();
     let mut aired = Vec::new();
     // An old feed's "live" may long be over.
-    if preferences.show_cs2
-        && preferences.cs2_today
+    if preferences.in_today(crate::model::Center::Cs2)
         && !state.cs2.stale(now)
         && let Some(feed) = state.cs2.current(now)
     {
@@ -69,7 +68,7 @@ pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
             }
         }
     }
-    if preferences.show_shows && preferences.shows_today && !lampa {
+    if preferences.in_today(crate::model::Center::Shows) && !lampa {
         for show in state.shows.list.iter().filter(|show| show.app.is_some()) {
             if let Some(episode) = show.today(day.0, day.1, now) {
                 let line = Line::Episode {
@@ -99,9 +98,7 @@ pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
     };
     let mut lines = live;
     lines.extend(interleave(groups));
-    let crypto = preferences.show_crypto
-        && preferences.crypto_beside
-        && !preferences.crypto_coins.is_empty();
+    let crypto = preferences.in_today(crate::model::Center::Crypto);
     let room = LINES - usize::from(crypto);
     let more = lines.len().saturating_sub(room);
     lines.truncate(room);

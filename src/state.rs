@@ -172,6 +172,40 @@ impl Target {
             Target::TodayMatch(_) | Target::TodayShow(_) | Target::TodayLampa(_)
         )
     }
+
+    /// A card of the widget in the center of Home.
+    pub fn in_center(&self) -> bool {
+        matches!(
+            self,
+            Target::Coin(_) | Target::Cs2Match(_) | Target::Show(_)
+        )
+    }
+}
+
+/// The card among `of` nearest across from `from`: where Up or Down between rows lands.
+fn across(controls: &[Control], from: &Target, of: fn(&Target) -> bool) -> Option<Target> {
+    let x = controls
+        .iter()
+        .find(|control| control.target == *from)
+        .map_or(960., |control| control.rect.center().0);
+    controls
+        .iter()
+        .filter(|control| of(&control.target))
+        .min_by(|a, b| {
+            (a.rect.center().0 - x)
+                .abs()
+                .total_cmp(&(b.rect.center().0 - x).abs())
+        })
+        .map(|control| control.target.clone())
+}
+
+/// The Today card's last line, the one nearest the rows below it.
+fn today_last(controls: &[Control]) -> Option<Target> {
+    controls
+        .iter()
+        .filter(|control| control.target.in_today())
+        .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
+        .map(|control| control.target.clone())
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -588,26 +622,28 @@ impl State {
         use crate::motion::Lane;
         let home = self.page == Page::Home;
         let apps = self.page == Page::Apps;
-        let selected = (self.overlay.is_none())
-            .then_some(&self.focus)
-            .filter(|target| match self.page {
-                Page::Home | Page::Apps => matches!(
-                    target,
-                    Target::App(_)
-                        | Target::Input(_)
-                        | Target::Coin(_)
-                        | Target::Cs2Match(_)
-                        | Target::Show(_)
-                        | Target::TodayMatch(_)
-                        | Target::TodayShow(_)
-                        | Target::TodayLampa(_)
-                ),
-                // A settings row grows to show its description.
-                Page::Settings => matches!(
-                    target,
-                    Target::Setting(_) | Target::Widget(_) | Target::Choice(_)
-                ),
-            });
+        let selected = (self.overlay.is_none()
+            || matches!(self.overlay, Some(Overlay::Menu { .. })))
+        .then_some(self.page_focus())
+        .filter(|target| match self.page {
+            Page::Home | Page::Apps => matches!(
+                target,
+                Target::App(_)
+                    | Target::Input(_)
+                    | Target::Coin(_)
+                    | Target::Cs2Match(_)
+                    | Target::Show(_)
+                    | Target::TodayMatch(_)
+                    | Target::TodayShow(_)
+                    | Target::TodayLampa(_)
+            ),
+            // A settings row grows to show its description.
+            Page::Settings => matches!(
+                target,
+                Target::Setting(_) | Target::Widget(_) | Target::Choice(_)
+            ),
+        })
+        .cloned();
         let lanes: Vec<(Lane, f32)> = if home {
             vec![
                 (Lane::Page, self.scroll),
@@ -625,7 +661,7 @@ impl State {
             vec![(Lane::Sidebar, self.sidebar_target())]
         };
         let reduced = self.preferences.reduced_motion;
-        self.dirty |= self.motion.advance(selected, &lanes, dt, reduced);
+        self.dirty |= self.motion.advance(selected.as_ref(), &lanes, dt, reduced);
     }
 
     /// Where the page is drawn: Home eases toward `scroll`, other pages are drawn at it.
@@ -761,6 +797,15 @@ impl State {
             )
         });
         self.dirty = true;
+    }
+
+    /// The focus the page shows: under the menu, the one it closes back to, so the page looks
+    /// exactly as before and only the panel's strip is drawn again.
+    pub fn page_focus(&self) -> &Target {
+        match &self.overlay {
+            Some(Overlay::Menu { restore }) => restore,
+            _ => &self.focus,
+        }
     }
 
     /// How far the menu is in: 0 closed, 1 open, easing out both ways.
@@ -922,7 +967,7 @@ impl State {
     }
 
     fn sidebar_target(&self) -> f32 {
-        if matches!(self.focus, Target::Sidebar(_)) {
+        if matches!(self.page_focus(), Target::Sidebar(_)) {
             crate::layout::SIDEBAR_EXPANDED
         } else {
             crate::layout::SIDEBAR_COLLAPSED
@@ -1183,7 +1228,12 @@ impl State {
                 .iter()
                 .any(|input| &input.id == id && self.preferences.input_visible(input))
         {
-            self.focus = self.first_content();
+            // In the menu, a vanished input hands the focus to the list's own item.
+            self.focus = if matches!(self.overlay, Some(Overlay::Menu { .. })) {
+                Target::MenuInputs
+            } else {
+                self.first_content()
+            };
         }
     }
 
@@ -1828,50 +1878,16 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
-                        // Up reaches the Today card's last line, if there is one.
+                        // Up reaches the center's nearest card, else Today's last line; nothing
+                        // lies below.
                         Direction::Up => {
-                            let today = controls
-                                .iter()
-                                .filter(|c| c.target.in_today())
-                                .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
-                                .map(|c| c.target.clone());
-                            if let Some(today) = today {
-                                self.focus(today, controls)
-                            }
-                        }
-                        Direction::Down => {
-                            let x = controls
-                                .iter()
-                                .find(|control| control.target == self.focus)
-                                .map_or(960., |control| control.rect.center().0);
-                            // The nearest card of the row below: Inputs, else crypto prices,
-                            // else CS2 Score.
-                            let nearest = |in_row: fn(&Target) -> bool| {
-                                let top = controls
-                                    .iter()
-                                    .filter(|control| in_row(&control.target))
-                                    .map(|control| control.rect.y)
-                                    .fold(f32::INFINITY, f32::min);
-                                controls
-                                    .iter()
-                                    .filter(|control| {
-                                        in_row(&control.target) && (control.rect.y - top).abs() < 1.
-                                    })
-                                    .min_by(|a, b| {
-                                        (a.rect.center().0 - x)
-                                            .abs()
-                                            .total_cmp(&(b.rect.center().0 - x).abs())
-                                    })
-                                    .map(|control| control.target.clone())
-                            };
-                            let next = nearest(|target| matches!(target, Target::Input(_)))
-                                .or_else(|| nearest(|target| matches!(target, Target::Coin(_))))
-                                .or_else(|| nearest(|target| matches!(target, Target::Cs2Match(_))))
-                                .or_else(|| nearest(|target| matches!(target, Target::Show(_))));
+                            let next = across(controls, &self.focus, Target::in_center)
+                                .or_else(|| today_last(controls));
                             if let Some(next) = next {
-                                self.focus(next, controls);
+                                self.focus(next, controls)
                             }
                         }
+                        Direction::Down => {}
                     }
                     return vec![];
                 }
@@ -2067,7 +2083,25 @@ impl State {
             if self.focus == Target::Setting(0) && matches!(direction, Direction::Up) {
                 return vec![];
             }
-            // CS2 Score's cards: Left and Right step through every match, scrolling the row.
+            // The center's cards: Up reaches Today's last line, Down the nearest favorite.
+            if self.page == Page::Home
+                && self.focus.in_center()
+                && matches!(direction, Direction::Up | Direction::Down)
+            {
+                let next = if matches!(direction, Direction::Up) {
+                    today_last(controls)
+                } else {
+                    across(controls, &self.focus, |target| {
+                        matches!(target, Target::App(_))
+                    })
+                };
+                if let Some(next) = next {
+                    self.focus(next, controls);
+                }
+                return vec![];
+            }
+            // CS2 Score's cards: Left and Right step through every match, scrolling the row; Left
+            // from the first opens the menu.
             if let Target::Cs2Match(index) = self.focus
                 && matches!(direction, Direction::Left | Direction::Right)
             {
@@ -2080,11 +2114,13 @@ impl State {
                     self.cs2_reveal(next);
                     self.focus = Target::Cs2Match(next);
                     self.dirty = true;
+                } else if matches!(direction, Direction::Left) {
+                    self.open_menu();
                 }
                 return vec![];
             }
-            // The Today card's lines: Up and Down step through them, then reach the tabs above
-            // or the favorites below; Left and Right stay.
+            // The Today card's lines: Up and Down step through them, then reach the center below,
+            // else the favorites; Left opens the menu and Right stays.
             if self.focus.in_today() {
                 let mut lines: Vec<&Control> =
                     controls.iter().filter(|c| c.target.in_today()).collect();
@@ -2100,7 +2136,8 @@ impl State {
                     (Direction::Down, Some(index)) if index + 1 < lines.len() => {
                         Some(lines[index + 1].target.clone())
                     }
-                    (Direction::Down, _) => Some(self.first_content()),
+                    (Direction::Down, _) => across(controls, &self.focus, Target::in_center)
+                        .or_else(|| Some(self.first_content())),
                     _ => None,
                 };
                 if let Some(next) = next {
@@ -2108,7 +2145,8 @@ impl State {
                 }
                 return vec![];
             }
-            // TV Shows' cards: Left and Right step through every show, scrolling the row.
+            // TV Shows' cards: Left and Right step through every show, scrolling the row; Left
+            // from the first opens the menu.
             if let Target::Show(index) = self.focus
                 && matches!(direction, Direction::Left | Direction::Right)
             {
@@ -2120,6 +2158,8 @@ impl State {
                     self.shows_reveal(next);
                     self.focus = Target::Show(next);
                     self.dirty = true;
+                } else if matches!(direction, Direction::Left) {
+                    self.open_menu();
                 }
                 return vec![];
             }
@@ -3017,16 +3057,15 @@ impl State {
                 self.preferences.show_crypto = !self.preferences.show_crypto;
                 return vec![Effect::Save];
             }
-            Target::Cs2Layout => {
-                self.preferences.cs2_today = !self.preferences.cs2_today;
-                return vec![Effect::Save];
-            }
-            Target::ShowsLayout => {
-                self.preferences.shows_today = !self.preferences.shows_today;
-                return vec![Effect::Save];
-            }
-            Target::CryptoLayout => {
-                self.preferences.crypto_beside = !self.preferences.crypto_beside;
+            Target::Cs2Layout | Target::ShowsLayout | Target::CryptoLayout => {
+                use crate::model::Center;
+                let widget = match self.focus {
+                    Target::Cs2Layout => Center::Cs2,
+                    Target::ShowsLayout => Center::Shows,
+                    _ => Center::Crypto,
+                };
+                let center = self.preferences.center() != Some(widget);
+                self.preferences.place_in_center(widget, center);
                 return vec![Effect::Save];
             }
             Target::CryptoSearch => self.open_keyboard(TextField::Coin),

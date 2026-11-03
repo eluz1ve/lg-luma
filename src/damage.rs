@@ -58,18 +58,21 @@ fn diff(old: &[Draw], new: &[Draw]) -> Damage {
     // Clip, EdgeFade and EdgeFadeX restyle what is drawn after them, up to the next command of
     // their kind; one that changed damages exactly those commands.
     let mut restyled = [false; 3];
+    // Under a clip that stayed put, a command paints only inside it: a text line, which
+    // otherwise damages the screen's full width, stays inside a sliding panel's strip.
+    let (old_clips, new_clips) = (clips(old), clips(new));
     let mut j = 0;
-    for command in new {
+    for (i, command) in new.iter().enumerate() {
         let matched = if j < old.len() && same(&old[j], command) {
             j += 1;
             true
         } else if let Some(k) = (j..old.len().min(j + LOOKAHEAD)).find(|&k| same(&old[k], command))
         {
             // Commands left out since the old scene; a left-out state restyles what follows.
-            for removed in &old[j..k] {
+            for (removed, clip) in old[j..k].iter().zip(&old_clips[j..k]) {
                 match state(removed) {
                     Some(kind) => restyled[kind] = true,
-                    None => area = union(area, bounds(removed)?),
+                    None => area = union(area, within(bounds(removed)?, *clip)),
                 }
             }
             j = k + 1;
@@ -80,17 +83,49 @@ fn diff(old: &[Draw], new: &[Draw]) -> Damage {
         match state(command) {
             Some(kind) => restyled[kind] = !matched,
             None if !matched || restyled.contains(&true) => {
-                area = union(area, bounds(command)?);
+                let clip = if restyled[0] { None } else { new_clips[i] };
+                area = union(area, within(bounds(command)?, clip));
             }
             None => {}
         }
     }
-    for removed in &old[j.min(old.len())..] {
+    let start = j.min(old.len());
+    for (removed, clip) in old[start..].iter().zip(&old_clips[start..]) {
         if state(removed).is_none() {
-            area = union(area, bounds(removed)?);
+            area = union(area, within(bounds(removed)?, *clip));
         }
     }
     Some(area)
+}
+
+/// The clip each command is drawn under.
+fn clips(commands: &[Draw]) -> Vec<Option<Rect>> {
+    let mut clip = None;
+    commands
+        .iter()
+        .map(|command| {
+            if let Draw::Clip(rect) = command {
+                clip = *rect;
+            }
+            clip
+        })
+        .collect()
+}
+
+/// `area` cut to `clip`; empty when they miss each other.
+fn within(area: Rect, clip: Option<Rect>) -> Rect {
+    let Some(clip) = clip else {
+        return area;
+    };
+    let x = area.x.max(clip.x);
+    let y = area.y.max(clip.y);
+    let w = (area.x + area.w).min(clip.x + clip.w) - x;
+    let h = (area.y + area.h).min(clip.y + clip.h) - y;
+    if w <= 0. || h <= 0. {
+        Rect::default()
+    } else {
+        Rect::new(x, y, w, h)
+    }
 }
 
 /// Which state a command sets, if it is one.

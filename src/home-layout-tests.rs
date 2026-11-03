@@ -55,7 +55,7 @@ fn layout_columns_follow_the_tvos_grid() {
 }
 
 #[test]
-fn home_fits_one_screen_with_weather_six_favorites_two_inputs_and_four_coins() {
+fn home_fits_one_screen_with_weather_six_favorites_and_four_coins() {
     let mut state = ready();
     favorites(&mut state, 6);
     state.preferences.show_weather = true;
@@ -70,18 +70,27 @@ fn home_fits_one_screen_with_weather_six_favorites_two_inputs_and_four_coins() {
     assert_eq!(tiles.len(), 6);
     assert_eq!(
         (tiles[0].x, tiles[0].y, tiles[0].w, tiles[0].h),
-        (80., 466., 260., 150.)
+        (80., 830., 260., 150.)
     );
     assert_eq!(tiles[1].x, 380.);
     assert_eq!(tiles[5].x + tiles[5].w, 1840.);
-    let inputs: Vec<_> = controls
+    // The inputs are in the menu; the coins stand in the center.
+    assert!(
+        !controls
+            .iter()
+            .any(|c| matches!(c.target, Target::Input(_)))
+    );
+    let coins: Vec<_> = controls
         .iter()
-        .filter(|c| matches!(c.target, Target::Input(_)))
+        .filter(|c| matches!(c.target, Target::Coin(_)))
         .map(|c| c.rect)
         .collect();
-    assert_eq!(inputs.len(), 2);
-    assert!(inputs.iter().all(|rect| rect.w == 410. && rect.h == 96.));
-    assert_eq!(inputs[1].x - inputs[0].x, 450.);
+    assert_eq!(coins.len(), 4);
+    assert!(
+        coins
+            .iter()
+            .all(|rect| rect.y > 400. && rect.y + rect.h < 780.)
+    );
     let bottom = controls
         .iter()
         .map(|c| c.rect.y + c.rect.h)
@@ -105,11 +114,16 @@ fn focused_favorite_alone_shows_its_name() {
     let drawn = texts(&state);
     assert!(drawn.iter().any(|(text, ..)| *text == second));
     assert!(!drawn.iter().any(|(text, ..)| *text == first));
+    let (_, name, _) = drawn.iter().find(|(text, ..)| *text == second).unwrap();
+    assert!(
+        name.y >= 830. + 150. && name.y + name.h <= 1080.,
+        "{name:?}"
+    );
+    let label = state.preferences.language.t("favorites");
     let (_, heading, _) = drawn
         .iter()
-        .find(|(text, ..)| text == "Inputs")
-        .expect("inputs are shown");
-    assert!(heading.y >= 466. + 150. + 40., "{heading:?}");
+        .find(|(text, ..)| text == label)
+        .expect("the favorites' heading");
     // The name's room is kept whichever card is focused, so rows never jump.
     state.focus = Target::Nav(0);
     let unfocused = texts(&state);
@@ -121,7 +135,7 @@ fn focused_favorite_alone_shows_its_name() {
     assert_eq!(
         unfocused
             .iter()
-            .find(|(text, ..)| text == "Inputs")
+            .find(|(text, ..)| text == label)
             .map(|t| t.1.y),
         Some(heading.y)
     );
@@ -148,7 +162,7 @@ fn long_greeting_shrinks_to_the_left_column_beside_today() {
 }
 
 #[test]
-fn cs2_and_shows_in_today_leave_no_rows_below() {
+fn cs2_and_shows_in_today_leave_the_center_empty() {
     let mut state = ready();
     state.preferences.show_cs2 = true;
     state.preferences.show_shows = true;
@@ -160,7 +174,8 @@ fn cs2_and_shows_in_today_leave_no_rows_below() {
             .collect()
     };
     assert!(headings(&state).is_empty(), "{:?}", headings(&state));
+    // Saved from the days of rows, both outside Today: CS2 takes the center, Shows stays in Today.
     state.preferences.cs2_today = false;
     state.preferences.shows_today = false;
-    assert_eq!(headings(&state), ["CS2 Score", "TV Shows"]);
+    assert_eq!(headings(&state), ["CS2 Score"]);
 }

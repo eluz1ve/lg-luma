@@ -25,6 +25,8 @@ mod today_ui_tests;
 #[path = "wallpapers-ui-tests.rs"]
 mod wallpaper_tests;
 
+#[path = "home-center-tests.rs"]
+mod home_center_tests;
 #[path = "input-refresh-tests.rs"]
 mod input_refresh_tests;
 #[path = "menu-tests.rs"]
@@ -246,7 +248,11 @@ fn home_relaunch_resets_scrolled_favorites_and_keeps_remote_routes() {
     state.direction(Direction::Left, &controls(&state));
     assert_eq!(state.focus, Target::App(favorites[0].clone()));
     state.direction(Direction::Down, &controls(&state));
-    assert!(matches!(state.focus, Target::Input(_)));
+    assert_eq!(
+        state.focus,
+        Target::App(favorites[0].clone()),
+        "nothing below the favorites"
+    );
 
     state.return_home();
     state.direction(Direction::Up, &controls(&state));
@@ -311,26 +317,26 @@ fn favorites_edge_fragments_share_draw_hit_and_wheel_viewports() {
         .collect();
     state.preferences.favorites = Some(favorites.clone());
     assert_eq!(
-        state.hit_test(&controls(&state), 1900., 600.),
+        state.hit_test(&controls(&state), 1900., 900.),
         Some(Target::App(favorites[6].clone()))
     );
-    assert!(state.wheel_scroll(&controls(&state), Some((1900., 600.)), 0, -1));
+    assert!(state.wheel_scroll(&controls(&state), Some((1900., 900.)), 0, -1));
     assert!((state.home_scroll - crate::state::HOME_TILE_PITCH).abs() < 0.01);
     assert_eq!(state.scroll, 0.);
     assert_eq!(
-        state.hit_test(&controls(&state), 20., 600.),
+        state.hit_test(&controls(&state), 20., 900.),
         Some(Target::App(favorites[0].clone()))
     );
     let scroll = state.home_scroll;
     state.pointer_focus(Target::App(favorites[0].clone()));
     assert_eq!(state.home_scroll, scroll);
-    assert!(state.hit_test(&controls(&state), 4., 600.).is_none());
-    assert!(state.hit_test(&controls(&state), 1915., 600.).is_none());
+    assert!(state.hit_test(&controls(&state), 4., 900.).is_none());
+    assert!(state.hit_test(&controls(&state), 1915., 900.).is_none());
     assert!(state.hit_test(&controls(&state), 40., 1060.).is_none());
     let scene = scene(&state);
     let viewport = state.favorites_viewport();
     assert!(scene.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Clip(Some(rect)) if rect.x == viewport.x && rect.w == viewport.w)));
-    assert!(state.wheel_scroll(&scene.controls, Some((20., 600.)), 0, 1));
+    assert!(state.wheel_scroll(&scene.controls, Some((20., 900.)), 0, 1));
     assert_eq!(state.home_scroll, 0.);
     assert_eq!(state.scroll, 0.);
 }
@@ -3138,7 +3144,7 @@ fn category_focus_active_and_clear_button_share_the_pill_style() {
 }
 
 #[test]
-fn clock_date_and_home_input_descriptions_use_larger_text() {
+fn clock_date_and_menu_input_descriptions_use_larger_text() {
     use crate::renderer::Draw;
     for language in crate::i18n::Language::ALL {
         let mut state = ready();
@@ -3160,14 +3166,18 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
                 Draw::Text(text, rect, style, ..) if text == &label && style.size == size && rect.h >= size
             )));
         }
+        state.open_menu();
+        state.menu_motion = None;
+        state.menu_inputs = true;
+        let menu = scene(&state);
         let input = &state.inventory.inputs[0];
         let description = view::input_status(
             input,
             state.preferences.input_name(input).is_some(),
             language,
         );
-        assert!(rendered.draw.iter().any(|draw| matches!(draw,
-            Draw::Text(text, rect, style, ..) if text == &description && style.size > 16.8 && style.size <= 22. && rect.h >= 22. * 1.2
+        assert!(menu.draw.iter().any(|draw| matches!(draw,
+            Draw::Text(text, rect, style, ..) if text == &description && style.size > 16.8 && style.size <= 22. && rect.h >= style.size * 1.2
         )));
     }
 }
@@ -3690,18 +3700,21 @@ fn airplay_input_is_optional_and_uses_native_receiver_launch() {
 }
 
 #[test]
-fn airplay_shares_input_visibility_settings_rename_and_home_controls() {
+fn airplay_shares_input_visibility_settings_rename_and_the_menu() {
     let mut state = ready();
     state.set_inputs(crate::platform::with_airplay_input(
         state.inventory.inputs.clone(),
         true,
         Some(true),
     ));
+    state.open_menu();
+    state.menu_inputs = true;
     assert!(
         controls(&state)
             .iter()
             .any(|c| c.target == Target::Input("airplay".into()))
     );
+    state.close_menu();
     state.open(2);
     state.focus = Target::Widget(3);
     state.activate();
@@ -3741,6 +3754,8 @@ fn airplay_shares_input_visibility_settings_rename_and_home_controls() {
         serde_json::from_value(serde_json::to_value(&state.preferences).unwrap()).unwrap();
     assert_eq!(saved.input_names["airplay"], "Apple sans fil");
     state.open(0);
+    state.open_menu();
+    state.menu_inputs = true;
     let input = state
         .inventory
         .inputs
@@ -3939,7 +3954,7 @@ fn home_and_its_rows_ease_to_their_scroll_unless_motion_is_reduced() {
     let input = |state: &State| {
         controls(state)
             .into_iter()
-            .find(|c| matches!(c.target, Target::Input(_)))
+            .find(|c| matches!(c.target, Target::App(_)))
             .map(|c| c.rect.y)
     };
     let before = input(&state);
