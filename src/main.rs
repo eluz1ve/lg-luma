@@ -2101,7 +2101,7 @@ fn run() -> Result<(), String> {
                 };
                 if let Some(log) = &mut perf_log {
                     let label = format!(
-                        "{:?}{}",
+                        "{:?}{} {width}x{height}",
                         state.page,
                         if state.overlay.is_some() {
                             "+overlay"
