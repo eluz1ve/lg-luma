@@ -361,3 +361,32 @@ fn posters_are_fetched_once_for_what_today_may_show() {
     assert!(cub.accept_poster("/a.jpg".into(), None));
     assert!(cub.poster("/a.jpg").is_none());
 }
+
+#[test]
+fn coming_back_to_luma_reads_again_unless_just_read() {
+    let mut cub = Cub::default();
+    cub.shown(true, 900);
+    assert_eq!(cub.due(1_000), None, "not signed in");
+    cub.sign_in_with(tokens(99_999), None);
+    let Some(Due::Read { id, .. }) = cub.due(1_000) else {
+        panic!("reads at once");
+    };
+    let account = Account {
+        profile: Profile {
+            id: "7".into(),
+            name: "Илья".into(),
+        },
+        releases: vec![],
+        watched: vec![],
+    };
+    cub.account(id, None, Ok(account), 1_000);
+    // Off to Lampa and back within a couple of minutes: what was read still holds.
+    cub.shown(false, 1_010);
+    cub.shown(true, 1_000 + FRESH - 1);
+    assert_eq!(cub.due(1_000 + FRESH - 1), None);
+    // Back later: read now, not at the half-hour.
+    cub.shown(false, 1_000 + FRESH);
+    assert_eq!(cub.due(1_000 + FRESH), None, "hidden, nothing new");
+    cub.shown(true, 1_000 + FRESH);
+    assert!(matches!(cub.due(1_000 + FRESH), Some(Due::Read { .. })));
+}

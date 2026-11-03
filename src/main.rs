@@ -649,6 +649,7 @@ fn cub_tick(
     if std::mem::take(&mut state.cub_forget) {
         cub::forget(path);
     }
+    state.cub.shown(visible, now);
     if visible {
         match state.cub.due(now) {
             Some(cub::Due::SignIn) => service.send(cub_service::Command::SignIn),

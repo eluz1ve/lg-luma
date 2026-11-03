@@ -107,6 +107,9 @@ pub struct Watched {
 /// The account is read this often, and sooner after a failed read.
 pub const REFRESH: i64 = 30 * 60;
 pub const RETRY: i64 = 5 * 60;
+/// Back on screen (from watching in Lampa, say), the account is read again unless it was read
+/// this recently.
+pub const FRESH: i64 = 2 * 60;
 
 /// Why an account read failed.
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +188,8 @@ pub struct Cub {
     pub failed: bool,
     /// Posters by TMDB path; None while loading or when there is none.
     posters: HashMap<String, Option<Arc<Artwork>>>,
+    /// Luma is on screen.
+    visible: bool,
 }
 
 impl Cub {
@@ -332,6 +337,16 @@ impl Cub {
             }
         }
         saved
+    }
+
+    /// Luma's visibility, each frame: coming back on screen, a read older than `FRESH` is
+    /// renewed at once, so what was just watched in Lampa shows.
+    pub fn shown(&mut self, visible: bool, now: i64) {
+        let back = visible && !self.visible;
+        self.visible = visible;
+        if back && self.fetched.is_some_and(|at| now - at >= FRESH) {
+            self.next_read = self.next_read.min(now);
+        }
     }
 
     /// Posters Today may show and not asked for yet: unwatched releases and recent history.
