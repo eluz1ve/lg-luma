@@ -3160,10 +3160,11 @@ fn clock_date_and_menu_input_descriptions_use_larger_text() {
                 ),
                 24.,
             ),
-            (language.date(now), 22.),
+            // On the clock's line, at its size, starting with a capital.
+            (language.date(now), 24.),
         ] {
             assert!(rendered.draw.iter().any(|draw| matches!(draw,
-                Draw::Text(text, rect, style, ..) if text == &label && style.size == size && rect.h >= size
+                Draw::Text(text, rect, style, ..) if text.to_lowercase() == label.to_lowercase() && style.size == size && rect.h >= size
             )));
         }
         state.open_menu();

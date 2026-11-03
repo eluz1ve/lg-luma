@@ -36,7 +36,7 @@ pub struct Today {
 }
 
 /// The card's lines at most.
-pub const LINES: usize = 3;
+pub const LINES: usize = 5;
 /// Upcoming matches count as today's this long before they start.
 const MATCH_AHEAD: i64 = 12 * 3600;
 /// A series watched within this long is offered to continue.

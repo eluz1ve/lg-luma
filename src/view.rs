@@ -1011,6 +1011,7 @@ fn header(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) 
             28.8 * k,
         ),
     ));
+    let width = assets.width(&clock, style);
     out.text(
         clock,
         Rect::new(SAFE_X, 76.8 - 14.4 * k, 300. * k, 28.8 * k),
@@ -1018,6 +1019,17 @@ fn header(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) 
         WHITE,
         false,
     );
+    // Home's date, on the clock's line.
+    if state.page == Page::Home && state.preferences.show_date {
+        let date = state.preferences.date_format.format(language, now);
+        let x = SAFE_X + width + 18. * k;
+        let rect = Rect::new(x, 76.8 - 14.4 * k, 1100. - x, 28.8 * k);
+        out.regions.push((
+            Region::Date,
+            Rect::new(x, rect.y, assets.width(&date, style).min(rect.w), rect.h),
+        ));
+        out.text(date, rect, style, c(0xf5f5f5, 0.72), false);
+    }
 }
 
 /// Where the menu stands when open (spec, «Меню»).
@@ -1670,8 +1682,10 @@ fn brand_mark(out: &mut Scene, assets: &Assets, app: &App, rect: Rect, language:
 }
 
 /// Where the card beside the greeting sits: the header's right columns, from the fifth's gutter.
-pub(crate) const TODAY_RECT: Rect =
-    Rect::new(1160., CONTENT_TOP, 680., HEADER_BOTTOM - CONTENT_TOP);
+/// It starts on the clock's line, its heading level with the clock, and grows down.
+pub(crate) const TODAY_RECT: Rect = Rect::new(1160., 45., 680., HEADER_BOTTOM - 45.);
+/// The greeting's top, under the clock's line.
+const GREETING_TOP: f32 = 118.;
 /// A row's heading, then its cards this far below the heading's top.
 const ROW_HEADING_GAP: f32 = 50.;
 /// Room under the favorites for the focused card's name.
@@ -1707,43 +1721,17 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         .preferences
         .show_weather
         .then(|| weather_summary_layout(state, assets, column));
-    let date_height = if state.preferences.show_date {
-        type_scale::EYEBROW * 1.2 + 14.
-    } else {
-        0.
-    };
+    // The date is on the clock's line.
+    let date_height = 0.;
     let greeting_line = (type_scale::GREETING * 1.05).ceil();
     let greeting_height = if state.preferences.show_greeting {
         greeting_line + 16.
     } else {
         0.
     };
-    // Centred in the header, whose height is fixed: the favorites stay put.
     let block = date_height + greeting_height + summary.as_ref().map_or(0., |s| s.height);
-    // Centred, and never past the header's bottom onto the favorites.
-    let top = (CONTENT_TOP + ((HEADER_BOTTOM - CONTENT_TOP - block) / 2.).max(0.))
-        .min(HEADER_BOTTOM - block)
-        - s;
-    if state.preferences.show_date {
-        let date = state.preferences.date_format.format(language, now);
-        let style = text(type_scale::EYEBROW, 600, 0.12).shadow();
-        out.regions.push((
-            Region::Date,
-            Rect::new(
-                SAFE_X,
-                top,
-                assets.width(&date, style).min(column),
-                type_scale::EYEBROW * 1.2,
-            ),
-        ));
-        out.text(
-            date,
-            Rect::new(SAFE_X, top, column, type_scale::EYEBROW * 1.2),
-            style,
-            c(0xf5f5f5, 0.72),
-            false,
-        );
-    }
+    // Just under the clock's line, and never past the header's bottom onto the center.
+    let top = GREETING_TOP.min(HEADER_BOTTOM - block) - s;
     if state.preferences.show_greeting {
         let greeting = language.greeting(now.hour(), &state.preferences.greeting_name);
         let style = text(type_scale::GREETING, 600, -0.04)
@@ -2214,7 +2202,7 @@ fn lampa_poster(out: &mut Scene, state: &State, assets: &Assets, path: Option<&s
 
 const TODAY_PAD: f32 = 20.;
 const TODAY_EYEBROW: f32 = 28.;
-const TODAY_LINE: f32 = 58.;
+const TODAY_LINE: f32 = 56.;
 
 /// Home's Today card beside the greeting: live matches, today's episodes and the prices, each
 /// line with its picture, what it is, and when. None without lines; the header keeps its height.
@@ -2233,7 +2221,7 @@ fn today_card(
     let height = TODAY_PAD * 2. + TODAY_EYEBROW + TODAY_LINE * today.lines.len() as f32;
     let rect = Rect::new(
         TODAY_RECT.x,
-        TODAY_RECT.y + ((TODAY_RECT.h - height) / 2.).max(0.) - state.page_scroll(),
+        TODAY_RECT.y - state.page_scroll(),
         TODAY_RECT.w,
         height,
     );
@@ -2265,7 +2253,7 @@ fn today_card(
             rect.w - 16.,
             TODAY_LINE,
         );
-        let icon = Rect::new(x, row.y + 9., 40., 40.);
+        let icon = Rect::new(x, row.y + 8., 40., 40.);
         let text_x = icon.x + icon.w + 16.;
         let target = match line {
             Line::Match { id } => Some(Target::TodayMatch(id.clone())),
@@ -2408,7 +2396,7 @@ fn today_card(
                     });
                     out.text(
                         status,
-                        Rect::new(text_x, row.y + 17., inner - text_x + x, 28.),
+                        Rect::new(text_x, row.y + 16., inner - text_x + x, 28.),
                         side,
                         c(0xe8e8e8, 0.62),
                         false,
@@ -2430,7 +2418,7 @@ fn today_card(
                     let style = text(type_scale::CAPTION, 550, 0.);
                     out.text(
                         &label,
-                        Rect::new(text_x + index as f32 * slot, row.y + 16., slot - 8., 28.),
+                        Rect::new(text_x + index as f32 * slot, row.y + 15., slot - 8., 28.),
                         assets.fit_text(&label, style, slot - 8.),
                         WHITE,
                         false,
@@ -2443,7 +2431,7 @@ fn today_card(
         let right = rect.x + rect.w - 24.;
         out.text(
             &when,
-            Rect::new(right - when_width, row.y + 17., when_width, 28.),
+            Rect::new(right - when_width, row.y + 16., when_width, 28.),
             assets.fit_text(&when, side.right(), when_width),
             tone,
             false,
@@ -2451,7 +2439,7 @@ fn today_card(
         let room = right - when_width - 16. - text_x;
         out.text(
             &title,
-            Rect::new(text_x, row.y + 14., room, 32.),
+            Rect::new(text_x, row.y + 13., room, 32.),
             assets.fit_text(&title, main, room),
             WHITE,
             false,
@@ -6676,11 +6664,9 @@ mod tests {
                     _ => None,
                 })
                 .unwrap();
-            // Date and greeting, centred in the header's 150–400.
-            let block = 22. * 1.2 + 14. + 80. + 16.;
-            let top = 150. + (250. - block) / 2.;
+            // Just under the clock's line, which holds the date.
             assert_eq!((rect.x, rect.w, rect.h), (80., 1760., 80.));
-            assert!((rect.y - (top + 22. * 1.2 + 14.)).abs() < 0.001, "{rect:?}");
+            assert!((rect.y - GREETING_TOP).abs() < 0.001, "{rect:?}");
             assert_eq!(style.size, 76.);
             assert_eq!(style.weight, 600);
             assert_eq!(style.tracking, -0.04);
@@ -6775,7 +6761,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_home_widgets_collapse_without_moving_favorites_or_inputs() {
+    fn hidden_home_widgets_collapse_upward_without_moving_favorites() {
         let assets = assets();
         let mut state = State::new(Preferences::default());
         state.set_inventory(demo_inventory(), None);
@@ -6797,10 +6783,9 @@ mod tests {
                 state.preferences.show_greeting = show_greeting;
                 let mut rendered = Scene::new();
                 home(&mut rendered, &state, &assets, OffsetDateTime::UNIX_EPOCH);
-                let removed = if show_date { 0. } else { 22. * 1.2 + 14. }
-                    + if show_greeting { 0. } else { 80. + 16. };
-                // The header keeps its height and centres what is left in it.
-                assert!((weather_y(&rendered) - (original_y - removed / 2.)).abs() < 0.001);
+                // The date is on the clock's line; without the greeting the weather rises.
+                let removed = if show_greeting { 0. } else { 80. + 16. };
+                assert!((weather_y(&rendered) - (original_y - removed)).abs() < 0.001);
                 for control in original
                     .controls
                     .iter()
@@ -6816,25 +6801,9 @@ mod tests {
                         (other.rect.x, other.rect.y)
                     );
                 }
-                if show_date && !show_greeting {
-                    let date_y = rendered
-                        .draw
-                        .iter()
-                        .find_map(|draw| match draw {
-                            Draw::Text(label, rect, ..)
-                                if label
-                                    == &state
-                                        .preferences
-                                        .language
-                                        .date(OffsetDateTime::UNIX_EPOCH) =>
-                            {
-                                Some(rect.y)
-                            }
-                            _ => None,
-                        })
-                        .unwrap();
+                if !show_greeting {
                     // Weather's control includes padding around the summary itself.
-                    assert!((weather_y(&rendered) - date_y).abs() < 60.);
+                    assert!((weather_y(&rendered) - GREETING_TOP).abs() < 60.);
                 }
             }
         }

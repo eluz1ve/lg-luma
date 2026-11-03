@@ -132,10 +132,11 @@ impl Language {
             self.format(&format!("{key}Named"), &[("name", name)])
         }
     }
+    /// Today's weekday and date as a line starts it: "Monday, November 2", "Понедельник, 2 ноября".
     pub fn date(self, now: OffsetDateTime) -> String {
         let weekday = now.weekday().number_days_from_monday() as usize;
         let month = now.month() as usize - 1;
-        match self {
+        let date = match self {
             Self::En => format!(
                 "{}, {} {}",
                 [
@@ -162,8 +163,7 @@ impl Language {
                     "December"
                 ][month],
                 now.day()
-            )
-            .to_uppercase(),
+            ),
             Self::De => format!(
                 "{}, {}. {}",
                 [
@@ -190,8 +190,7 @@ impl Language {
                     "November",
                     "Dezember"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Zh | Self::ZhTw => format!(
                 "{}月{}日星期{}",
                 now.month() as u8,
@@ -224,8 +223,7 @@ impl Language {
                     "noviembre",
                     "diciembre"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Pt => format!(
                 "{}, {} de {}",
                 [
@@ -252,8 +250,7 @@ impl Language {
                     "novembro",
                     "dezembro"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::It => format!(
                 "{} {} {}",
                 [
@@ -280,8 +277,7 @@ impl Language {
                     "novembre",
                     "dicembre"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Ru => format!(
                 "{}, {} {}",
                 [
@@ -308,8 +304,7 @@ impl Language {
                     "ноября",
                     "декабря"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Pl => format!(
                 "{}, {} {}",
                 [
@@ -336,8 +331,7 @@ impl Language {
                     "listopada",
                     "grudnia"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Fr => format!(
                 "{} {} {}",
                 [
@@ -361,8 +355,7 @@ impl Language {
                     "novembre",
                     "décembre"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Vi => format!(
                 "{}, {} {}",
                 [
@@ -389,8 +382,7 @@ impl Language {
                     "tháng 11",
                     "tháng 12"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Nl => format!(
                 "{} {} {}",
                 [
@@ -417,8 +409,7 @@ impl Language {
                     "november",
                     "december"
                 ][month]
-            )
-            .to_uppercase(),
+            ),
             Self::Sv => format!(
                 "{} {} {}",
                 [
@@ -439,9 +430,13 @@ impl Language {
                     "november",
                     "december"
                 ][month]
-            )
-            .to_uppercase(),
-        }
+            ),
+        };
+        let mut chars = date.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
     }
     pub fn clock(self, now: OffsetDateTime, hour24: bool, seconds: bool) -> String {
         let base = self.clock_base(now, hour24);
@@ -681,21 +676,21 @@ mod tests {
             &time::format_description::well_known::Rfc3339,
         )
         .unwrap();
-        assert_eq!(Language::De.date(now), "MITTWOCH, 21. OKTOBER");
-        assert_eq!(Language::Es.date(now), "MIÉRCOLES, 21 DE OCTUBRE");
-        assert_eq!(Language::Pt.date(now), "QUARTA-FEIRA, 21 DE OUTUBRO");
+        assert_eq!(Language::De.date(now), "Mittwoch, 21. Oktober");
+        assert_eq!(Language::Es.date(now), "Miércoles, 21 de octubre");
+        assert_eq!(Language::Pt.date(now), "Quarta-feira, 21 de outubro");
         assert_eq!(Language::Zh.date(now), "10月21日星期三");
-        assert_eq!(Language::Ru.date(now), "СРЕДА, 21 ОКТЯБРЯ");
+        assert_eq!(Language::Ru.date(now), "Среда, 21 октября");
         assert_eq!(Language::Ru.clock(now, true, false), "20:41");
-        assert_eq!(Language::Pl.date(now), "ŚRODA, 21 PAŹDZIERNIKA");
+        assert_eq!(Language::Pl.date(now), "Środa, 21 października");
         assert_eq!(Language::Pl.clock(now, true, false), "20:41");
-        assert_eq!(Language::Fr.date(now), "MERCREDI 21 OCTOBRE");
+        assert_eq!(Language::Fr.date(now), "Mercredi 21 octobre");
         assert_eq!(Language::Fr.clock(now, true, false), "20:41");
-        assert_eq!(Language::Vi.date(now), "THỨ TƯ, 21 THÁNG 10");
+        assert_eq!(Language::Vi.date(now), "Thứ tư, 21 tháng 10");
         assert_eq!(Language::Vi.clock(now, true, false), "20:41");
-        assert_eq!(Language::Nl.date(now), "WOENSDAG 21 OKTOBER");
+        assert_eq!(Language::Nl.date(now), "Woensdag 21 oktober");
         assert_eq!(Language::Nl.clock(now, true, false), "20:41");
-        assert_eq!(Language::Sv.date(now), "ONSDAG 21 OKTOBER");
+        assert_eq!(Language::Sv.date(now), "Onsdag 21 oktober");
         assert_eq!(Language::Sv.clock(now, true, false), "20:41");
         assert_eq!(Language::Zh.clock(now, false, false), "下午8:41");
         assert_eq!(Language::Zh.clock(now, false, true), "下午8:41:00");
@@ -712,7 +707,7 @@ mod tests {
         ] {
             let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
                 .unwrap();
-            assert_eq!(Language::Pt.date(now), expected);
+            assert_eq!(Language::Pt.date(now).to_uppercase(), expected);
         }
     }
     #[test]
@@ -724,7 +719,7 @@ mod tests {
         ] {
             let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
                 .unwrap();
-            assert_eq!(Language::Fr.date(now), expected);
+            assert_eq!(Language::Fr.date(now).to_uppercase(), expected);
         }
     }
 
@@ -737,7 +732,7 @@ mod tests {
         ] {
             let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
                 .unwrap();
-            assert_eq!(Language::Vi.date(now), expected);
+            assert_eq!(Language::Vi.date(now).to_uppercase(), expected);
         }
     }
 
@@ -750,7 +745,7 @@ mod tests {
         ] {
             let now = OffsetDateTime::parse(date, &time::format_description::well_known::Rfc3339)
                 .unwrap();
-            assert_eq!(Language::Nl.date(now), expected);
+            assert_eq!(Language::Nl.date(now).to_uppercase(), expected);
         }
     }
 }

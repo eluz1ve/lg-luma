@@ -179,3 +179,86 @@ fn cs2_and_shows_in_today_leave_the_center_empty() {
     state.preferences.shows_today = false;
     assert_eq!(headings(&state), ["CS2 Score"]);
 }
+
+#[test]
+fn the_date_shares_the_clock_line_and_the_greeting_rises() {
+    let state = ready();
+    let language = state.preferences.language;
+    let now = time::OffsetDateTime::UNIX_EPOCH;
+    let drawn = texts(&state);
+    let clock = language.clock(
+        now,
+        state.preferences.hour_24,
+        state.preferences.show_seconds,
+    );
+    let (_, clock, _) = drawn.iter().find(|(text, ..)| *text == clock).unwrap();
+    let (_, date, _) = drawn
+        .iter()
+        .find(|(text, ..)| text.to_lowercase() == language.date(now).to_lowercase())
+        .expect("the date is drawn");
+    let middle = |rect: &Rect| rect.y + rect.h / 2.;
+    assert!(
+        (middle(date) - middle(clock)).abs() < 1.,
+        "{date:?} {clock:?}"
+    );
+    assert!(date.x > clock.x + 40.);
+    let (_, greeting, _) = greeting(&state);
+    assert!(greeting.y < 150., "{greeting:?}");
+}
+
+#[test]
+fn today_grows_up_to_five_lines_from_the_clock_line() {
+    use crate::shows::{Episode, Show};
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.shows.list = (0..7)
+        .map(|id| Show {
+            id,
+            title: format!("Show {id}"),
+            poster: None,
+            meta: String::new(),
+            service: None,
+            app: Some("netflix".into()),
+            episodes: vec![Episode {
+                airs: 3600 * (id + 1),
+                season: Some(1),
+                number: Some(1),
+            }],
+        })
+        .collect();
+    let drawn = scene(&state);
+    // The card, and the clip it is drawn under: nothing of it is cut off.
+    let mut clip = None;
+    let (card, clip) = drawn
+        .draw
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Clip(rect) => {
+                clip = *rect;
+                None
+            }
+            Draw::Glass(_, rect, ..) if rect.x == view::TODAY_RECT.x => Some((*rect, clip)),
+            _ => None,
+        })
+        .expect("the Today card");
+    assert!(
+        clip.is_none_or(|clip| clip.y <= card.y),
+        "{clip:?} cuts {card:?}"
+    );
+    let lines = drawn
+        .controls
+        .iter()
+        .filter(|control| control.target.in_today())
+        .count();
+    assert_eq!(lines, 5);
+    assert!(
+        card.y < 60. && card.y + card.h <= crate::layout::HEADER_BOTTOM,
+        "{card:?}"
+    );
+    assert!(
+        texts(&state)
+            .iter()
+            .any(|(text, ..)| text.ends_with("2 MORE")),
+        "the two left out are counted"
+    );
+}

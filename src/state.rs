@@ -939,7 +939,11 @@ impl State {
     }
 
     pub fn content_viewport(&self) -> Rect {
-        // The tab bar slides away with Home's and Apps' content, giving it the screen's top.
+        // Home has the screen's top: its header starts on the clock's line.
+        if self.page == Page::Home {
+            return Rect::new(64., 0., 1792., 1080.);
+        }
+        // Apps' filters slide away with its content, giving it the screen's top.
         let top = (108.8 - self.chrome_offset()).max(0.);
         Rect::new(64., top, 1792., 1080. - top)
     }

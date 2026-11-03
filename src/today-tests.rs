@@ -97,9 +97,13 @@ fn live_matches_come_first_then_events_by_time_then_aired_episodes() {
                 airs: NOW + 3600
             },
             matched("soon"),
+            Line::Episode {
+                show: 1,
+                airs: NOW - 5 * 3600
+            },
         ]
     );
-    assert_eq!(today.more, 1, "the episode that aired this afternoon");
+    assert_eq!(today.more, 0);
 }
 
 #[test]
@@ -109,10 +113,25 @@ fn crypto_beside_is_always_the_last_line_and_the_rest_counts_as_more() {
     state.preferences.crypto_beside = true;
     feed(
         &mut state,
-        &[("a", "live", NOW), ("b", "live", NOW), ("c", "live", NOW)],
+        &[
+            ("a", "live", NOW),
+            ("b", "live", NOW),
+            ("c", "live", NOW),
+            ("d", "live", NOW),
+            ("e", "live", NOW),
+        ],
     );
     let today = today(&state, NOW, DAY, DATE);
-    assert_eq!(today.lines, [matched("a"), matched("b"), Line::Crypto]);
+    assert_eq!(
+        today.lines,
+        [
+            matched("a"),
+            matched("b"),
+            matched("c"),
+            matched("d"),
+            Line::Crypto
+        ]
+    );
     assert_eq!(today.more, 1);
 }
 
@@ -277,9 +296,15 @@ fn each_kind_of_line_gets_one_before_any_gets_two() {
     let today = today(&state, NOW, DAY, DATE);
     assert_eq!(
         today.lines,
-        [matched("live"), fresh("tv_a", 0), matched("soon")]
+        [
+            matched("live"),
+            fresh("tv_a", 0),
+            matched("soon"),
+            resume("tv_c"),
+            fresh("tv_b", 0)
+        ]
     );
-    assert_eq!(today.more, 3);
+    assert_eq!(today.more, 1);
 }
 
 #[test]
