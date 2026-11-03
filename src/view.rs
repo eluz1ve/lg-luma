@@ -946,7 +946,10 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
             Overlay::CubSignIn => cub_sign_in(&mut out, state, assets),
             Overlay::Cs2Match { id, .. } => cs2_dialog(&mut out, state, assets, id, now),
-            Overlay::SystemKeyboard | Overlay::Recents { .. } | Overlay::Menu { .. } => {}
+            Overlay::SystemKeyboard
+            | Overlay::Recents { .. }
+            | Overlay::Menu { .. }
+            | Overlay::Today { .. } => {}
         }
         if !matches!(
             overlay,
@@ -955,6 +958,14 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
         {
             out.fade(start, (opened.elapsed().as_secs_f32() / 0.12).min(1.), 1.);
         }
+    }
+    if matches!(state.overlay, Some(Overlay::Today { .. })) {
+        let card = out
+            .controls
+            .iter()
+            .find(|control| control.target == Target::TodayCard)
+            .map(|control| control.rect);
+        today_open(&mut out, state, assets, now, card);
     }
     menu(&mut out, state, assets, now);
     if state.recents_open() || state.recents.visibility > 0. {
@@ -2225,8 +2236,23 @@ fn today_card(
         TODAY_RECT.w,
         height,
     );
-    out.shadow(rect, 24., 4., 1., 0.01);
+    // Whole, it takes the focus as the other cards do; OK opens it in the center.
+    let amount = state.motion.focus(&Target::TodayCard);
+    out.shadow(
+        rect,
+        24.,
+        4. + 26. * amount,
+        1. + 11. * amount,
+        0.01 + 0.3 * amount,
+    );
+    focus_glow(out, state, rect, 24., amount);
     out.glass(rect, 24.);
+    // Too large to lift, it lights up instead: a brighter pane and a clear edge.
+    if amount > 0. {
+        out.shape(rect, 24., c(0xffffff, 0.16 * amount));
+        out.border(rect, 24., 2., c(0xffffff, 0.7 * amount));
+    }
+    out.control(Target::TodayCard, rect, false);
     let x = rect.x + 24.;
     let inner = rect.w - 48.;
     let mut eyebrow = language.t("today").to_owned();
@@ -2255,21 +2281,6 @@ fn today_card(
         );
         let icon = Rect::new(x, row.y + 8., 40., 40.);
         let text_x = icon.x + icon.w + 16.;
-        let target = match line {
-            Line::Match { id } => Some(Target::TodayMatch(id.clone())),
-            Line::Episode { show, .. } => Some(Target::TodayShow(*show)),
-            Line::Release { card, .. } | Line::Continue { card } => {
-                Some(Target::TodayLampa(card.clone()))
-            }
-            Line::Crypto => None,
-        };
-        if let Some(target) = &target {
-            let amount = state.motion.focus(target);
-            if amount > 0. {
-                out.shape(row, 14., c(0xffffff, 0.1 * amount));
-                lift_edge(out, row, 14., amount);
-            }
-        }
         // (what, when, when's colour)
         let (title, when, tone) = match line {
             Line::Match { id } => {
@@ -2444,11 +2455,452 @@ fn today_card(
             WHITE,
             false,
         );
-        if let Some(target) = target {
-            out.control(target, row, true);
-        }
     }
     Some(rect)
+}
+
+/// The opened Today card's section headings and lines.
+const TODAY_SECTION: f32 = 48.;
+const TODAY_ROW: f32 = 84.;
+const TODAY_ROW_PITCH: f32 = 88.;
+
+/// The Today card opened in the center (spec «Сегодня» раскрытая): the whole day by section,
+/// one line focused at a time, scrolling under the heading. It grows out of the card, which
+/// stays on Home beneath it.
+fn today_open(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    now: OffsetDateTime,
+    card: Option<Rect>,
+) {
+    use crate::state::{TODAY_LIST, TODAY_PANEL};
+    use crate::today::{Line, Section};
+    let language = state.preferences.language;
+    let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
+    let sections = crate::today::sections(
+        state,
+        now.unix_timestamp(),
+        (midnight, midnight + 86_400),
+        now.date(),
+    );
+    out.controls.clear();
+    let coins = &state.preferences.crypto_coins;
+    let rows = |section: &Section, lines: &Vec<Line>| match section {
+        Section::Prices => coins.len(),
+        _ => lines.len(),
+    };
+    let count: usize = sections.iter().map(|(s, lines)| rows(s, lines)).sum();
+    // As tall as the day, up to the panel; the list scrolls past that.
+    let content = 8.
+        + sections
+            .iter()
+            .map(|(s, lines)| TODAY_SECTION + rows(s, lines) as f32 * TODAY_ROW_PITCH + 12.)
+            .sum::<f32>();
+    let list = Rect::new(
+        TODAY_LIST.x,
+        TODAY_LIST.y,
+        TODAY_LIST.w,
+        content.min(TODAY_LIST.h),
+    );
+    let foot = TODAY_PANEL.y + TODAY_PANEL.h - (TODAY_LIST.y + TODAY_LIST.h);
+    let whole = Rect::new(
+        TODAY_PANEL.x,
+        TODAY_PANEL.y,
+        TODAY_PANEL.w,
+        list.y + list.h + foot - TODAY_PANEL.y,
+    );
+    let amount = state.today_amount();
+    out.shape(SCREEN, 0., c(0x05080c, 0.55 * amount));
+    let from = card.unwrap_or(whole);
+    let lerp = |a: f32, b: f32| a + (b - a) * amount;
+    let panel = Rect::new(
+        lerp(from.x, whole.x),
+        lerp(from.y, whole.y),
+        lerp(from.w, whole.w),
+        lerp(from.h, whole.h),
+    );
+    out.modal = Some(whole);
+    out.shadow(panel, 34., 100., 24., 0.47 * amount);
+    out.modal_glass(panel, 34.);
+    // Drawn where it ends up, revealed as the panel grows.
+    out.draw.push(Draw::Clip(Some(panel)));
+    let x = TODAY_PANEL.x + 48.;
+    out.text(
+        language.t("today"),
+        Rect::new(x, TODAY_PANEL.y + 40., 700., 52.8),
+        text(type_scale::PAGE_TITLE, 600, -0.02),
+        WHITE,
+        false,
+    );
+    let subtitle = format!(
+        "{} · {}",
+        state.preferences.date_format.format(language, now),
+        language.format("todayCount", &[("count", &count.to_string())])
+    );
+    out.text(
+        subtitle,
+        Rect::new(x, TODAY_PANEL.y + 100., 900., 28.8),
+        text(type_scale::SECONDARY, 450, 0.),
+        c(0xf5f5f5, 0.6),
+        false,
+    );
+    let visible = Rect::new(
+        list.x.max(panel.x),
+        list.y.max(panel.y),
+        (list.x + list.w).min(panel.x + panel.w) - list.x.max(panel.x),
+        (list.y + list.h).min(panel.y + panel.h) - list.y.max(panel.y),
+    );
+    out.draw.push(Draw::Clip(Some(visible)));
+    let bottom = list.y + list.h;
+    let fade = if content > list.h { 48. } else { 0. };
+    out.draw.push(Draw::EdgeFade(Some([
+        list.y,
+        list.y + 16.,
+        bottom - fade,
+        bottom,
+    ])));
+    let shown = state
+        .motion
+        .shown(crate::motion::Lane::Today, state.today_scroll);
+    let top = list.y + 8. - shown;
+    let mut y = top;
+    let row = |y: f32| Rect::new(TODAY_PANEL.x + 24., y, TODAY_PANEL.w - 48. - 16., TODAY_ROW);
+    for (section, lines) in &sections {
+        out.text(
+            language.t(section.key()).to_uppercase(),
+            Rect::new(x, y + 14., 700., 24.),
+            text(20., 600, 0.12),
+            c(0xf5f5f5, 0.6),
+            false,
+        );
+        y += TODAY_SECTION;
+        for line in lines {
+            if let Line::Crypto = line {
+                for index in 0..coins.len() {
+                    today_coin(out, state, assets, index, row(y));
+                    y += TODAY_ROW_PITCH;
+                }
+            } else if today_line(out, state, assets, line, row(y), now) {
+                y += TODAY_ROW_PITCH;
+            }
+        }
+        y += 12.;
+    }
+    out.draw.push(Draw::EdgeFade(None));
+    out.draw.push(Draw::Clip(Some(panel)));
+    // A scroll bar once the day is longer than the list.
+    if content > list.h {
+        let track = Rect::new(TODAY_PANEL.x + TODAY_PANEL.w - 28., list.y, 4., list.h);
+        out.shape(track, 2., c(0xffffff, 0.1));
+        let thumb = (list.h * list.h / content).max(40.);
+        let travel = (shown / (content - list.h)).clamp(0., 1.);
+        out.shape(
+            Rect::new(track.x, track.y + travel * (list.h - thumb), 4., thumb),
+            2.,
+            c(0xffffff, 0.5),
+        );
+    }
+    let hint = language.t("todayHint");
+    let style = text(type_scale::CAPTION, 450, 0.);
+    let width = assets.width(hint, style);
+    out.text(
+        hint,
+        Rect::new(
+            whole.x + (whole.w - width) / 2.,
+            whole.y + whole.h - 58.,
+            width,
+            26.4,
+        ),
+        style,
+        c(0xf5f5f5, 0.5),
+        false,
+    );
+    out.draw.push(Draw::Clip(None));
+}
+
+/// A line of the opened Today card: white when focused, with its picture, what it is, a second
+/// line, and when. False for a line whose match or show is gone.
+fn today_line(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    line: &crate::today::Line,
+    row: Rect,
+    now: OffsetDateTime,
+) -> bool {
+    use crate::today::Line;
+    let language = state.preferences.language;
+    let picture = Rect::new(row.x + 16., row.y + 14., 56., 56.);
+    let mut parts = |target: Target| {
+        let focused = state.focus == target;
+        out.control(target, row, true);
+        if focused {
+            out.shadow(row, 20., 18., 6., 0.25);
+            out.draw.push(Draw::RoundedGradient(
+                row,
+                20.,
+                c(0xfafafa, 1.),
+                c(0xe5e5e5, 1.),
+            ));
+        }
+        focused
+    };
+    // (target, title, second line, when, when's colour)
+    let (focused, title, detail, when, tone) = match line {
+        Line::Match { id } => {
+            let Some(item) = state.cs2.find(id) else {
+                return false;
+            };
+            let focused = parts(Target::TodayMatch(id.clone()));
+            match item.icon.as_ref().and_then(|url| state.cs2.image(url)) {
+                Some(image) => out.draw.push(Draw::Picture(image, picture, 0., [1.; 4])),
+                None => out.icon(
+                    assets,
+                    "gaming",
+                    picture.inset(10.),
+                    today_ink(focused, 0.7),
+                ),
+            }
+            let side = |index: usize| {
+                item.teams[index]
+                    .as_ref()
+                    .map_or("TBD", |team| team.name.as_str())
+                    .to_owned()
+            };
+            let live = item.state == crate::cs2::State::Live;
+            let title = match item.score.filter(|_| live) {
+                Some([a, b]) => format!("{} {a}–{b} {}", side(0), side(1)),
+                None => format!("{} – {}", side(0), side(1)),
+            };
+            let detail = [
+                Some(item.tournament.clone()),
+                (!item.stage.is_empty()).then(|| item.stage.clone()),
+                item.best_of.map(|n| format!("BO{n}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            if live {
+                let map = item.current_map().map(|(_, map)| map.name.clone());
+                let when = [Some(language.t("cs2Live").to_owned()), map]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                (focused, title, detail, when, c(0xff8a80, 0.95))
+            } else {
+                let when = cs2_start(state, item.begins, now);
+                (focused, title, detail, when, c(0xe8e8e8, 0.62))
+            }
+        }
+        Line::Episode { show, airs } => {
+            let Some(show) = state.shows.list.iter().find(|s| s.id == *show) else {
+                return false;
+            };
+            let focused = parts(Target::TodayShow(show.id));
+            match state.shows.poster(show) {
+                Some(poster) => out.draw.push(Draw::Cover(poster, picture, 10., [1.; 4])),
+                None => out.icon(assets, "tv", picture.inset(10.), today_ink(focused, 0.7)),
+            }
+            let episode = show.episodes.iter().find(|e| e.airs == *airs);
+            let number = episode
+                .and_then(|e| Some((e.season?, e.number?)))
+                .map(|(season, number)| format!("S{season}E{number}"));
+            let detail = [number, show.service.map(str::to_owned)]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let when = if *airs >= now.unix_timestamp() {
+                OffsetDateTime::from_unix_timestamp(*airs)
+                    .map(|t| {
+                        language.clock(t.to_offset(now.offset()), state.preferences.hour_24, false)
+                    })
+                    .unwrap_or_default()
+            } else {
+                language.t("aired").to_owned()
+            };
+            (focused, show.title.clone(), detail, when, c(0xe8e8e8, 0.62))
+        }
+        Line::Release { card, date } => {
+            let Some(release) = state
+                .cub
+                .releases
+                .iter()
+                .find(|r| &r.card == card && r.date == *date)
+            else {
+                return false;
+            };
+            let focused = parts(Target::TodayLampa(card.clone()));
+            lampa_poster(out, state, assets, release.poster.as_deref(), picture);
+            use crate::cub::Badge;
+            let label = language.t(match release.badge {
+                Badge::Finale => "lampaFinale",
+                Badge::SeasonPremiere => "lampaSeasonPremiere",
+                Badge::Premiere => "lampaPremiere",
+                Badge::Movie => "lampaMovie",
+                _ if release.date == now.date() => "lampaToday",
+                _ => "lampaNew",
+            });
+            let detail = match release.episodes.as_slice() {
+                _ if release.season == 0 => String::new(),
+                [first] => format!("S{} E{first}", release.season),
+                [first, .., last] => format!("S{} E{first}–{last}", release.season),
+                [] => String::new(),
+            };
+            let tone = if release.date == now.date() {
+                c(0x9fd0ff, 0.95)
+            } else {
+                c(0xe8e8e8, 0.62)
+            };
+            (
+                focused,
+                release.title.clone(),
+                detail,
+                label.to_owned(),
+                tone,
+            )
+        }
+        Line::Continue { card } => {
+            let Some(watched) = state.cub.watched.iter().find(|w| &w.card == card) else {
+                return false;
+            };
+            let focused = parts(Target::TodayLampa(card.clone()));
+            lampa_poster(out, state, assets, watched.poster.as_deref(), picture);
+            let detail = watched
+                .episode
+                .map(|(season, episode)| format!("S{season} E{episode}"))
+                .unwrap_or_default();
+            (
+                focused,
+                watched.title.clone(),
+                detail,
+                language.t("lampaContinue").to_owned(),
+                c(0xe8e8e8, 0.62),
+            )
+        }
+        Line::Crypto => return false,
+    };
+    let tone = if focused && tone[0] < 0.95 {
+        today_ink(true, 0.62)
+    } else if focused {
+        // The accents, darker on white.
+        [tone[0] * 0.75, tone[1] * 0.55, tone[2] * 0.55, 1.]
+    } else {
+        tone
+    };
+    today_texts(
+        out, assets, row, picture, focused, &title, &detail, &when, tone,
+    );
+    true
+}
+
+/// A coin's line among the opened Today card's prices: its symbol and name, price and change.
+fn today_coin(out: &mut Scene, state: &State, assets: &Assets, index: usize, row: Rect) {
+    let target = Target::Coin(index);
+    let focused = state.focus == target;
+    out.control(target, row, true);
+    if focused {
+        out.shadow(row, 20., 18., 6., 0.25);
+        out.draw.push(Draw::RoundedGradient(
+            row,
+            20.,
+            c(0xfafafa, 1.),
+            c(0xe5e5e5, 1.),
+        ));
+    }
+    let picture = Rect::new(row.x + 16., row.y + 14., 56., 56.);
+    out.icon(assets, "globe", picture.inset(10.), today_ink(focused, 0.7));
+    let symbol = &state.preferences.crypto_coins[index];
+    let name = match crate::crypto::name(symbol) {
+        name if name == symbol => "",
+        name => name,
+    };
+    let quote = state.crypto.quotes.iter().find(|q| &q.symbol == symbol);
+    let (when, tone) = match quote {
+        Some(quote) => (
+            format!(
+                "{}  {}",
+                crate::crypto::format_price(quote.price),
+                crate::crypto::format_change(quote.change)
+            ),
+            if quote.change < -0.005 {
+                c(0xff8a80, 0.95)
+            } else {
+                c(0x7ee2a8, 0.95)
+            },
+        ),
+        None => (
+            state
+                .preferences
+                .language
+                .t(if state.crypto.failed {
+                    "cryptoUnavailable"
+                } else {
+                    "cryptoLoading"
+                })
+                .to_owned(),
+            c(0xe8e8e8, 0.62),
+        ),
+    };
+    let tone = if focused { today_ink(true, 0.75) } else { tone };
+    today_texts(
+        out, assets, row, picture, focused, symbol, name, &when, tone,
+    );
+}
+
+/// Text on the opened card's lines: dark on a focused line's white, light on the glass.
+fn today_ink(focused: bool, alpha: f32) -> Color {
+    if focused {
+        c(0x171c20, alpha)
+    } else {
+        c(0xf5f5f5, alpha)
+    }
+}
+
+/// A line's title and second line beside its picture, and when on the right.
+#[allow(clippy::too_many_arguments)]
+fn today_texts(
+    out: &mut Scene,
+    assets: &Assets,
+    row: Rect,
+    picture: Rect,
+    focused: bool,
+    title: &str,
+    detail: &str,
+    when: &str,
+    tone: Color,
+) {
+    let text_x = picture.x + picture.w + 20.;
+    let right = row.x + row.w - 24.;
+    let side = text(type_scale::CAPTION, 500, 0.);
+    let when_width = assets.width(when, side).min((right - text_x) * 0.4);
+    out.text(
+        when,
+        Rect::new(right - when_width, row.y + 28., when_width, 28.),
+        assets.fit_text(when, side.right(), when_width),
+        tone,
+        false,
+    );
+    let room = right - when_width - 24. - text_x;
+    let main = text(type_scale::BODY, 550, -0.01);
+    out.text(
+        title,
+        Rect::new(text_x, row.y + 13., room, 31.2),
+        assets.fit_text(title, main, room),
+        if focused { c(0x171c20, 1.) } else { WHITE },
+        false,
+    );
+    let second = text(type_scale::CAPTION, 450, 0.);
+    out.text(
+        detail,
+        Rect::new(text_x, row.y + 46., room, 26.4),
+        assets.fit_text(detail, second, room),
+        today_ink(focused, 0.62),
+        false,
+    );
 }
 
 /// Home's crypto prices: a heading and up to four cards in the inputs' style, each with the

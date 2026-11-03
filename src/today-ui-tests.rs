@@ -72,9 +72,36 @@ fn first_tile_y(scene: &view::Scene) -> Option<f32> {
         .map(|c| c.rect.y)
 }
 
-#[test]
-fn today_card_lists_its_lines_and_opens_the_match_or_the_app() {
+fn today_controls(scene: &view::Scene) -> Vec<(Target, crate::state::Rect)> {
+    scene
+        .controls
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.target,
+                Target::TodayCard
+                    | Target::TodayMatch(_)
+                    | Target::TodayShow(_)
+                    | Target::TodayLampa(_)
+            )
+        })
+        .map(|c| (c.target.clone(), c.rect))
+        .collect()
+}
+
+/// The card opened with OK, its first line focused as `compose` reveals it.
+fn opened() -> State {
     let mut state = today_state();
+    state.focus = Target::TodayCard;
+    assert_eq!(state.activate(), vec![]);
+    assert!(matches!(state.overlay, Some(Overlay::Today { .. })));
+    state.reveal_focus(&at(&state).controls);
+    state
+}
+
+#[test]
+fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
+    let state = today_state();
     let scene = at(&state);
     let texts = texts(&scene);
     assert!(texts.iter().any(|t| t == "TODAY"));
@@ -82,29 +109,119 @@ fn today_card_lists_its_lines_and_opens_the_match_or_the_app() {
     assert!(texts.iter().any(|t| t == "LIVE · Mirage"), "{texts:?}");
     assert!(texts.iter().any(|t| t == "Severance — S2E5"));
     assert!(texts.iter().any(|t| t == "Netflix · 9:00 PM"), "{texts:?}");
-    let line = |target: &Target| {
-        scene
-            .controls
-            .iter()
-            .find(|c| c.target == *target)
-            .map(|c| c.rect)
-            .unwrap()
-    };
-    let game = line(&Target::TodayMatch("m1".into()));
-    let episode = line(&Target::TodayShow(7));
-    assert!(game.x >= 1160. && game.y + game.h <= 400.);
-    assert!(episode.y > game.y, "the live match comes first");
+    let card = today_controls(&scene);
+    assert_eq!(card.len(), 1, "{card:?}");
+    let (target, rect) = &card[0];
+    assert_eq!(*target, Target::TodayCard);
+    assert!(rect.x >= 1160. && rect.y + rect.h <= 400.);
 
-    state.focus = Target::TodayMatch("m1".into());
+    let state = opened();
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    let scene = at(&state);
+    // As tall as its two lines: it hangs from the panel's top and stops short of its bottom.
+    let most = crate::state::TODAY_PANEL;
+    let panel = scene.modal.expect("the opened card is modal");
+    assert!(panel.x == most.x && panel.y == most.y && panel.w == most.w);
+    assert!(panel.h < most.h * 2. / 3., "{panel:?}");
+    let lines = today_controls(&scene);
+    assert_eq!(
+        lines.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>(),
+        vec![Target::TodayMatch("m1".into()), Target::TodayShow(7)],
+        "the live match first, and nothing of Home beneath"
+    );
+    assert!(lines.iter().all(|(_, r)| r.x >= panel.x
+        && r.x + r.w <= panel.x + panel.w
+        && r.y >= panel.y
+        && r.y + r.h <= panel.y + panel.h));
+    let texts = self::texts(&scene);
+    for expected in [
+        "LIVE NOW",
+        "NEW EPISODES",
+        "Natus Vincere 1–0 FaZe Clan",
+        "IEM · BO3",
+        "Severance",
+        "S2E5 · Netflix",
+        "9:00 PM",
+        "2 in all",
+    ] {
+        assert!(
+            texts.iter().any(|t| t.ends_with(expected)),
+            "{expected}: {texts:?}"
+        );
+    }
+}
+
+#[test]
+fn a_match_opened_from_the_card_returns_to_it_and_back_collapses_it() {
+    let mut state = opened();
     state.activate();
     assert!(matches!(
         &state.overlay,
-        Some(crate::state::Overlay::Cs2Match { id, restore })
+        Some(Overlay::Cs2Match { id, restore })
             if id == "m1" && *restore == Target::TodayMatch("m1".into())
     ));
-    state.overlay = None;
-    state.focus = Target::TodayShow(7);
+    state.back();
+    assert!(matches!(state.overlay, Some(Overlay::Today { .. })));
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    state.direction(Direction::Down, &at(&state).controls);
+    assert_eq!(state.focus, Target::TodayShow(7));
+    state.direction(Direction::Down, &at(&state).controls);
+    assert_eq!(state.focus, Target::TodayShow(7), "the last line");
+    state.back();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::TodayCard);
+}
+
+#[test]
+fn an_episode_opened_from_the_card_launches_its_app_and_collapses_it() {
+    let mut state = opened();
+    state.direction(Direction::Down, &at(&state).controls);
     assert_eq!(state.activate(), vec![Effect::Launch("netflix".into())]);
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::TodayCard);
+}
+
+#[test]
+fn the_opened_card_scrolls_to_keep_the_focused_line_in_view() {
+    let mut state = today_state();
+    state.shows.list = (0..12)
+        .map(|id| Show {
+            id,
+            title: format!("Show {id}"),
+            poster: None,
+            meta: String::new(),
+            service: Some("Netflix"),
+            app: Some("netflix".into()),
+            episodes: vec![Episode {
+                airs: NOW + 600 + id * 60,
+                season: Some(1),
+                number: Some(1),
+            }],
+        })
+        .collect();
+    state.focus = Target::TodayCard;
+    state.activate();
+    state.reveal_focus(&at(&state).controls);
+    for _ in 0..12 {
+        state.direction(Direction::Down, &at(&state).controls);
+        state.reveal_focus(&at(&state).controls);
+    }
+    assert_eq!(state.focus, Target::TodayShow(11));
+    assert!(state.today_scroll > 0., "{}", state.today_scroll);
+    let list = crate::state::TODAY_LIST;
+    let scene = at(&state);
+    let (_, last) = today_controls(&scene).pop().unwrap();
+    let shown = state
+        .motion
+        .shown(crate::motion::Lane::Today, state.today_scroll);
+    let y = last.y + shown - state.today_scroll;
+    assert!(y + last.h <= list.y + list.h, "{y}");
+    for _ in 0..13 {
+        state.direction(Direction::Up, &at(&state).controls);
+        state.reveal_focus(&at(&state).controls);
+    }
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    assert_eq!(state.today_scroll, 0.);
 }
 
 #[test]
@@ -118,34 +235,31 @@ fn no_today_lines_hide_the_card_without_moving_favorites() {
 }
 
 #[test]
-fn up_from_the_first_favorite_reaches_today_and_stops_at_its_top() {
+fn up_from_the_first_favorite_reaches_today_and_stops_there() {
     let mut state = today_state();
     let first = state.apps()[0].id.clone();
     state.focus = Target::App(first.clone());
     state.direction(Direction::Up, &at(&state).controls);
-    assert_eq!(state.focus, Target::TodayShow(7), "the card's last line");
+    assert_eq!(state.focus, Target::TodayCard);
     state.direction(Direction::Up, &at(&state).controls);
-    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    assert_eq!(state.focus, Target::TodayCard, "nothing above");
+    state.direction(Direction::Down, &at(&state).controls);
+    assert_eq!(state.focus, Target::App(first));
     state.direction(Direction::Up, &at(&state).controls);
-    assert_eq!(
-        state.focus,
-        Target::TodayMatch("m1".into()),
-        "no tabs above"
-    );
     // Left from Today: nothing lies to its left but the menu.
     state.direction(Direction::Left, &at(&state).controls);
     assert!(matches!(state.overlay, Some(Overlay::Menu { .. })));
 }
 
 #[test]
-fn a_focused_match_that_leaves_the_feed_returns_focus_to_favorites() {
-    let mut state = today_state();
-    state.focus = Target::TodayMatch("m1".into());
+fn a_card_with_nothing_left_returns_focus_to_favorites() {
+    let mut state = opened();
     // The match is over and the episode has aired yesterday: the card has nothing left.
     state.preferences.show_cs2 = false;
     state.shows.list.clear();
-    let controls = at(&state).controls;
-    state.reveal_focus(&controls);
+    state.reveal_focus(&at(&state).controls);
+    assert!(state.overlay.is_none(), "the opened card closes");
+    state.reveal_focus(&at(&state).controls);
     assert!(matches!(state.focus, Target::App(_)), "{:?}", state.focus);
 }
 

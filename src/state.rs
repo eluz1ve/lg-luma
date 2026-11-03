@@ -133,11 +133,13 @@ pub enum Target {
     ShowsToggle,
     /// A show card in Home's TV Shows row, by position.
     Show(usize),
-    /// A match line of Home's Today card, by the match's id.
+    /// Home's Today card, whole: OK opens it in the center.
+    TodayCard,
+    /// A match line of the opened Today card, by the match's id.
     TodayMatch(String),
-    /// An episode line of Home's Today card, by the show's TVmaze id.
+    /// An episode line of the opened Today card, by the show's TVmaze id.
     TodayShow(i64),
-    /// A Lampa line of Home's Today card, by its CUB card ("tv_2190"): opens Lampa.
+    /// A Lampa line of the opened Today card, by its CUB card ("tv_2190"): opens Lampa.
     TodayLampa(String),
     /// Widgets › Lampa: sign in to CUB, or out.
     LampaAccount,
@@ -165,8 +167,13 @@ pub enum Target {
 }
 
 impl Target {
-    /// A line of Home's Today card.
+    /// Home's Today card.
     pub fn in_today(&self) -> bool {
+        *self == Target::TodayCard
+    }
+
+    /// A line of the opened Today card that opens something of its own.
+    pub fn today_line(&self) -> bool {
         matches!(
             self,
             Target::TodayMatch(_) | Target::TodayShow(_) | Target::TodayLampa(_)
@@ -273,7 +280,16 @@ pub enum Overlay {
     Menu {
         restore: Target,
     },
+    /// The Today card opened in the center: the whole day by section.
+    Today {
+        restore: Target,
+    },
 }
+
+/// The opened Today card (spec «Сегодня» раскрытая), and its list under the heading.
+pub const TODAY_PANEL: Rect = Rect::new(410., 110., 1100., 860.);
+pub const TODAY_LIST: Rect = Rect::new(410., 260., 1100., 634.);
+const TODAY_OPEN: f32 = 0.25;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Subpage {
@@ -402,6 +418,10 @@ pub struct State {
     pub menu_inputs: bool,
     /// The menu's slide: when it began, and whether it opens.
     pub menu_motion: Option<(Instant, bool)>,
+    /// How far the opened Today card's list has scrolled.
+    pub today_scroll: f32,
+    /// When the Today card began to open.
+    pub today_motion: Option<Instant>,
     pub weather: weather::Weather,
     pub crypto: crate::crypto::Crypto,
     pub cs2: crate::cs2::Scores,
@@ -465,6 +485,8 @@ impl State {
             panel_started: None,
             menu_inputs: false,
             menu_motion: None,
+            today_scroll: 0.,
+            today_motion: None,
             weather: weather::Weather::default(),
             crypto: crate::crypto::Crypto::default(),
             cs2: crate::cs2::Scores::default(),
@@ -574,6 +596,12 @@ impl State {
                 self.menu_motion = None;
             }
         }
+        if let Some(start) = self.today_motion {
+            self.dirty = true;
+            if self.preferences.reduced_motion || start.elapsed().as_secs_f32() >= TODAY_OPEN {
+                self.today_motion = None;
+            }
+        }
         if let Some(start) = self.panel_started {
             self.dirty = true;
             let duration = if self.overlay.is_some() { 120 } else { 150 };
@@ -623,7 +651,10 @@ impl State {
         let home = self.page == Page::Home;
         let apps = self.page == Page::Apps;
         let selected = (self.overlay.is_none()
-            || matches!(self.overlay, Some(Overlay::Menu { .. })))
+            || matches!(
+                self.overlay,
+                Some(Overlay::Menu { .. } | Overlay::Today { .. })
+            ))
         .then_some(self.page_focus())
         .filter(|target| match self.page {
             Page::Home | Page::Apps => matches!(
@@ -633,9 +664,7 @@ impl State {
                     | Target::Coin(_)
                     | Target::Cs2Match(_)
                     | Target::Show(_)
-                    | Target::TodayMatch(_)
-                    | Target::TodayShow(_)
-                    | Target::TodayLampa(_)
+                    | Target::TodayCard
             ),
             // A settings row grows to show its description.
             Page::Settings => matches!(
@@ -645,13 +674,17 @@ impl State {
         })
         .cloned();
         let lanes: Vec<(Lane, f32)> = if home {
-            vec![
+            let mut lanes = vec![
                 (Lane::Page, self.scroll),
                 (Lane::Favorites, self.home_scroll),
                 (Lane::Cs2, self.cs2_first as f32),
                 (Lane::Shows, self.shows_first as f32),
                 (Lane::Chrome, self.chrome_target()),
-            ]
+            ];
+            if matches!(self.overlay, Some(Overlay::Today { .. })) {
+                lanes.push((Lane::Today, self.today_scroll));
+            }
+            lanes
         } else if apps {
             vec![
                 (Lane::Page, self.scroll),
@@ -681,6 +714,7 @@ impl State {
             || self.previous_background.is_some()
             || self.panel_started.is_some()
             || self.menu_motion.is_some()
+            || self.today_motion.is_some()
             || (!self.preferences.reduced_motion
                 && self
                     .notice
@@ -741,8 +775,11 @@ impl State {
                 | Overlay::Recents { restore }
                 | Overlay::BackgroundOptions { restore, .. }
                 | Overlay::BackgroundDelete { restore, .. }
-                | Overlay::Cs2Match { restore, .. }
-                | Overlay::Menu { restore } => restore,
+                | Overlay::Menu { restore }
+                | Overlay::Today { restore } => restore,
+                // From the opened Today card: back to the card, closed.
+                Overlay::Cs2Match { restore, .. } if restore.today_line() => Target::TodayCard,
+                Overlay::Cs2Match { restore, .. } => restore,
                 Overlay::Keyboard | Overlay::SystemKeyboard => self.keyboard_return(),
                 Overlay::WallpaperUpload => Target::UploadWallpaper,
                 Overlay::TileEditor => {
@@ -799,11 +836,51 @@ impl State {
         self.dirty = true;
     }
 
+    /// OK on the Today card: it opens in the center. Its first line takes the focus once drawn
+    /// (`reveal_focus`).
+    fn open_today(&mut self) {
+        self.overlay = Some(Overlay::Today {
+            restore: Target::TodayCard,
+        });
+        self.today_scroll = 0.;
+        self.today_motion = (!self.preferences.reduced_motion).then(Instant::now);
+        self.pressed = None;
+    }
+
+    /// OK on a line of the opened Today card: a match opens over it, an app it plays closes it,
+    /// and a line with nothing to open (no app for it) leaves it open with a notice.
+    fn today_activate(&mut self) -> Vec<Effect> {
+        let Some(Overlay::Today { restore }) = self.overlay.take() else {
+            return vec![];
+        };
+        let line = self.focus.clone();
+        let effects = self.activate();
+        if self.overlay.is_none() && self.page == Page::Home {
+            if effects.is_empty() && self.focus == line {
+                self.overlay = Some(Overlay::Today { restore });
+            } else {
+                self.focus = restore;
+            }
+        }
+        effects
+    }
+
+    /// How far the Today card has opened: 0 at the card's own place, 1 in the center.
+    pub fn today_amount(&self) -> f32 {
+        match self.today_motion {
+            Some(start) if !self.preferences.reduced_motion => {
+                let t = (start.elapsed().as_secs_f32() / TODAY_OPEN).min(1.);
+                1. - (1. - t).powi(3)
+            }
+            _ => 1.,
+        }
+    }
+
     /// The focus the page shows: under the menu, the one it closes back to, so the page looks
     /// exactly as before and only the panel's strip is drawn again.
     pub fn page_focus(&self) -> &Target {
         match &self.overlay {
-            Some(Overlay::Menu { restore }) => restore,
+            Some(Overlay::Menu { restore } | Overlay::Today { restore }) => restore,
             _ => &self.focus,
         }
     }
@@ -1058,21 +1135,22 @@ impl State {
             .iter()
             .rev()
             .find(|control| {
-                let viewport =
-                    if self.page == Page::Home && matches!(control.target, Target::App(_)) {
-                        self.favorites_viewport()
-                    } else if matches!(
-                        control.target,
-                        Target::Background(_) | Target::UploadWallpaper
-                    ) {
-                        self.backgrounds_viewport()
-                    } else if self.page == Page::Apps {
-                        self.apps_viewport()
-                    } else if self.page == Page::Settings {
-                        self.list_viewport()
-                    } else {
-                        self.content_viewport()
-                    };
+                let viewport = if matches!(self.overlay, Some(Overlay::Today { .. })) {
+                    TODAY_LIST
+                } else if self.page == Page::Home && matches!(control.target, Target::App(_)) {
+                    self.favorites_viewport()
+                } else if matches!(
+                    control.target,
+                    Target::Background(_) | Target::UploadWallpaper
+                ) {
+                    self.backgrounds_viewport()
+                } else if self.page == Page::Apps {
+                    self.apps_viewport()
+                } else if self.page == Page::Settings {
+                    self.list_viewport()
+                } else {
+                    self.content_viewport()
+                };
                 control.rect.contains(x, y) && (!control.scrollable || viewport.contains(x, y))
             })
             .map(|control| control.target.clone())
@@ -1278,6 +1356,9 @@ impl State {
     /// Remote focus is revealed after layout changes, including hide/reorder.
     /// Pointer paths deliberately do not call this method.
     pub fn reveal_focus(&mut self, controls: &[Control]) -> bool {
+        if matches!(self.overlay, Some(Overlay::Today { .. })) {
+            return self.reveal_today_line(controls);
+        }
         let previous = self.scroll;
         let previous_home = self.home_scroll;
         // A Today line can leave the card (a match ends, the day turns): focus the favorites.
@@ -1350,6 +1431,44 @@ impl State {
             self.dirty = true;
         }
         self.scroll != previous || self.home_scroll != previous_home
+    }
+
+    /// The opened Today card's focus: on one of its lines (the first, once it opens or when its
+    /// line leaves), scrolled into the list. With no lines left it closes.
+    fn reveal_today_line(&mut self, controls: &[Control]) -> bool {
+        let previous = (self.focus.clone(), self.today_scroll);
+        if !controls.iter().any(|c| c.target == self.focus) {
+            match controls.first() {
+                Some(first) => self.focus = first.target.clone(),
+                None => {
+                    self.overlay = None;
+                    self.today_motion = None;
+                    self.focus = Target::TodayCard;
+                    self.dirty = true;
+                    return true;
+                }
+            }
+        }
+        let first = controls.first().is_some_and(|c| c.target == self.focus);
+        if first {
+            self.today_scroll = 0.;
+        } else if let Some(control) = controls.iter().find(|c| c.target == self.focus) {
+            // The list may still be easing: measure where the line is once it settles.
+            let shown = self
+                .motion
+                .shown(crate::motion::Lane::Today, self.today_scroll);
+            let y = control.rect.y + shown - self.today_scroll;
+            // Room above for a section's heading, below for the fade.
+            let (top, bottom) = (TODAY_LIST.y + 48., TODAY_LIST.y + TODAY_LIST.h - 32.);
+            if y < top {
+                self.today_scroll = (self.today_scroll + y - top).max(0.);
+            } else if y + control.rect.h > bottom {
+                self.today_scroll += y + control.rect.h - bottom;
+            }
+        }
+        let changed = previous != (self.focus.clone(), self.today_scroll);
+        self.dirty |= changed;
+        changed
     }
 
     /// Hover and pointer-down must not move the control before pointer-up.
@@ -1839,6 +1958,20 @@ impl State {
             self.menu_direction(direction);
             return vec![];
         }
+        if matches!(self.overlay, Some(Overlay::Today { .. })) {
+            // Up and Down walk the lines, through the sections, and stop at either end.
+            let index = controls.iter().position(|c| c.target == self.focus);
+            let next = match (direction, index) {
+                (Direction::Up, Some(index)) => index.checked_sub(1),
+                (Direction::Down, Some(index)) => Some(index + 1),
+                (Direction::Up | Direction::Down, None) => Some(0),
+                _ => None,
+            };
+            if let Some(control) = next.and_then(|index| controls.get(index)) {
+                self.focus(control.target.clone(), controls);
+            }
+            return vec![];
+        }
         if let Some(id) = self.moving.clone() {
             let mut ids = self.preferences.favorites(&self.inventory.apps);
             let slots: Vec<_> = ids
@@ -2123,29 +2256,17 @@ impl State {
                 }
                 return vec![];
             }
-            // The Today card's lines: Up and Down step through them, then reach the center below,
-            // else the favorites; Left opens the menu and Right stays.
+            // The Today card: Down reaches the center below, else the favorites; Left opens the
+            // menu, and nothing lies above or to the right.
             if self.focus.in_today() {
-                let mut lines: Vec<&Control> =
-                    controls.iter().filter(|c| c.target.in_today()).collect();
-                lines.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
-                let index = lines.iter().position(|c| c.target == self.focus);
-                if matches!(direction, Direction::Left) {
-                    self.open_menu();
-                    return vec![];
-                }
-                let next = match (direction, index) {
-                    (Direction::Up, Some(0) | None) => None,
-                    (Direction::Up, Some(index)) => Some(lines[index - 1].target.clone()),
-                    (Direction::Down, Some(index)) if index + 1 < lines.len() => {
-                        Some(lines[index + 1].target.clone())
+                match direction {
+                    Direction::Left => self.open_menu(),
+                    Direction::Down => {
+                        let next = across(controls, &self.focus, Target::in_center)
+                            .unwrap_or_else(|| self.first_content());
+                        self.focus(next, controls);
                     }
-                    (Direction::Down, _) => across(controls, &self.focus, Target::in_center)
-                        .or_else(|| Some(self.first_content())),
-                    _ => None,
-                };
-                if let Some(next) = next {
-                    self.focus(next, controls);
+                    Direction::Up | Direction::Right => {}
                 }
                 return vec![];
             }
@@ -2815,6 +2936,9 @@ impl State {
         if matches!(self.overlay, Some(Overlay::Menu { .. })) {
             return self.menu_activate();
         }
+        if matches!(self.overlay, Some(Overlay::Today { .. })) {
+            return self.today_activate();
+        }
         if self.recents_open() {
             use crate::recents::Command;
             return match self.focus.clone() {
@@ -2839,6 +2963,7 @@ impl State {
         }
         match self.focus.clone() {
             Target::Nav(index) => self.open(index),
+            Target::TodayCard => self.open_today(),
             Target::Browse => self.open(1),
             Target::Retry => return vec![Effect::Reload],
             Target::DismissNotice => self.notice = None,
@@ -3587,6 +3712,18 @@ impl State {
                 return vec![];
             }
             if let Overlay::Cs2Match { restore, .. } = overlay {
+                // A match opened from the Today card returns to the card, still open.
+                if restore.today_line() && self.page == Page::Home {
+                    self.overlay = Some(Overlay::Today {
+                        restore: Target::TodayCard,
+                    });
+                }
+                self.focus = restore;
+                self.pressed = None;
+                return vec![];
+            }
+            if let Overlay::Today { restore } = overlay {
+                self.today_motion = None;
                 self.focus = restore;
                 self.pressed = None;
                 return vec![];

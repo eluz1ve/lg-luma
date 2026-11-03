@@ -484,12 +484,14 @@ fn main() {
 
 fn compose(state: &mut State, assets: &view::Assets, now: OffsetDateTime) -> view::Scene {
     let scene = view::scene(state, assets, now);
-    let mut scene =
-        if !state.pointer && state.overlay.is_none() && state.reveal_focus(&scene.controls) {
-            view::scene(state, assets, now)
-        } else {
-            scene
-        };
+    let mut scene = if !state.pointer
+        && (state.overlay.is_none() || matches!(state.overlay, Some(Overlay::Today { .. })))
+        && state.reveal_focus(&scene.controls)
+    {
+        view::scene(state, assets, now)
+    } else {
+        scene
+    };
     view::home_preview(&mut scene, state, assets, now);
     scene
 }

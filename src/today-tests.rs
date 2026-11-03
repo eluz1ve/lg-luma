@@ -323,3 +323,62 @@ fn with_lampa_in_today_tvmaze_episodes_leave_it() {
         }]
     );
 }
+
+#[test]
+fn opened_the_card_lists_the_whole_day_by_section() {
+    let mut state = state();
+    state.preferences.show_crypto = true;
+    state.preferences.crypto_beside = true;
+    feed(
+        &mut state,
+        &[
+            ("a", "live", NOW),
+            ("b", "live", NOW),
+            ("c", "live", NOW),
+            ("soon", "upcoming", NOW + 3600),
+            ("later", "upcoming", NOW + 7200),
+        ],
+    );
+    state.shows.list = vec![show(1, true, &[NOW - 3600]), show(2, true, &[NOW + 600])];
+    // The card keeps five lines; opened, nothing is left out.
+    assert_eq!(today(&state, NOW, DAY, DATE).more, 3);
+    assert_eq!(
+        sections(&state, NOW, DAY, DATE),
+        [
+            (
+                Section::Live,
+                vec![matched("a"), matched("b"), matched("c")]
+            ),
+            (Section::Matches, vec![matched("soon"), matched("later")]),
+            (
+                Section::Episodes,
+                vec![
+                    Line::Episode {
+                        show: 2,
+                        airs: NOW + 600
+                    },
+                    Line::Episode {
+                        show: 1,
+                        airs: NOW - 3600
+                    }
+                ]
+            ),
+            (Section::Prices, vec![Line::Crypto]),
+        ]
+    );
+}
+
+#[test]
+fn opened_with_lampa_its_releases_and_series_to_continue_have_their_sections() {
+    let mut state = state();
+    signed_in(&mut state);
+    state.cub.releases = vec![release("tv_a", 0, false), release("tv_b", 2, false)];
+    state.cub.watched = vec![watched("tv_c", 5)];
+    assert_eq!(
+        sections(&state, NOW, DAY, DATE),
+        [
+            (Section::Episodes, vec![fresh("tv_a", 0), fresh("tv_b", 2)]),
+            (Section::Continue, vec![resume("tv_c")]),
+        ]
+    );
+}

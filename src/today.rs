@@ -42,9 +42,106 @@ const MATCH_AHEAD: i64 = 12 * 3600;
 /// A series watched within this long is offered to continue.
 const CONTINUE_WITHIN: i64 = 21 * 86_400;
 
+/// The opened card's sections, in the order its lines come.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Section {
+    /// Matches being played.
+    Live,
+    /// Matches about to start.
+    Matches,
+    /// Today's episodes, or Lampa's releases.
+    Episodes,
+    /// Lampa's series to pick up.
+    Continue,
+    Prices,
+}
+
+impl Section {
+    /// Its heading's message key.
+    pub fn key(self) -> &'static str {
+        match self {
+            Section::Live => "todayLive",
+            Section::Matches => "todayMatches",
+            Section::Episodes => "todayEpisodes",
+            Section::Continue => "todayContinue",
+            Section::Prices => "todayPrices",
+        }
+    }
+}
+
+/// The day's lines by kind, before the card picks from them.
+struct Day {
+    live: Vec<Line>,
+    /// Matches and episodes still to come, by time.
+    coming: Vec<Line>,
+    /// Episodes that aired today, latest first.
+    aired: Vec<Line>,
+    /// Lampa's releases today, the week's earlier ones and series to continue.
+    lampa: Option<[Vec<Line>; 3]>,
+    crypto: bool,
+}
+
 /// The card's lines at `now`; `day` is the TV's local day, from midnight to midnight, and `date`
 /// its date.
 pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
+    let Day {
+        live,
+        coming,
+        aired,
+        lampa,
+        crypto,
+    } = gather(state, now, day, date);
+    let events: Vec<Line> = coming.into_iter().chain(aired).collect();
+    let groups = match lampa {
+        Some([fresh, week, resume]) => vec![fresh, events, week, resume],
+        None => vec![events],
+    };
+    let mut lines = live;
+    lines.extend(interleave(groups));
+    let room = LINES - usize::from(crypto);
+    let more = lines.len().saturating_sub(room);
+    lines.truncate(room);
+    if crypto {
+        lines.push(Line::Crypto);
+    }
+    Today { lines, more }
+}
+
+/// The whole day for the opened card, by section, nothing left out; empty sections are dropped.
+pub fn sections(state: &State, now: i64, day: (i64, i64), date: Date) -> Vec<(Section, Vec<Line>)> {
+    let Day {
+        live,
+        coming,
+        aired,
+        lampa,
+        crypto,
+    } = gather(state, now, day, date);
+    let (matches, mut episodes): (Vec<_>, Vec<_>) = coming
+        .into_iter()
+        .partition(|line| matches!(line, Line::Match { .. }));
+    episodes.extend(aired);
+    let mut resume = Vec::new();
+    if let Some([fresh, week, continued]) = lampa {
+        episodes.extend(fresh);
+        episodes.extend(week);
+        resume = continued;
+    }
+    [
+        (Section::Live, live),
+        (Section::Matches, matches),
+        (Section::Episodes, episodes),
+        (Section::Continue, resume),
+        (
+            Section::Prices,
+            if crypto { vec![Line::Crypto] } else { vec![] },
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, lines)| !lines.is_empty())
+    .collect()
+}
+
+fn gather(state: &State, now: i64, day: (i64, i64), date: Date) -> Day {
     let preferences = &state.preferences;
     let lampa = preferences.lampa_today && state.cub.signed_in();
     let mut live = Vec::new();
@@ -85,27 +182,13 @@ pub fn today(state: &State, now: i64, day: (i64, i64), date: Date) -> Today {
     }
     coming.sort_by_key(|(time, _)| *time);
     aired.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
-    let events: Vec<Line> = coming
-        .into_iter()
-        .map(|(_, line)| line)
-        .chain(aired.into_iter().map(|(_, line)| line))
-        .collect();
-    let groups = if lampa {
-        let [fresh, week, resume] = lampa_lines(&state.cub, now, date);
-        vec![fresh, events, week, resume]
-    } else {
-        vec![events]
-    };
-    let mut lines = live;
-    lines.extend(interleave(groups));
-    let crypto = preferences.in_today(crate::model::Center::Crypto);
-    let room = LINES - usize::from(crypto);
-    let more = lines.len().saturating_sub(room);
-    lines.truncate(room);
-    if crypto {
-        lines.push(Line::Crypto);
+    Day {
+        live,
+        coming: coming.into_iter().map(|(_, line)| line).collect(),
+        aired: aired.into_iter().map(|(_, line)| line).collect(),
+        lampa: lampa.then(|| lampa_lines(&state.cub, now, date)),
+        crypto: preferences.in_today(crate::model::Center::Crypto),
     }
-    Today { lines, more }
 }
 
 /// Lampa's lines: today's releases, the week's earlier ones, and series to continue; one line

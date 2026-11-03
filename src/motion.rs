@@ -63,6 +63,8 @@ pub enum Lane {
     Chrome,
     /// Settings' sidebar, in pixels: a column of icons, or open with the sections' names.
     Sidebar,
+    /// The opened Today card's list.
+    Today,
 }
 
 #[derive(Default)]

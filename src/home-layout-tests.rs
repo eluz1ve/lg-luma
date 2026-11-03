@@ -245,10 +245,9 @@ fn today_grows_up_to_five_lines_from_the_clock_line() {
         clip.is_none_or(|clip| clip.y <= card.y),
         "{clip:?} cuts {card:?}"
     );
-    let lines = drawn
-        .controls
+    let lines = texts(&state)
         .iter()
-        .filter(|control| control.target.in_today())
+        .filter(|(text, rect, _)| text.starts_with("Show ") && rect.x >= view::TODAY_RECT.x)
         .count();
     assert_eq!(lines, 5);
     assert!(
