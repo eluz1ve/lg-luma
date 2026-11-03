@@ -6,8 +6,9 @@ use std::{collections::VecDeque, sync::Arc};
 
 /// EGL swap chains rotate a few buffers; older contents are redrawn in full.
 const HISTORY: usize = 4;
-/// Commands searched ahead to realign after an inserted or removed command (e.g. a focus ring).
-const LOOKAHEAD: usize = 8;
+/// Commands searched ahead to realign after inserted or removed commands: a focus ring, or a
+/// whole card (its shadows, face, logo and border) scrolling out of a row.
+const LOOKAHEAD: usize = 48;
 
 /// The redraw region of one frame: `None` is the whole scene, an empty rect is no change.
 pub type Damage = Option<Rect>;
@@ -54,27 +55,52 @@ impl Tracker {
 
 fn diff(old: &[Draw], new: &[Draw]) -> Damage {
     let mut area = Rect::default();
+    // Clip, EdgeFade and EdgeFadeX restyle what is drawn after them, up to the next command of
+    // their kind; one that changed damages exactly those commands.
+    let mut restyled = [false; 3];
     let mut j = 0;
     for command in new {
-        if j < old.len() && same(&old[j], command) {
+        let matched = if j < old.len() && same(&old[j], command) {
             j += 1;
-            continue;
-        }
-        // An inserted command leaves the old one in place; a removed one is skipped over.
-        let found = (j..old.len().min(j + LOOKAHEAD)).find(|&k| same(&old[k], command));
-        if let Some(k) = found {
+            true
+        } else if let Some(k) = (j..old.len().min(j + LOOKAHEAD)).find(|&k| same(&old[k], command))
+        {
+            // Commands left out since the old scene; a left-out state restyles what follows.
             for removed in &old[j..k] {
-                area = union(area, bounds(removed)?);
+                match state(removed) {
+                    Some(kind) => restyled[kind] = true,
+                    None => area = union(area, bounds(removed)?),
+                }
             }
             j = k + 1;
+            true
         } else {
-            area = union(area, bounds(command)?);
+            false
+        };
+        match state(command) {
+            Some(kind) => restyled[kind] = !matched,
+            None if !matched || restyled.contains(&true) => {
+                area = union(area, bounds(command)?);
+            }
+            None => {}
         }
     }
     for removed in &old[j.min(old.len())..] {
-        area = union(area, bounds(removed)?);
+        if state(removed).is_none() {
+            area = union(area, bounds(removed)?);
+        }
     }
     Some(area)
+}
+
+/// Which state a command sets, if it is one.
+fn state(command: &Draw) -> Option<usize> {
+    match command {
+        Draw::Clip(_) => Some(0),
+        Draw::EdgeFade(_) => Some(1),
+        Draw::EdgeFadeX(_) => Some(2),
+        _ => None,
+    }
 }
 
 /// The area a command can paint. `None` for state that affects everything drawn after it.

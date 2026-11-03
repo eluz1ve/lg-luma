@@ -87,19 +87,98 @@ fn older_back_buffers_need_every_change_since_their_frame() {
 }
 
 #[test]
-fn changed_clip_or_fade_state_redraws_everything() {
+fn changed_clip_or_fade_state_redraws_only_what_it_covers() {
     let mut tracker = Tracker::default();
     let clip = |y: f32| Draw::Clip(Some(Rect::new(0., y, 1920., 500.)));
-    tracker.push(&[wallpaper(), clip(100.), shape(100.), Draw::Clip(None)]);
-    tracker.push(&[wallpaper(), clip(120.), shape(100.), Draw::Clip(None)]);
-    assert!(tracker.damage(1).is_none());
+    let below = Draw::Shape(Rect::new(100., 900., 100., 100.), 8., 0., [1.; 4]);
+    tracker.push(&[
+        wallpaper(),
+        clip(100.),
+        shape(100.),
+        Draw::Clip(None),
+        below.clone(),
+    ]);
     tracker.push(&[
         wallpaper(),
         clip(120.),
-        Draw::EdgeFade(Some([0., 1., 2., 3.])),
         shape(100.),
+        Draw::Clip(None),
+        below.clone(),
     ]);
-    assert!(tracker.damage(1).is_none());
+    let clipped = area(tracker.damage(1));
+    assert_eq!(
+        (clipped.x, clipped.y, clipped.w, clipped.h),
+        (99., 299., 102., 102.)
+    );
+    // A fade restyles what it fades, up to the next fade.
+    let fade = |edge: f32| Draw::EdgeFadeX(Some([edge, 1., 2., 3.]));
+    tracker.push(&[
+        wallpaper(),
+        fade(0.),
+        shape(100.),
+        shape(400.),
+        Draw::EdgeFadeX(None),
+        below.clone(),
+    ]);
+    tracker.push(&[
+        wallpaper(),
+        fade(8.),
+        shape(100.),
+        shape(400.),
+        Draw::EdgeFadeX(None),
+        below,
+    ]);
+    let faded = area(tracker.damage(1));
+    assert_eq!(
+        (faded.x, faded.y, faded.x + faded.w, faded.h),
+        (99., 299., 501., 102.)
+    );
+}
+
+#[test]
+fn a_card_leaving_a_row_does_not_misalign_everything_after_it() {
+    let card = |x: f32| -> Vec<Draw> {
+        (0..10)
+            .map(|layer| {
+                Draw::Shape(
+                    Rect::new(x, 300., 200., 120.),
+                    8. + layer as f32,
+                    0.,
+                    [1.; 4],
+                )
+            })
+            .collect()
+    };
+    let rest: Vec<Draw> = (0..20)
+        .map(|row| {
+            Draw::Shape(
+                Rect::new(80., 700. + row as f32 * 10., 400., 8.),
+                2.,
+                0.,
+                [1.; 4],
+            )
+        })
+        .collect();
+    let scene = |cards: &[f32]| -> Vec<Draw> {
+        let mut scene = vec![wallpaper()];
+        for x in cards {
+            scene.extend(card(*x));
+        }
+        scene.extend(rest.clone());
+        scene
+    };
+    let mut tracker = Tracker::default();
+    tracker.push(&scene(&[0., 300., 600.]));
+    tracker.push(&scene(&[300., 600.]));
+    let left = area(tracker.damage(1));
+    assert_eq!((left.y, left.h), (299., 122.), "only the row: {left:?}");
+    tracker.push(&scene(&[300., 600., 900.]));
+    let entered = area(tracker.damage(1));
+    assert_eq!(
+        (entered.y, entered.h),
+        (299., 122.),
+        "only the row: {entered:?}"
+    );
 }
 
 #[test]
