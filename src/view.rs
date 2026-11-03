@@ -309,7 +309,9 @@ impl Scene {
                 | Draw::TintedImage(_, rect, ..)
                 | Draw::AppImage(_, rect, ..)
                 | Draw::Picture(_, rect, ..)
-                | Draw::Cover(_, rect, ..) => rect.y -= dy,
+                | Draw::Cover(_, rect, ..)
+                // The wallpaper stays: the panel samples it at its new place.
+                | Draw::Glass(_, rect, ..) => rect.y -= dy,
                 Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => {}
             }
         }
@@ -373,7 +375,8 @@ impl Scene {
                 | Draw::TintedImage(_, _, _, _, color)
                 | Draw::AppImage(_, _, _, color)
                 | Draw::Picture(_, _, _, color)
-                | Draw::Cover(_, _, _, color) => apply(color),
+                | Draw::Cover(_, _, _, color)
+                | Draw::Glass(_, _, _, _, color) => apply(color),
                 Draw::RoundedGradient(_, _, a, b) => {
                     apply(a);
                     apply(b);
@@ -4634,6 +4637,10 @@ pub fn home_preview(scene: &mut Scene, state: &mut State, assets: &Assets, now: 
             Draw::Cover(art, rect, radius, color) => {
                 Draw::Cover(art, place(rect), radius * k, color)
             }
+            // Home's glass samples the wallpaper drawn in the frame.
+            Draw::Glass(path, rect, radius, source, tint) => {
+                Draw::Glass(path, place(rect), radius * k, place(source), tint)
+            }
             Draw::Clip(rect) => Draw::Clip(Some(within(rect))),
             Draw::EdgeFade(fade) => {
                 Draw::EdgeFade(fade.map(|edges| edges.map(|y| PREVIEW.y + y * k)))
@@ -6277,6 +6284,30 @@ mod tests {
             ]),
             artwork: crate::app_artwork::Service::new(false),
         }
+    }
+
+    #[test]
+    fn glass_slides_and_fades_with_the_page() {
+        let screen = Rect::new(0., 0., 1920., 1080.);
+        let mut scene = Scene::new();
+        scene.draw.push(Draw::Glass(
+            "wallpapers/dunes.jpg".into(),
+            Rect::new(80., 400., 410., 96.),
+            18.,
+            screen,
+            [1.; 4],
+        ));
+        scene.slide(0, 0, 100.);
+        scene.fade(0, 0.5, 0.8);
+        let Draw::Glass(_, rect, _, source, tint) = &scene.draw[0] else {
+            panic!("still glass");
+        };
+        assert_eq!((rect.x, rect.y), (80., 300.));
+        assert_eq!(
+            (source.x, source.y, source.w, source.h),
+            (0., 0., 1920., 1080.)
+        );
+        assert_eq!(*tint, [0.8, 0.8, 0.8, 0.5]);
     }
 
     #[test]

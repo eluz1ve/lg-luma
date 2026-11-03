@@ -83,6 +83,10 @@ pub enum Draw {
     Picture(Arc<crate::app_artwork::Artwork>, Rect, f32, Color),
     /// Decoded artwork filling its rect, cropped to it (e.g. a background behind text).
     Cover(Arc<crate::app_artwork::Artwork>, Rect, f32, Color),
+    /// A panel over the wallpaper's blurred copy (`glass::frost`): the wallpaper's path, the
+    /// panel, its radius, where the whole wallpaper is laid out, and a tint (rgb scales
+    /// brightness, a is opacity). Sampled at the panel's own place, so it reads as frosted glass.
+    Glass(String, Rect, f32, Rect, Color),
     Clip(Option<Rect>),
     EdgeFade(Option<[f32; 4]>),
     /// Horizontal counterpart: [left fade-in start, end, right fade-out start, end].
@@ -224,6 +228,11 @@ struct Batch {
     fade: Option<[f32; 8]>,
 }
 
+/// Where a wallpaper's glass copy is kept, beside its textures.
+fn glass_key(path: &str) -> String {
+    format!("{path}#glass")
+}
+
 fn full_screen(rect: &Rect) -> bool {
     rect.x <= 0. && rect.y <= 0. && rect.x + rect.w >= 1920. && rect.y + rect.h >= 1080.
 }
@@ -288,7 +297,7 @@ fn plain_radius(radius: f32) -> f32 {
     if radius > 0. { radius } else { -1. }
 }
 
-/// Measurement aid: LUMA_PROFILE_SKIP=wallpaper,image,app,shape,gradient,shadow,text or all
+/// Measurement aid: LUMA_PROFILE_SKIP=wallpaper,image,app,shape,gradient,shadow,text,glass or all
 /// leaves those draws out, to find which part of the scene costs the GPU time.
 fn profile_skip(command: &Draw) -> bool {
     static SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
@@ -312,6 +321,7 @@ fn profile_skip(command: &Draw) -> bool {
         Draw::RoundedGradient(..) => "gradient",
         Draw::Shadow(..) => "shadow",
         Draw::Text(..) => "text",
+        Draw::Glass(..) => "glass",
         Draw::Clip(_) | Draw::EdgeFade(_) | Draw::EdgeFadeX(_) => return false,
     };
     skip.iter().any(|entry| entry == kind || entry == "all")
@@ -990,6 +1000,7 @@ impl Renderer {
             self.vector_image(path, rect, contain, tint);
             return;
         }
+        let original = path;
         let path = if self.stats.viewport.scale > 1.
             && self.info.max_texture_size >= 3840
             && Path::new(path)
@@ -1020,24 +1031,30 @@ impl Renderer {
         }
         let frame = self.frame;
         let started = Instant::now();
-        let loaded = !self.textures.contains_key(&path);
-        let entry = self
-            .textures
-            .entry(path.clone())
-            .or_insert_with(|| match image::open(&path) {
+        if !self.textures.contains_key(&path) {
+            let loaded = match image::open(&path) {
                 Ok(image) => {
                     let image = image.into_rgba8();
+                    // A wallpaper brings its glass copy, made once from the pixels at hand.
+                    let glass = glass_key(original);
+                    if full_screen(&rect) && !contain && !self.textures.contains_key(&glass) {
+                        let copy = crate::glass::frost(&image);
+                        self.textures.insert(
+                            glass,
+                            Some(texture(copy.width(), copy.height(), copy.as_raw())),
+                        );
+                    }
                     Some(texture(image.width(), image.height(), image.as_raw()))
                 }
                 Err(error) => {
                     eprintln!("Artwork {path}: {error}");
                     None
                 }
-            });
-        if loaded {
+            };
+            self.textures.insert(path.clone(), loaded);
             self.stats.image_load_ms += started.elapsed().as_secs_f64() * 1000.;
         }
-        let Some(texture) = entry else {
+        let Some(texture) = self.textures.get_mut(&path).and_then(Option::as_mut) else {
             self.stats.missing_images += 1;
             return;
         };
@@ -1054,6 +1071,38 @@ impl Renderer {
         } else {
             self.folded_quad(rect, id, scrims);
         }
+    }
+
+    /// A panel over the wallpaper's glass copy, sampled where the panel sits on it. The copy is
+    /// made when the wallpaper loads; one evicted since, or never drawn full screen, is made
+    /// again here. Without a copy (the wallpaper failed to load) nothing is drawn.
+    fn glass(&mut self, path: &str, rect: Rect, radius: f32, source: Rect, tint: Color) {
+        let key = glass_key(path);
+        if !self.textures.contains_key(&key) {
+            let started = Instant::now();
+            let copy = image::open(path)
+                .ok()
+                .map(|image| crate::glass::frost(&image.into_rgba8()))
+                .map(|copy| texture(copy.width(), copy.height(), copy.as_raw()));
+            self.textures.insert(key.clone(), copy);
+            self.stats.image_load_ms += started.elapsed().as_secs_f64() * 1000.;
+        }
+        let frame = self.frame;
+        let Some(texture) = self.textures.get_mut(&key).and_then(Option::as_mut) else {
+            return;
+        };
+        texture.frame = frame;
+        let id = texture.id;
+        if source.w <= 0. || source.h <= 0. {
+            return;
+        }
+        let uv = [
+            (rect.x - source.x) / source.w,
+            (rect.y - source.y) / source.h,
+            (rect.x + rect.w - source.x) / source.w,
+            (rect.y + rect.h - source.y) / source.h,
+        ];
+        self.quad(rect, uv, plain_radius(radius), 0., tint, id);
     }
 
     /// Edges on whole drawable pixels. The TV scales its 1080p graphics plane up 2x, which
@@ -1355,6 +1404,9 @@ impl Renderer {
                 }
                 Draw::Cover(image, rect, radius, tint) => {
                     self.picture(image, *rect, *radius, *tint, true)
+                }
+                Draw::Glass(path, rect, radius, source, tint) => {
+                    self.glass(path, *rect, *radius, *source, *tint)
                 }
                 Draw::Clip(clip) => self.clip = *clip,
                 Draw::EdgeFade(fade) => self.set_fade(0, *fade),

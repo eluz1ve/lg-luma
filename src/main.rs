@@ -18,6 +18,7 @@ mod damage;
 mod diagnostics;
 mod egl_damage;
 mod font;
+mod glass;
 mod homebrew_updates;
 mod i18n;
 #[path = "input-refresh.rs"]

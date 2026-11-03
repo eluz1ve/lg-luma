@@ -194,3 +194,25 @@ fn an_unchanged_frame_names_a_pixel_inside_the_drawable() {
         );
     }
 }
+
+#[test]
+fn glass_damages_its_panel() {
+    let screen = Rect::new(0., 0., 1920., 1080.);
+    let glass = |x: f32| {
+        Draw::Glass(
+            "wallpapers/dunes.jpg".into(),
+            Rect::new(x, 40., 600., 68.),
+            34.,
+            screen,
+            [1.; 4],
+        )
+    };
+    let bounds = bounds(&glass(660.)).unwrap();
+    let expected = Rect::new(660., 40., 600., 68.).inset(-1.);
+    assert_eq!(
+        (bounds.x, bounds.y, bounds.w, bounds.h),
+        (expected.x, expected.y, expected.w, expected.h)
+    );
+    assert!(same(&glass(660.), &glass(660.)));
+    assert!(!same(&glass(660.), &glass(670.)));
+}
