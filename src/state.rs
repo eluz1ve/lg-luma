@@ -54,9 +54,18 @@ pub enum Page {
     Settings,
 }
 
+/// The menu slides in over this many seconds, and out over the second.
+const MENU_OPEN: f32 = 0.25;
+const MENU_CLOSE: f32 = 0.2;
+/// Spatial focus prefers a control in line; one only in another row scores this much more.
+const ASIDE: f32 = 10000.;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum Target {
+    /// A page in the menu: Home, Apps, Settings.
     Nav(usize),
+    /// The menu's Inputs: folds the list of inputs open and closed.
+    MenuInputs,
     TvSettings,
     InstallUpdate,
     CheckUpdates,
@@ -226,6 +235,10 @@ pub enum Overlay {
         id: String,
         restore: Target,
     },
+    /// The menu on the left: the pages, the inputs and the TV's settings.
+    Menu {
+        restore: Target,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -351,6 +364,10 @@ pub struct State {
     /// Luma update (Settings → System), driven by the update worker.
     pub update: crate::update::InstallStatus,
     pub panel_started: Option<Instant>,
+    /// Whether the menu lists the inputs under its Inputs item.
+    pub menu_inputs: bool,
+    /// The menu's slide: when it began, and whether it opens.
+    pub menu_motion: Option<(Instant, bool)>,
     pub weather: weather::Weather,
     pub crypto: crate::crypto::Crypto,
     pub cs2: crate::cs2::Scores,
@@ -412,6 +429,8 @@ impl State {
             tile_editor: None,
             update: crate::update::InstallStatus::default(),
             panel_started: None,
+            menu_inputs: false,
+            menu_motion: None,
             weather: weather::Weather::default(),
             crypto: crate::crypto::Crypto::default(),
             cs2: crate::cs2::Scores::default(),
@@ -513,6 +532,13 @@ impl State {
                 self.pointer,
                 Instant::now(),
             );
+        }
+        if let Some((start, opening)) = self.menu_motion {
+            self.dirty = true;
+            let duration = if opening { MENU_OPEN } else { MENU_CLOSE };
+            if self.preferences.reduced_motion || start.elapsed().as_secs_f32() >= duration {
+                self.menu_motion = None;
+            }
         }
         if let Some(start) = self.panel_started {
             self.dirty = true;
@@ -618,6 +644,7 @@ impl State {
             || self.motion.animating()
             || self.previous_background.is_some()
             || self.panel_started.is_some()
+            || self.menu_motion.is_some()
             || (!self.preferences.reduced_motion
                 && self
                     .notice
@@ -641,6 +668,174 @@ impl State {
         pending
     }
 
+    /// Home with Luma in front: the menu opens over the page, and Home again closes it.
+    pub fn home_key(&mut self) -> Vec<Effect> {
+        if matches!(self.overlay, Some(Overlay::Menu { .. })) {
+            self.close_menu();
+            return vec![];
+        }
+        let pending = self.clear_for_menu();
+        self.open_menu();
+        pending
+    }
+
+    /// Home from another app: Luma comes back on Home, with the menu open.
+    pub fn relaunch_home(&mut self) -> Vec<Effect> {
+        let pending = self.return_home();
+        self.open_menu();
+        pending
+    }
+
+    /// Before the menu opens over the page: drafts are kept, and a dialog or Recents closes back
+    /// to where it was opened from.
+    fn clear_for_menu(&mut self) -> Vec<Effect> {
+        let pending = self.finish_text_input();
+        self.recents.pending = None;
+        self.recents.visibility = 0.;
+        self.recents.closing_focus = None;
+        self.wallpaper_upload = None;
+        self.pointer = false;
+        self.pressed = None;
+        self.moving = None;
+        self.panel_started = None;
+        if let Some(overlay) = self.overlay.take() {
+            self.focus = match overlay {
+                Overlay::Options { restore, .. }
+                | Overlay::Delete { restore, .. }
+                | Overlay::Recents { restore }
+                | Overlay::BackgroundOptions { restore, .. }
+                | Overlay::BackgroundDelete { restore, .. }
+                | Overlay::Cs2Match { restore, .. }
+                | Overlay::Menu { restore } => restore,
+                Overlay::Keyboard | Overlay::SystemKeyboard => self.keyboard_return(),
+                Overlay::WallpaperUpload => Target::UploadWallpaper,
+                Overlay::TileEditor => {
+                    self.tile_editor = None;
+                    Target::TileEditor
+                }
+                Overlay::CubSignIn => {
+                    self.cub.cancel();
+                    Target::LampaAccount
+                }
+            };
+        }
+        pending
+    }
+
+    /// The menu over the page, on the page's own item; closing it returns to the focus it had.
+    pub fn open_menu(&mut self) {
+        let amount = self.menu_amount();
+        let restore = if matches!(self.focus, Target::Nav(_) | Target::MenuInputs) {
+            self.first_content()
+        } else {
+            self.focus.clone()
+        };
+        self.overlay = Some(Overlay::Menu { restore });
+        self.focus = Target::Nav(self.page_index());
+        self.pressed = None;
+        // Reversing midway starts from where the panel is.
+        self.menu_motion = (!self.preferences.reduced_motion).then(|| {
+            let done = 1. - (1. - amount).cbrt();
+            (
+                Instant::now() - Duration::from_secs_f32(done * MENU_OPEN),
+                true,
+            )
+        });
+        self.dirty = true;
+    }
+
+    pub fn close_menu(&mut self) {
+        if !matches!(self.overlay, Some(Overlay::Menu { .. })) {
+            return;
+        }
+        let amount = self.menu_amount();
+        if let Some(Overlay::Menu { restore }) = self.overlay.take() {
+            self.focus = restore;
+        }
+        self.pressed = None;
+        self.menu_motion = (!self.preferences.reduced_motion).then(|| {
+            let done = 1. - amount.cbrt();
+            (
+                Instant::now() - Duration::from_secs_f32(done * MENU_CLOSE),
+                false,
+            )
+        });
+        self.dirty = true;
+    }
+
+    /// How far the menu is in: 0 closed, 1 open, easing out both ways.
+    pub fn menu_amount(&self) -> f32 {
+        match self.menu_motion {
+            Some((start, true)) => {
+                let done = (start.elapsed().as_secs_f32() / MENU_OPEN).min(1.);
+                1. - (1. - done).powi(3)
+            }
+            Some((start, false)) => {
+                let done = (start.elapsed().as_secs_f32() / MENU_CLOSE).min(1.);
+                (1. - done).powi(3)
+            }
+            None if matches!(self.overlay, Some(Overlay::Menu { .. })) => 1.,
+            None => 0.,
+        }
+    }
+
+    /// The menu's items from the top: the pages, the inputs while unfolded, then Settings.
+    pub fn menu_items(&self) -> Vec<Target> {
+        let mut items = vec![Target::Nav(0), Target::Nav(1), Target::MenuInputs];
+        if self.menu_inputs {
+            items.extend(
+                self.inventory
+                    .inputs
+                    .iter()
+                    .filter(|input| self.preferences.input_visible(input))
+                    .map(|input| Target::Input(input.id.clone())),
+            );
+        }
+        items.extend([Target::Nav(2), Target::TvSettings]);
+        items
+    }
+
+    fn menu_direction(&mut self, direction: Direction) {
+        let items = self.menu_items();
+        let index = items
+            .iter()
+            .position(|item| *item == self.focus)
+            .unwrap_or(0);
+        match direction {
+            Direction::Up => self.focus = items[index.saturating_sub(1)].clone(),
+            Direction::Down => self.focus = items[(index + 1).min(items.len() - 1)].clone(),
+            Direction::Right => self.close_menu(),
+            Direction::Left => {}
+        }
+    }
+
+    fn menu_activate(&mut self) -> Vec<Effect> {
+        match self.focus.clone() {
+            Target::MenuInputs => {
+                self.menu_inputs = !self.menu_inputs;
+                self.dirty = true;
+            }
+            Target::Nav(index) => {
+                self.close_menu();
+                if index != self.page_index() {
+                    self.open(index);
+                }
+            }
+            Target::Input(id) => {
+                self.close_menu();
+                if !self.launching {
+                    return vec![Effect::Launch(id)];
+                }
+            }
+            Target::TvSettings => {
+                self.close_menu();
+                return vec![Effect::Launch("com.palm.app.settings".into())];
+            }
+            _ => {}
+        }
+        vec![]
+    }
+
     pub fn open(&mut self, index: usize) {
         self.weather.cancel_search();
         self.page = match index {
@@ -648,7 +843,6 @@ impl State {
             2 => Page::Settings,
             _ => Page::Home,
         };
-        self.focus = Target::Nav(self.page_index());
         self.scroll = 0.;
         if self.page == Page::Home {
             self.scroll_favorites(0.);
@@ -658,7 +852,9 @@ impl State {
         self.overlay = None;
         self.moving = None;
         self.subpage = None;
+        self.section = 0;
         self.panel_started = None;
+        self.focus = self.first_content();
         self.dirty = true;
     }
 
@@ -1585,6 +1781,10 @@ impl State {
         ) {
             return vec![];
         }
+        if matches!(self.overlay, Some(Overlay::Menu { .. })) {
+            self.menu_direction(direction);
+            return vec![];
+        }
         if let Some(id) = self.moving.clone() {
             let mut ids = self.preferences.favorites(&self.inventory.apps);
             let slots: Vec<_> = ids
@@ -1618,6 +1818,7 @@ impl State {
                 let apps = self.apps();
                 if let Some(index) = apps.iter().position(|app| &app.id == id) {
                     match direction {
+                        Direction::Left if index == 0 => self.open_menu(),
                         Direction::Left | Direction::Right => {
                             let next = if matches!(direction, Direction::Left) {
                                 index.saturating_sub(1)
@@ -1627,14 +1828,16 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
-                        // Up reaches the Today card's last line, else the tabs.
+                        // Up reaches the Today card's last line, if there is one.
                         Direction::Up => {
                             let today = controls
                                 .iter()
                                 .filter(|c| c.target.in_today())
                                 .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
                                 .map(|c| c.target.clone());
-                            self.focus(today.unwrap_or(Target::Nav(0)), controls)
+                            if let Some(today) = today {
+                                self.focus(today, controls)
+                            }
                         }
                         Direction::Down => {
                             let x = controls
@@ -1691,7 +1894,7 @@ impl State {
                     Direction::Left => self.close_subpage(),
                     Direction::Up => self.focus(
                         if index == 0 {
-                            Target::Nav(2)
+                            self.focus.clone()
                         } else {
                             rows[index - 1].clone()
                         },
@@ -1733,7 +1936,7 @@ impl State {
                     Direction::Left => self.close_subpage(),
                     Direction::Up => self.focus(
                         if index == 0 {
-                            Target::Nav(2)
+                            self.focus.clone()
                         } else {
                             Target::Choice(index - 1)
                         },
@@ -1776,7 +1979,7 @@ impl State {
                     Direction::Right => self.focus(self.section_entry(), controls),
                     Direction::Up => self.focus(
                         if index == 0 {
-                            Target::Nav(2)
+                            self.focus.clone()
                         } else {
                             Target::Sidebar(index - 1)
                         },
@@ -1785,7 +1988,7 @@ impl State {
                     Direction::Down => {
                         self.focus(Target::Sidebar((index + 1) % SECTION_COUNT), controls)
                     }
-                    Direction::Left => {}
+                    Direction::Left => self.open_menu(),
                 }
                 return vec![];
             }
@@ -1842,7 +2045,6 @@ impl State {
                     .first()
                     .is_some_and(|input| &input.id == id)
             {
-                self.focus(Target::Nav(2), controls);
                 return vec![];
             }
             // Crypto's switches: Right does nothing and Up from the first reaches the tabs.
@@ -1857,14 +2059,12 @@ impl State {
                 match direction {
                     Direction::Right => return vec![],
                     Direction::Up if self.focus == Target::CryptoToggle => {
-                        self.focus(Target::Nav(2), controls);
                         return vec![];
                     }
                     _ => {}
                 }
             }
             if self.focus == Target::Setting(0) && matches!(direction, Direction::Up) {
-                self.focus(Target::Nav(2), controls);
                 return vec![];
             }
             // CS2 Score's cards: Left and Right step through every match, scrolling the row.
@@ -1890,8 +2090,12 @@ impl State {
                     controls.iter().filter(|c| c.target.in_today()).collect();
                 lines.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
                 let index = lines.iter().position(|c| c.target == self.focus);
+                if matches!(direction, Direction::Left) {
+                    self.open_menu();
+                    return vec![];
+                }
                 let next = match (direction, index) {
-                    (Direction::Up, Some(0) | None) => Some(Target::Nav(0)),
+                    (Direction::Up, Some(0) | None) => None,
                     (Direction::Up, Some(index)) => Some(lines[index - 1].target.clone()),
                     (Direction::Down, Some(index)) if index + 1 < lines.len() => {
                         Some(lines[index + 1].target.clone())
@@ -1940,14 +2144,12 @@ impl State {
                             Target::Cs2Toggle | Target::ShowsToggle | Target::LampaAccount
                         ) =>
                     {
-                        self.focus(Target::Nav(2), controls);
                         return vec![];
                     }
                     _ => {}
                 }
             }
             if self.focus == Target::WeatherToggle && matches!(direction, Direction::Up) {
-                self.focus(Target::Nav(2), controls);
                 return vec![];
             }
             if matches!(
@@ -1966,7 +2168,7 @@ impl State {
                             {
                                 Target::WeatherClear
                             } else {
-                                Target::Nav(2)
+                                self.focus.clone()
                             },
                             controls,
                         );
@@ -2017,22 +2219,8 @@ impl State {
                         );
                         return vec![];
                     }
-                    Direction::Up => {
-                        self.focus(Target::Nav(1), controls);
-                        return vec![];
-                    }
+                    Direction::Up => return vec![],
                     _ => {}
-                }
-            }
-            if let Target::Nav(index) = self.focus {
-                let next = match direction {
-                    Direction::Left if index > 0 => Some(index - 1),
-                    Direction::Right if index < 2 => Some(index + 1),
-                    _ => None,
-                };
-                if let Some(next) = next {
-                    self.open(next);
-                    return vec![];
                 }
             }
             if self.page == Page::Apps
@@ -2090,7 +2278,7 @@ impl State {
                 match direction {
                     Direction::Right => self.focus(Target::WallpaperCycle, controls),
                     Direction::Left => self.focus(Target::Sidebar(self.section), controls),
-                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Up => {}
                     Direction::Down => self.focus(
                         self.gallery_target(2.min(self.gallery_slots() - 1)),
                         controls,
@@ -2102,20 +2290,12 @@ impl State {
                 match direction {
                     Direction::Right => {}
                     Direction::Left => self.focus(Target::WallpaperGradient, controls),
-                    Direction::Up => self.focus(Target::Nav(2), controls),
+                    Direction::Up => {}
                     Direction::Down => self.focus(
                         self.gallery_target(3.min(self.gallery_slots() - 1)),
                         controls,
                     ),
                 }
-                return vec![];
-            }
-            if matches!(self.focus, Target::Nav(_)) && matches!(direction, Direction::Down) {
-                if self.page == Page::Settings {
-                    self.subpage = None;
-                    self.section = 0;
-                }
-                self.focus(self.first_content(), controls);
                 return vec![];
             }
             if self.page == Page::Settings
@@ -2144,14 +2324,6 @@ impl State {
                         && candidate.rect.x + candidate.rect.w <= HOME_STRIP_RIGHT + 0.1)
             })
             .filter_map(|candidate| {
-                // Header controls never steal an Up route from the active tab.
-                if self.overlay.is_none()
-                    && matches!(direction, Direction::Up)
-                    && candidate.rect.y < 150.
-                    && candidate.target != Target::Nav(self.page_index())
-                {
-                    return None;
-                }
                 let (cx, cy) = candidate.rect.center();
                 let (primary, cross, overlap) = match direction {
                     Direction::Up => (
@@ -2177,13 +2349,20 @@ impl State {
                 };
                 (primary > 1.).then_some((
                     candidate.target.clone(),
-                    primary + cross * 2. + if cross >= overlap { 10000. } else { 0. },
+                    primary + cross * 2. + if cross >= overlap { ASIDE } else { 0. },
                 ))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(target, _)| target);
-        if let Some(next) = next {
-            self.focus(next, controls);
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        match next {
+            // Nothing lies to the left in line, only in another row: the menu does.
+            _ if matches!(direction, Direction::Left)
+                && self.overlay.is_none()
+                && next.as_ref().is_none_or(|(_, score)| *score >= ASIDE) =>
+            {
+                self.open_menu()
+            }
+            Some((next, _)) => self.focus(next, controls),
+            None => {}
         }
         vec![]
     }
@@ -2589,6 +2768,9 @@ impl State {
     }
 
     pub fn activate(&mut self) -> Vec<Effect> {
+        if matches!(self.overlay, Some(Overlay::Menu { .. })) {
+            return self.menu_activate();
+        }
         if self.recents_open() {
             use crate::recents::Command;
             return match self.focus.clone() {
@@ -3346,6 +3528,10 @@ impl State {
     pub fn back(&mut self) -> Vec<Effect> {
         self.pointer = false;
         self.dirty = true;
+        if matches!(self.overlay, Some(Overlay::Menu { .. })) {
+            self.close_menu();
+            return vec![];
+        }
         if self.moving.take().is_some() {
             return vec![];
         }
@@ -3413,18 +3599,14 @@ impl State {
             self.close_subpage();
             return vec![];
         }
-        if self.page == Page::Settings && !matches!(self.focus, Target::Nav(_)) {
-            if matches!(self.focus, Target::Sidebar(_)) {
-                self.focus = Target::Nav(2);
-            } else {
-                self.focus = Target::Sidebar(self.section);
-            }
+        if self.page == Page::Settings && !matches!(self.focus, Target::Sidebar(_)) {
+            self.focus = Target::Sidebar(self.section);
             self.scroll = 0.;
             return vec![];
         }
         if self.page == Page::Apps && matches!(self.focus, Target::Search | Target::ClearSearch) {
             self.query.clear();
-            self.focus = Target::Nav(1);
+            self.focus = self.first_content();
             self.scroll = 0.;
             return vec![];
         }

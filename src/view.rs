@@ -300,6 +300,36 @@ impl Scene {
     }
     /// Moves what was drawn and registered since `draws` and `controls` up by `dy`: chrome that
     /// slides away with the page.
+    /// Moves what was drawn from `draws` on, and the controls from `controls` on, `dx` right.
+    fn shift_x(&mut self, draws: usize, controls: usize, dx: f32) {
+        if dx == 0. {
+            return;
+        }
+        for draw in &mut self.draw[draws..] {
+            match draw {
+                Draw::Shape(rect, ..)
+                | Draw::RoundedGradient(rect, ..)
+                | Draw::Shadow(rect, ..)
+                | Draw::Text(_, rect, ..)
+                | Draw::Image(_, rect, ..)
+                | Draw::TintedImage(_, rect, ..)
+                | Draw::AppImage(_, rect, ..)
+                | Draw::Picture(_, rect, ..)
+                | Draw::Cover(_, rect, ..)
+                | Draw::Glass(_, rect, ..)
+                | Draw::Clip(Some(rect)) => rect.x += dx,
+                Draw::EdgeFadeX(Some(stops)) => {
+                    for x in stops {
+                        *x += dx;
+                    }
+                }
+                Draw::Clip(None) | Draw::EdgeFade(_) | Draw::EdgeFadeX(None) => {}
+            }
+        }
+        for control in &mut self.controls[controls..] {
+            control.rect.x += dx;
+        }
+    }
     fn slide(&mut self, draws: usize, controls: usize, dy: f32) {
         if dy == 0. {
             return;
@@ -795,38 +825,12 @@ fn text(size: f32, weight: u16, tracking: f32) -> TextStyle {
     TextStyle::new(size).weight(weight).tracking(tracking)
 }
 
-pub struct Navigation {
-    pub surface: Rect,
-    pub items: [Rect; 3],
-}
-pub fn navigation(assets: &Assets, language: Language) -> Navigation {
-    let widths = ["home", "apps", "settings"]
-        .map(|key| (assets.width(language.t(key), text(25., 500, -0.02)) + 46.4).max(99.2));
-    let width = widths.iter().sum::<f32>() + 25.6 + 19.6;
-    let mut x = (1920. - width) / 2. + 9.8;
-    let items = widths.map(|width| {
-        let rect = Rect::new(x, 52.3, width, 49.);
-        x += width + 12.8;
-        rect
-    });
-    Navigation {
-        surface: Rect::new((1920. - width) / 2., 42.5, width, 68.6),
-        items,
-    }
-}
-
 /// Fully shown Recents is drawn instead of the page, which is then not part of the scene.
 pub fn recents_replaces_page(state: &State) -> bool {
     state.recents_open() && state.recents.visibility == 1.
 }
 
-pub fn scene_with_pill(
-    state: &State,
-    assets: &Assets,
-    pill_x: f32,
-    pill_width: f32,
-    now: OffsetDateTime,
-) -> Scene {
+pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
     let mut out = Scene::new();
     let key = state.background_key();
     let current = assets.background(state, &key);
@@ -910,7 +914,7 @@ pub fn scene_with_pill(
     out.draw.push(Draw::EdgeFade(None));
     out.draw.push(Draw::Clip(None));
     let (draws, controls) = (out.draw.len(), out.controls.len());
-    header(&mut out, state, assets, now, pill_x, pill_width);
+    header(&mut out, state, assets, now);
     out.slide(draws, controls, state.chrome_offset());
     if let Some(
         overlay @ (Overlay::Options { .. }
@@ -972,7 +976,7 @@ pub fn scene_with_pill(
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
             Overlay::CubSignIn => cub_sign_in(&mut out, state, assets),
             Overlay::Cs2Match { id, .. } => cs2_dialog(&mut out, state, assets, id, now),
-            Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
+            Overlay::SystemKeyboard | Overlay::Recents { .. } | Overlay::Menu { .. } => {}
         }
         if !matches!(
             overlay,
@@ -982,6 +986,7 @@ pub fn scene_with_pill(
             out.fade(start, (opened.elapsed().as_secs_f32() / 0.12).min(1.), 1.);
         }
     }
+    menu(&mut out, state, assets, now, content_start);
     if state.recents_open() || state.recents.visibility > 0. {
         // Crossfade the actual parent interface as well as the dimmed stage.
         // Retain outgoing visuals after dismissal, while input immediately
@@ -1018,14 +1023,7 @@ pub fn scene_with_pill(
     out
 }
 
-fn header(
-    out: &mut Scene,
-    state: &State,
-    assets: &Assets,
-    now: OffsetDateTime,
-    pill_x: f32,
-    pill_width: f32,
-) {
+fn header(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
     let language = state.preferences.language;
     let clock = language.clock(
         now,
@@ -1050,62 +1048,217 @@ fn header(
         WHITE,
         false,
     );
-    let layout = navigation(assets, language);
-    let nav = layout.surface;
-    out.shadow(nav, 48., 18., 4., 0.06);
-    out.glass(nav, 48.);
-    let pill = Rect::new(pill_x, 52.3, pill_width, 49.);
-    out.draw.push(Draw::RoundedGradient(
-        pill,
-        32.,
-        c(0xfafafa, 1.),
-        c(0xe5e5e5, 1.),
-    ));
-    if matches!(state.focus, Target::Nav(_)) && !state.pointer {
-        // Follow the pill's animated position and width instead of jumping to
-        // the destination tab's control rectangle.
-        out.border(pill.inset(-5.), 37., 2., c(0xf0f0f0, 0.95));
+}
+
+/// Where the menu stands when open (spec, «Меню»).
+pub(crate) const MENU_PANEL: Rect = Rect::new(32., 32., 430., 1016.);
+/// How far the page moves aside for it.
+const MENU_PUSH: f32 = 56.;
+const MENU_ITEM: f32 = 76.;
+const MENU_PITCH: f32 = 84.;
+const MENU_INPUT: f32 = 64.;
+const MENU_INPUT_PITCH: f32 = 68.;
+
+/// The menu on the left: the page slides aside and dims as it comes in. While it is open only
+/// its items take focus and clicks; a click beside it closes it.
+fn menu(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime, page: usize) {
+    let amount = state.menu_amount();
+    if amount <= 0. {
+        return;
     }
-    for (index, key) in ["home", "apps", "settings"].into_iter().enumerate() {
-        let rect = layout.items[index];
-        out.text(
-            language.t(key),
-            Rect::new(rect.x, 61.8, rect.w, 30.),
-            text(25., 500, -0.02),
-            if state.page_index() == index {
-                c(0x2c2c2c, 1.)
-            } else {
-                c(0xeeeeee, 0.73)
-            },
-            true,
-        );
-        out.control(Target::Nav(index), rect, false);
+    let open = matches!(state.overlay, Some(Overlay::Menu { .. }));
+    out.shift_x(page, 0, MENU_PUSH * amount);
+    if open {
+        out.controls.clear();
     }
-    let button_size = 60.;
-    let rect = Rect::new(
-        SAFE_X + WIDTH - button_size,
-        nav.y + (nav.h - button_size) / 2.,
-        button_size,
-        button_size,
+    out.shape(SCREEN, 0., c(0x05080c, 0.5 * amount));
+    let panel = Rect::new(
+        MENU_PANEL.x - (MENU_PANEL.x + MENU_PANEL.w + 40.) * (1. - amount),
+        MENU_PANEL.y,
+        MENU_PANEL.w,
+        MENU_PANEL.h,
     );
-    let focused = state.focus == Target::TvSettings;
-    out.pill(rect, focused, false);
+    out.shadow(panel, 36., 40., 12., 0.3 * amount);
+    out.glass(panel, 36.);
+    if open {
+        out.modal = Some(panel);
+    }
+    let language = state.preferences.language;
+    out.text(
+        language.clock(now, state.preferences.hour_24, false),
+        Rect::new(panel.x + 44., panel.y + 40., 300., 31.2),
+        text(26., 500, -0.03),
+        c(0xffffff, 0.75),
+        false,
+    );
+    let x = panel.x + 22.;
+    let width = panel.w - 44.;
+    let mut y = panel.y + 118.;
+    let current = state.page_index();
+    for (index, icon) in [(0, "home"), (1, "grid")] {
+        let label = language.t(["home", "apps"][index]);
+        let rect = Rect::new(x, y, width, MENU_ITEM);
+        menu_item(
+            out,
+            state,
+            assets,
+            Target::Nav(index),
+            rect,
+            icon,
+            label,
+            current == index,
+        );
+        y += MENU_PITCH;
+    }
+    let rect = Rect::new(x, y, width, MENU_ITEM);
+    menu_item(
+        out,
+        state,
+        assets,
+        Target::MenuInputs,
+        rect,
+        "input-hdmi",
+        language.t("inputs"),
+        false,
+    );
+    let chevron = if state.menu_inputs { "down" } else { "right" };
+    let tone = if open && state.focus == Target::MenuInputs {
+        c(0x171c20, 0.7)
+    } else {
+        c(0xffffff, 0.6)
+    };
     out.icon(
         assets,
-        "settings",
+        chevron,
         Rect::new(
-            rect.x + (rect.w - 23.2) / 2.,
-            rect.y + (rect.h - 23.2) / 2.,
-            23.2,
-            23.2,
+            rect.x + rect.w - 48.,
+            rect.y + (MENU_ITEM - 26.) / 2.,
+            26.,
+            26.,
         ),
-        if focused {
-            c(0x2c2c2c, 1.)
-        } else {
-            c(0xeeeeee, 0.73)
-        },
+        tone,
     );
-    out.control(Target::TvSettings, rect, false);
+    y += MENU_PITCH;
+    if state.menu_inputs {
+        for input in state
+            .inventory
+            .inputs
+            .iter()
+            .filter(|input| state.preferences.input_visible(input))
+        {
+            let target = Target::Input(input.id.clone());
+            let row = Rect::new(x + 54., y, width - 54., MENU_INPUT);
+            let focused = open && state.focus == target;
+            if focused {
+                out.shadow(row, 16., 18., 6., 0.25);
+                out.draw.push(Draw::RoundedGradient(
+                    row,
+                    16.,
+                    c(0xfafafa, 1.),
+                    c(0xe5e5e5, 1.),
+                ));
+            }
+            let (title_tone, status_tone) = if focused {
+                (c(0x171c20, 1.), c(0x171c20, 0.62))
+            } else {
+                (c(0xffffff, 0.92), c(0xe8e8e8, 0.6))
+            };
+            let inner = row.w - 36.;
+            let title = state.preferences.input_title(input);
+            let title_style = text(26., 550, -0.01);
+            out.text(
+                title,
+                Rect::new(row.x + 18., row.y + 6., inner, 31.2),
+                assets.fit_text(title, title_style, inner),
+                title_tone,
+                false,
+            );
+            let name = state.preferences.input_name(input);
+            let status = input_status(input, name.is_some(), language);
+            let status_style = text(20., 450, 0.);
+            out.text(
+                &status,
+                Rect::new(row.x + 18., row.y + 37., inner, 24.),
+                assets.fit_text(&status, status_style, inner),
+                status_tone,
+                false,
+            );
+            if open {
+                out.control(target, row, false);
+            }
+            y += MENU_INPUT_PITCH;
+        }
+    }
+    let bottom = panel.y + panel.h - 40. - MENU_ITEM;
+    menu_item(
+        out,
+        state,
+        assets,
+        Target::Nav(2),
+        Rect::new(x, bottom - MENU_PITCH, width, MENU_ITEM),
+        "settings",
+        language.t("settings"),
+        current == 2,
+    );
+    menu_item(
+        out,
+        state,
+        assets,
+        Target::TvSettings,
+        Rect::new(x, bottom, width, MENU_ITEM),
+        "tv",
+        language.t("tvSettings"),
+        false,
+    );
+}
+
+/// One of the menu's items: white when focused, faintly lit when it is the page in view.
+#[allow(clippy::too_many_arguments)]
+fn menu_item(
+    out: &mut Scene,
+    state: &State,
+    assets: &Assets,
+    target: Target,
+    rect: Rect,
+    icon: &str,
+    label: &str,
+    current: bool,
+) {
+    let focused = matches!(state.overlay, Some(Overlay::Menu { .. })) && state.focus == target;
+    if focused {
+        out.shadow(rect, 20., 18., 6., 0.25);
+        out.draw.push(Draw::RoundedGradient(
+            rect,
+            20.,
+            c(0xfafafa, 1.),
+            c(0xe5e5e5, 1.),
+        ));
+    } else if current {
+        out.shape(rect, 20., c(0xffffff, 0.1));
+    }
+    let tone = if focused {
+        c(0x171c20, 1.)
+    } else {
+        c(0xffffff, 0.92)
+    };
+    out.icon(
+        assets,
+        icon,
+        Rect::new(rect.x + 22., rect.y + (rect.h - 32.) / 2., 32., 32.),
+        tone,
+    );
+    let width = rect.w - 76. - 56.;
+    let style = text(31., 550, -0.01);
+    out.text(
+        label,
+        Rect::new(rect.x + 76., rect.y + (rect.h - 37.2) / 2., width, 37.2),
+        assets.fit_text(label, style, width),
+        tone,
+        false,
+    );
+    if matches!(state.overlay, Some(Overlay::Menu { .. })) {
+        out.control(target, rect, false);
+    }
 }
 
 /// Home's shared focus lift (`motion.rs`): a card grows and rises toward focus, with a soft glow.
@@ -4763,9 +4916,10 @@ pub fn home_preview(scene: &mut Scene, state: &mut State, assets: &Assets, now: 
     let saved = (
         std::mem::replace(&mut state.page, Page::Home),
         std::mem::replace(&mut state.focus, Target::Nav(0)),
+        state.menu_motion.take(),
         std::mem::replace(&mut state.scroll, 0.),
         std::mem::replace(&mut state.home_scroll, 0.),
-        // No focus ring on the tab bar.
+        // No focus ring anywhere.
         std::mem::replace(&mut state.pointer, true),
         state.overlay.take(),
         state.notice.take(),
@@ -4773,11 +4927,11 @@ pub fn home_preview(scene: &mut Scene, state: &mut State, assets: &Assets, now: 
         state.pressed.take(),
         state.moving.take(),
     );
-    let tab = navigation(assets, state.preferences.language).items[0];
-    let home = scene_with_pill(state, assets, tab.x, tab.w, now);
+    let home = self::scene(state, assets, now);
     (
         state.page,
         state.focus,
+        state.menu_motion,
         state.scroll,
         state.home_scroll,
         state.pointer,

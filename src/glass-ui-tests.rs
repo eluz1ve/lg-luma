@@ -65,20 +65,10 @@ fn home() -> State {
 fn chrome_sits_on_glass_over_the_wallpaper() {
     let state = home();
     let drawn = scene(&state);
-    let assets = view::Assets {
-        root: PathBuf::new(),
-        version: "test".into(),
-        metrics: BTreeMap::new(),
-        artwork: crate::app_artwork::Service::new(false),
-    };
-    on_glass(
-        &drawn,
-        view::navigation(&assets, state.preferences.language).surface,
-        "the tab bar",
-    );
-    for rect in rects(&drawn, |t| *t == Target::TvSettings) {
-        on_glass(&drawn, rect, "the TV button");
-    }
+    let mut menu = home();
+    menu.open_menu();
+    menu.menu_motion = None;
+    on_glass(&scene(&menu), view::MENU_PANEL, "the menu");
     for rect in rects(&drawn, |t| matches!(t, Target::Input(_))) {
         on_glass(&drawn, rect, "an input chip");
     }
@@ -138,6 +128,8 @@ fn overlays_sit_on_glass() {
 #[test]
 fn glass_cross_fades_with_the_wallpaper() {
     let mut state = home();
+    state.open_menu();
+    state.menu_motion = None;
     state.preferences.background = "forest".into();
     state.previous_background = Some((
         "dunes".into(),
@@ -156,13 +148,7 @@ fn glass_cross_fades_with_the_wallpaper() {
         })
         .expect("the new wallpaper fades in over the old");
     assert!(alpha > 0. && alpha < 1.);
-    let assets = view::Assets {
-        root: PathBuf::new(),
-        version: "test".into(),
-        metrics: BTreeMap::new(),
-        artwork: crate::app_artwork::Service::new(false),
-    };
-    let bar = view::navigation(&assets, state.preferences.language).surface;
+    let bar = view::MENU_PANEL;
     let layers: Vec<_> = glass(&drawn)
         .into_iter()
         .filter(|(_, rect, ..)| xywh(rect) == xywh(&bar))
@@ -177,6 +163,10 @@ fn glass_cross_fades_with_the_wallpaper() {
 #[test]
 fn text_on_glass_has_no_shadow() {
     let mut state = home();
+    // The menu's labels, and its inputs unfolded.
+    state.open_menu();
+    state.menu_motion = None;
+    state.menu_inputs = true;
     let drawn = scene(&state);
     let labels: Vec<String> = ["home", "apps", "settings"]
         .map(|key| state.preferences.language.t(key).to_owned())

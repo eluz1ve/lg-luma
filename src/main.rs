@@ -436,6 +436,8 @@ fn script(
         "enter" => state.activate(),
         "back" => state.back(),
         "recents" | "hold-back" => state.open_recents(),
+        // The remote's Home key, with Luma in front.
+        "home-key" => state.home_key(),
         "menu" => {
             state.options();
             vec![]
@@ -480,17 +482,11 @@ fn main() {
     }
 }
 
-fn compose(
-    state: &mut State,
-    assets: &view::Assets,
-    pill: f32,
-    width: f32,
-    now: OffsetDateTime,
-) -> view::Scene {
-    let scene = view::scene_with_pill(state, assets, pill, width, now);
+fn compose(state: &mut State, assets: &view::Assets, now: OffsetDateTime) -> view::Scene {
+    let scene = view::scene(state, assets, now);
     let mut scene =
         if !state.pointer && state.overlay.is_none() && state.reveal_focus(&scene.controls) {
-            view::scene_with_pill(state, assets, pill, width, now)
+            view::scene(state, assets, now)
         } else {
             scene
         };
@@ -1283,9 +1279,6 @@ fn run() -> Result<(), String> {
     let mut focused = !start_hidden;
     let mut press: Option<Press> = None;
     let mut back_button = BackButton::default();
-    let initial_nav = view::navigation(&assets, state.preferences.language);
-    let mut pill = initial_nav.items[0].x;
-    let mut pill_width = initial_nav.items[0].w;
     let mut last_frame = Instant::now();
     let mut last_minute = None;
     let mut frame = 0u64;
@@ -1304,8 +1297,6 @@ fn run() -> Result<(), String> {
     let mut scene = compose(
         &mut state,
         &assets,
-        pill,
-        pill_width,
         options.time.unwrap_or_else(OffsetDateTime::now_utc),
     );
     while running {
@@ -1606,7 +1597,7 @@ fn run() -> Result<(), String> {
         }
         // Rebuild hit regions before input whenever inventory/layout changed.
         if state.dirty {
-            scene = compose(&mut state, &assets, pill, pill_width, now);
+            scene = compose(&mut state, &assets, now);
         }
         for event in queued_event
             .take()
@@ -1663,7 +1654,13 @@ fn run() -> Result<(), String> {
                     if code == 1 {
                         press = None;
                         back_button.cancel();
-                        pending = state.return_home();
+                        // Home over Luma itself toggles the menu; from another app, Luma comes
+                        // back on Home with the menu open.
+                        pending = if focused && visible {
+                            state.home_key()
+                        } else {
+                            state.relaunch_home()
+                        };
                         // A staged Home must come forward itself. If it does not, its
                         // registration would leave the Home key dead: check below.
                         if end_registration.is_some() {
@@ -1761,10 +1758,10 @@ fn run() -> Result<(), String> {
                             && i32::from(key) == sdl_events::WEBOS_HOME_KEYCODE =>
                         {
                             if !repeat {
-                                eprintln!("Luma Home key: returning to Home tab");
+                                eprintln!("Luma Home key: the menu");
                                 press = None;
                                 back_button.cancel();
-                                pending = state.return_home();
+                                pending = state.home_key();
                             }
                         }
                         _ if native_hold => {
@@ -1976,7 +1973,7 @@ fn run() -> Result<(), String> {
             }
             // SDL may deliver several navigation events in a single poll.
             if state.dirty {
-                scene = compose(&mut state, &assets, pill, pill_width, now);
+                scene = compose(&mut state, &assets, now);
             }
         }
         if back_button.held(Instant::now()) {
@@ -2108,19 +2105,6 @@ fn run() -> Result<(), String> {
         last_frame = Instant::now();
         // Update after input so a focus change starts in this frame, without an idle wait.
         state.animate(dt);
-        let navigation = view::navigation(&assets, state.preferences.language);
-        let target = navigation.items[state.page_index()].x;
-        let target_width = navigation.items[state.page_index()].w;
-        if state.preferences.reduced_motion
-            || ((pill - target).abs() < 0.2 && (pill_width - target_width).abs() < 0.2)
-        {
-            pill = target;
-            pill_width = target_width;
-        } else {
-            pill += (target - pill) * (1. - (-20. * dt).exp());
-            pill_width += (target_width - pill_width) * (1. - (-20. * dt).exp());
-            state.dirty = true;
-        }
         let final_frame = options.frames.is_some_and(|limit| frame + 1 >= limit)
             || (visible
                 && options
@@ -2128,7 +2112,7 @@ fn run() -> Result<(), String> {
                     .is_some_and(|limit| presented + 1 >= limit));
         if ((state.dirty || options.profile_frames.is_some()) && visible) || final_frame {
             let compose_started = Instant::now();
-            scene = compose(&mut state, &assets, pill, pill_width, now);
+            scene = compose(&mut state, &assets, now);
             let compose_ms = compose_started.elapsed().as_secs_f64() * 1000.;
             let (width, height) = window.drawable_size();
             if width > 0 && height > 0 {
@@ -2272,7 +2256,7 @@ fn run() -> Result<(), String> {
             if page != state.page {
                 let started = Instant::now();
                 let current = std::mem::replace(&mut state.page, page);
-                let hidden = view::scene_with_pill(&state, &assets, pill, pill_width, now);
+                let hidden = view::scene(&state, &assets, now);
                 state.page = current;
                 let (width, height) = window.drawable_size();
                 renderer.prepare(&hidden.draw, width, height);
@@ -2293,11 +2277,7 @@ fn run() -> Result<(), String> {
         // decoded need short timed wakes.
         let timeout = if !visible {
             250
-        } else if pill != target
-            || pill_width != target_width
-            || state.animating()
-            || options.profile_frames.is_some()
-        {
+        } else if state.animating() || options.profile_frames.is_some() {
             0
         } else if press.is_some()
             || back_button.press.is_some()

@@ -392,6 +392,8 @@ fn gallery_scrolls_under_fixed_switches_through_a_mask() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
+    // A page opens at its content; here, the gallery's, so the sidebar is a column of icons.
+    state.focus = Target::WallpaperGradient;
     state.set_wallpapers((1..=8).map(custom).collect());
     let before = controls(&state);
     state.wheel_scroll(&before, Some((1000., 600.)), 0, -3);
@@ -465,6 +467,8 @@ fn scrolled_backgrounds_cannot_capture_upload_or_sidebar_pointer_hits() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
+    // A page opens at its content; here, the gallery's, so the sidebar is a column of icons.
+    state.focus = Target::WallpaperGradient;
     state.scroll = 150.;
     let gallery = controls(&state);
     let upload = gallery
@@ -549,6 +553,8 @@ fn upload_discovery_does_not_apply_and_custom_selection_uses_immutable_paths() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
+    // A page opens at its content; here, the gallery's, so the sidebar is a column of icons.
+    state.focus = Target::WallpaperGradient;
     let item = custom(1);
     state.set_wallpapers(vec![item.clone()]);
     assert_eq!(state.preferences.background, "dunes");
@@ -899,6 +905,8 @@ fn apple_tv_is_the_last_gallery_entry_and_shows_its_place() {
     let mut state = ready();
     state.open(2);
     state.section = 1;
+    // A page opens at its content; here, the gallery's, so the sidebar is a column of icons.
+    state.focus = Target::WallpaperGradient;
     state.set_wallpapers(vec![custom(1)]);
     let last = state.background_count() - 1;
     assert_eq!(state.background_id(last), Some(crate::aerials::ID));

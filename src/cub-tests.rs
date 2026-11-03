@@ -356,19 +356,21 @@ fn release(card: &str, poster: Option<&str>, watched: bool) -> Release {
 
 #[test]
 fn posters_are_fetched_once_for_what_today_may_show() {
-    let mut cub = Cub::default();
-    cub.releases = vec![
-        release("tv_1", Some("/a.jpg"), false),
-        release("tv_2", Some("/b.jpg"), true),
-        release("tv_3", None, false),
-    ];
-    cub.watched = vec![Watched {
-        card: "tv_4".into(),
-        title: "Four".into(),
-        poster: Some("/c.jpg".into()),
-        episode: Some((1, 2)),
-        at: 1_000,
-    }];
+    let mut cub = Cub {
+        releases: vec![
+            release("tv_1", Some("/a.jpg"), false),
+            release("tv_2", Some("/b.jpg"), true),
+            release("tv_3", None, false),
+        ],
+        watched: vec![Watched {
+            card: "tv_4".into(),
+            title: "Four".into(),
+            poster: Some("/c.jpg".into()),
+            episode: Some((1, 2)),
+            at: 1_000,
+        }],
+        ..Default::default()
+    };
     assert_eq!(cub.wanted_posters(), ["/a.jpg", "/c.jpg"]);
     assert!(cub.wanted_posters().is_empty(), "asked once");
     assert!(cub.poster("/a.jpg").is_none());

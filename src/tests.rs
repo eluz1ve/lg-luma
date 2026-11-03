@@ -27,6 +27,8 @@ mod wallpaper_tests;
 
 #[path = "input-refresh-tests.rs"]
 mod input_refresh_tests;
+#[path = "menu-tests.rs"]
+mod menu_tests;
 
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
@@ -248,16 +250,14 @@ fn home_relaunch_resets_scrolled_favorites_and_keeps_remote_routes() {
 
     state.return_home();
     state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(0));
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.page, Page::Apps);
-    state.direction(Direction::Left, &controls(&state));
-    assert_eq!(state.page, Page::Home);
     assert_eq!(
         state.focus,
-        Target::Nav(0),
-        "Tab browsing stays in the header"
+        Target::App(favorites[0].clone()),
+        "no tabs above"
     );
+    state.direction(Direction::Left, &controls(&state));
+    assert!(matches!(state.overlay, Some(Overlay::Menu { .. })));
+    assert_eq!(state.focus, Target::Nav(0));
 }
 
 #[test]
@@ -292,14 +292,7 @@ fn scene(state: &State) -> view::Scene {
         metrics: BTreeMap::new(),
         artwork: crate::app_artwork::Service::new(false),
     };
-    let navigation = view::navigation(&assets, state.preferences.language);
-    view::scene_with_pill(
-        state,
-        &assets,
-        navigation.items[state.page_index()].x,
-        navigation.items[state.page_index()].w,
-        time::OffsetDateTime::UNIX_EPOCH,
-    )
+    view::scene(state, &assets, time::OffsetDateTime::UNIX_EPOCH)
 }
 
 fn controls(state: &State) -> Vec<crate::state::Control> {
@@ -371,21 +364,16 @@ fn widening_favorites_does_not_widen_apps_or_unclip_offscreen_rows() {
 }
 
 #[test]
-fn remote_routes_from_header_and_back_through_settings() {
+fn remote_routes_from_start_and_back_through_settings() {
     let mut state = ready();
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::App("netflix".into()));
-    state.direction(Direction::Up, &controls(&state));
-    assert_eq!(state.focus, Target::Nav(0));
     state.open(2);
-    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(0));
     state.activate();
     assert_eq!(state.focus, Target::Setting(0));
     assert!(state.back().is_empty());
     assert_eq!(state.focus, Target::Sidebar(0));
-    state.back();
-    assert_eq!(state.focus, Target::Nav(2));
     state.back();
     assert_eq!(state.page, Page::Home);
     assert_eq!(
@@ -505,7 +493,7 @@ fn keyboard_is_modal_and_back_preserves_then_clears_search() {
     assert_eq!(state.apps().len(), 1);
     state.back();
     assert!(state.query.is_empty());
-    assert_eq!(state.focus, Target::Nav(1));
+    assert_eq!(state.focus, Target::App("netflix".into()));
     assert_eq!(state.page, Page::Apps);
 }
 
@@ -584,13 +572,7 @@ fn asset_loading_and_unknown_app_cards_do_not_require_collected_artwork() {
             None,
         );
         state.open(1);
-        let scene = view::scene_with_pill(
-            &state,
-            &assets,
-            800.,
-            100.,
-            time::OffsetDateTime::UNIX_EPOCH,
-        );
+        let scene = view::scene(&state, &assets, time::OffsetDateTime::UNIX_EPOCH);
         assert!(scene.draw.iter().any(|draw| matches!(draw,
             crate::renderer::Draw::TintedImage(path, ..) if path.ends_with("ui-icons/generic.lvec"))));
         assert!(scene.draw.iter().any(|draw| matches!(draw,
@@ -709,7 +691,7 @@ fn pointer_focus_does_not_scroll_the_clicked_control() {
     state.scroll = 150.;
     state.pointer_focus(Target::App("netflix".into()));
     assert_eq!(state.scroll, 150.);
-    state.focus(Target::Nav(1), &controls(&state));
+    state.focus(Target::Filter(0), &controls(&state));
     assert_eq!(state.scroll, 0.);
 }
 
@@ -740,17 +722,6 @@ fn reordering_skips_hidden_and_unavailable_favorite_slots() {
         vec!["amazon", "missing", "youtube.leanback.v4", "netflix"]
     );
     assert_eq!(state.focus, Target::App("netflix".into()));
-}
-
-#[test]
-fn focused_navigation_tabs_switch_pages_immediately() {
-    let mut state = ready();
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.page, Page::Apps);
-    assert_eq!(state.focus, Target::Nav(1));
-    state.direction(Direction::Right, &controls(&state));
-    assert_eq!(state.page, Page::Settings);
-    assert_eq!(state.focus, Target::Nav(2));
 }
 
 #[test]
@@ -1605,7 +1576,7 @@ fn deletion_completion_does_not_steal_focus_after_dismissal() {
     state.open(2);
     state.uninstall_response("netflix".into(), Ok(()));
     assert_eq!(state.page, Page::Settings);
-    assert_eq!(state.focus, Target::Nav(2));
+    assert_eq!(state.focus, Target::Sidebar(0));
     assert!(state.overlay.is_none());
 }
 
@@ -2418,7 +2389,6 @@ fn interface_scale_is_chosen_like_input_visibility_and_stays_open() {
     use crate::state::Subpage;
     let mut state = ready();
     state.open(2);
-    state.direction(Direction::Down, &controls(&state));
     state.direction(Direction::Right, &controls(&state));
     for _ in 0..5 {
         state.direction(Direction::Down, &controls(&state));
@@ -2777,7 +2747,6 @@ fn widgets_group_existing_settings_and_restore_each_parent_without_changing_pref
     );
     state.direction(Direction::Down, &controls(&state));
     state.direction(Direction::Down, &controls(&state));
-    state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Sidebar(WIDGETS_SECTION));
     state.direction(Direction::Right, &controls(&state));
     assert_eq!(state.focus, Target::Widget(4));
@@ -3014,8 +2983,8 @@ fn language_list_scrolls_under_the_title_through_a_soft_edge() {
             )
         })
         .unwrap();
-    for key in ["interface", "settings"] {
-        let label = state.preferences.language.t(key);
+    {
+        let label = state.preferences.language.t("interface");
         let fixed = rendered
             .draw
             .iter()
@@ -3027,16 +2996,6 @@ fn language_list_scrolls_under_the_title_through_a_soft_edge() {
             .unwrap();
         assert!(fixed > last_language);
     }
-    let nav = rendered
-        .controls
-        .iter()
-        .find(|control| control.target == Target::Nav(2))
-        .unwrap();
-    let (x, y) = nav.rect.center();
-    assert_eq!(
-        state.hit_test(&rendered.controls, x, y),
-        Some(Target::Nav(2))
-    );
 }
 
 #[test]
@@ -3059,26 +3018,13 @@ fn apps_scroll_behind_navigation_without_a_top_cutoff_or_fade() {
             )
         })
         .expect("cards remain drawn until they leave the screen, not the content viewport");
-    let nav_label = rendered
+    // The clock is drawn over the cards scrolling under it.
+    let clock = rendered
         .draw
         .iter()
-        .rposition(|draw| {
-            matches!(draw,
-                Draw::Text(label, ..) if label == state.preferences.language.t("apps")
-            )
-        })
+        .rposition(|draw| matches!(draw, Draw::Text(label, ..) if label.contains(':')))
         .unwrap();
-    assert!(card < nav_label);
-    let nav = rendered
-        .controls
-        .iter()
-        .find(|control| control.target == Target::Nav(1))
-        .unwrap();
-    let (x, y) = nav.rect.center();
-    assert_eq!(
-        state.hit_test(&rendered.controls, x, y),
-        Some(Target::Nav(1))
-    );
+    assert!(card < clock);
 }
 
 #[test]
@@ -3224,27 +3170,6 @@ fn clock_date_and_home_input_descriptions_use_larger_text() {
             Draw::Text(text, rect, style, ..) if text == &description && style.size > 16.8 && style.size <= 22. && rect.h >= 22. * 1.2
         )));
     }
-}
-
-#[test]
-fn tv_settings_button_is_centered_alongside_navigation() {
-    let rendered = scene(&ready());
-    let button = rendered
-        .controls
-        .iter()
-        .find(|control| control.target == Target::TvSettings)
-        .unwrap();
-    assert!((button.rect.y + button.rect.h / 2. - (42.5 + 68.6 / 2.)).abs() < 0.01);
-    assert_eq!(button.rect.h, 60.);
-    assert_eq!(button.rect.w, button.rect.h);
-    assert_eq!(button.rect.x + button.rect.w, 1840.);
-    // The clock opposite it starts at the same safe area.
-    assert!(rendered.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(text, rect, ..) if text.contains(':') && rect.x == 80. && rect.y < 100.)));
-    let (x, y) = button.rect.center();
-    assert_eq!(
-        ready().hit_test(&rendered.controls, x, y),
-        Some(Target::TvSettings)
-    );
 }
 
 #[test]
@@ -4353,7 +4278,8 @@ fn the_tab_bar_and_filters_slide_away_with_the_grid() {
     state.reveal_focus(&controls_now);
     settle(&mut state);
     assert!(state.scroll > 0.);
-    for target in [Target::Nav(0), Target::Filter(0)] {
+    {
+        let target = Target::Filter(0);
         let rect = control_rect(&state, &target).unwrap();
         assert!(
             rect.y + rect.h <= 0.,
@@ -4382,20 +4308,10 @@ fn up_from_the_first_row_brings_the_bar_back() {
 }
 
 #[test]
-fn a_hidden_tab_cannot_be_clicked() {
-    let mut state = apps_page(30);
-    settle(&mut state);
-    state.scroll = 600.;
-    settle(&mut state);
-    let hit = state.hit_test(&controls(&state), 900., 76.);
-    assert!(!matches!(hit, Some(Target::Nav(_))), "{hit:?}");
-}
-
-#[test]
 fn apps_scroll_and_focus_ease_like_home() {
     let mut state = apps_page(30);
     settle(&mut state);
-    state.focus = Target::App(state.apps()[0].id.clone());
+    state.focus = Target::App(state.apps()[1].id.clone());
     state.scroll = 300.;
     state.animate(1. / 60.);
     assert!(state.page_scroll() > 0. && state.page_scroll() < 300.);
@@ -4408,14 +4324,12 @@ fn apps_scroll_and_focus_ease_like_home() {
 }
 
 #[test]
-fn a_slightly_scrolled_home_hides_the_whole_tab_bar_never_half() {
+fn a_slightly_scrolled_home_moves_the_chrome_away_whole_never_half() {
     let mut state = ready();
     settle(&mut state);
     state.scroll = 30.;
     settle(&mut state);
     assert_eq!(state.chrome_offset(), crate::state::CHROME_TRAVEL);
-    let tab = control_rect(&state, &Target::Nav(0)).unwrap();
-    assert!(tab.y + tab.h <= 0., "{tab:?}");
     state.scroll = 0.;
     settle(&mut state);
     assert_eq!(state.chrome_offset(), 0.);

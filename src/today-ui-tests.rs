@@ -11,12 +11,9 @@ fn at(state: &State) -> view::Scene {
         metrics: BTreeMap::new(),
         artwork: crate::app_artwork::Service::new(false),
     };
-    let navigation = view::navigation(&assets, state.preferences.language);
-    view::scene_with_pill(
+    view::scene(
         state,
         &assets,
-        navigation.items[state.page_index()].x,
-        navigation.items[state.page_index()].w,
         time::OffsetDateTime::from_unix_timestamp(NOW).unwrap(),
     )
 }
@@ -121,7 +118,7 @@ fn no_today_lines_hide_the_card_without_moving_favorites() {
 }
 
 #[test]
-fn up_from_the_first_favorite_reaches_today_then_the_tabs() {
+fn up_from_the_first_favorite_reaches_today_and_stops_at_its_top() {
     let mut state = today_state();
     let first = state.apps()[0].id.clone();
     state.focus = Target::App(first.clone());
@@ -130,12 +127,14 @@ fn up_from_the_first_favorite_reaches_today_then_the_tabs() {
     state.direction(Direction::Up, &at(&state).controls);
     assert_eq!(state.focus, Target::TodayMatch("m1".into()));
     state.direction(Direction::Up, &at(&state).controls);
-    assert_eq!(state.focus, Target::Nav(0));
-    // Without lines, Up from a favorite reaches the tabs.
-    let mut state = ready();
-    state.focus = Target::App(first);
-    state.direction(Direction::Up, &at(&state).controls);
-    assert_eq!(state.focus, Target::Nav(0));
+    assert_eq!(
+        state.focus,
+        Target::TodayMatch("m1".into()),
+        "no tabs above"
+    );
+    // Left from Today: nothing lies to its left but the menu.
+    state.direction(Direction::Left, &at(&state).controls);
+    assert!(matches!(state.overlay, Some(Overlay::Menu { .. })));
 }
 
 #[test]
