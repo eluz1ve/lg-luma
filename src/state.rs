@@ -128,6 +128,12 @@ pub enum Target {
     TodayMatch(String),
     /// An episode line of Home's Today card, by the show's TVmaze id.
     TodayShow(i64),
+    /// A Lampa line of Home's Today card, by its CUB card ("tv_2190"): opens Lampa.
+    TodayLampa(String),
+    /// Widgets › Lampa: sign in to CUB, or out.
+    LampaAccount,
+    /// Widgets › Lampa: its lines in the Today card.
+    LampaToday,
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
@@ -147,6 +153,16 @@ pub enum Target {
     TileTest(String),
     TileRemove(String),
     TileEditor,
+}
+
+impl Target {
+    /// A line of Home's Today card.
+    pub fn in_today(&self) -> bool {
+        matches!(
+            self,
+            Target::TodayMatch(_) | Target::TodayShow(_) | Target::TodayLampa(_)
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -195,6 +211,8 @@ pub enum Overlay {
     SystemKeyboard,
     WallpaperUpload,
     TileEditor,
+    /// Signing in to CUB: its code and QR code while the user confirms on their phone.
+    CubSignIn,
     BackgroundOptions {
         id: String,
         restore: Target,
@@ -227,6 +245,8 @@ pub enum Subpage {
     /// Widgets › CS2 Score.
     Cs2,
     Shows,
+    /// Widgets › Lampa: the CUB account whose shows Today lists.
+    Lampa,
     Input(String),
     WeatherLocation,
     Temperature,
@@ -337,6 +357,10 @@ pub struct State {
     /// The first of the CS2 Score cards in view; Left and Right scroll through the rest.
     pub cs2_first: usize,
     pub shows: crate::shows::Shows,
+    /// Lampa's CUB account, for the Today card.
+    pub cub: crate::cub::Cub,
+    /// The user signed out of CUB: its kept sign-in is to be removed.
+    pub cub_forget: bool,
     /// The first of the TV Shows cards in view; Left and Right scroll through the rest.
     pub shows_first: usize,
     pub keyboard_field: TextField,
@@ -393,6 +417,8 @@ impl State {
             cs2: crate::cs2::Scores::default(),
             cs2_first: 0,
             shows: crate::shows::Shows::default(),
+            cub: crate::cub::Cub::default(),
+            cub_forget: false,
             shows_first: 0,
             keyboard_field: TextField::Apps,
             greeting_name_draft: String::new(),
@@ -548,6 +574,7 @@ impl State {
                         | Target::Show(_)
                         | Target::TodayMatch(_)
                         | Target::TodayShow(_)
+                        | Target::TodayLampa(_)
                 ),
                 // A settings row grows to show its description.
                 Page::Settings => matches!(
@@ -1006,7 +1033,7 @@ impl State {
         // A Today line can leave the card (a match ends, the day turns): focus the favorites.
         if self.page == Page::Home
             && self.overlay.is_none()
-            && matches!(self.focus, Target::TodayMatch(_) | Target::TodayShow(_))
+            && self.focus.in_today()
             && !controls.iter().any(|c| c.target == self.focus)
         {
             self.focus = self.first_content();
@@ -1124,6 +1151,16 @@ impl State {
         };
         self.notify(message);
         vec![]
+    }
+
+    /// The user confirmed CUB's code: the sign-in dialog gives way to Lampa's settings.
+    pub fn cub_signed_in(&mut self) {
+        if matches!(self.overlay, Some(Overlay::CubSignIn)) {
+            self.overlay = None;
+            self.focus = Target::LampaAccount;
+            self.pressed = None;
+        }
+        self.notify(self.preferences.language.t("lampaSignedIn").to_owned());
     }
 
     /// Scrolls the TV Shows row so the card at `index` is in view.
@@ -1497,6 +1534,7 @@ impl State {
             Some(Subpage::Weather) => Target::Widget(1),
             Some(Subpage::Cs2) => Target::Widget(6),
             Some(Subpage::Shows) => Target::Widget(7),
+            Some(Subpage::Lampa) => Target::Widget(8),
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Crypto) => Target::Widget(5),
@@ -1543,7 +1581,7 @@ impl State {
         }
         if matches!(
             self.overlay,
-            Some(Overlay::WallpaperUpload | Overlay::TileEditor)
+            Some(Overlay::WallpaperUpload | Overlay::TileEditor | Overlay::CubSignIn)
         ) {
             return vec![];
         }
@@ -1593,9 +1631,7 @@ impl State {
                         Direction::Up => {
                             let today = controls
                                 .iter()
-                                .filter(|c| {
-                                    matches!(c.target, Target::TodayMatch(_) | Target::TodayShow(_))
-                                })
+                                .filter(|c| c.target.in_today())
                                 .max_by(|a, b| a.rect.y.total_cmp(&b.rect.y))
                                 .map(|c| c.target.clone());
                             self.focus(today.unwrap_or(Target::Nav(0)), controls)
@@ -1761,6 +1797,8 @@ impl State {
                     | Target::Cs2Layout
                     | Target::ShowsToggle
                     | Target::ShowsLayout
+                    | Target::LampaAccount
+                    | Target::LampaToday
                     | Target::Cs2Major
                     | Target::Cs2Results
                     | Target::InputMode(_)
@@ -1847,11 +1885,9 @@ impl State {
             }
             // The Today card's lines: Up and Down step through them, then reach the tabs above
             // or the favorites below; Left and Right stay.
-            if matches!(self.focus, Target::TodayMatch(_) | Target::TodayShow(_)) {
-                let mut lines: Vec<&Control> = controls
-                    .iter()
-                    .filter(|c| matches!(c.target, Target::TodayMatch(_) | Target::TodayShow(_)))
-                    .collect();
+            if self.focus.in_today() {
+                let mut lines: Vec<&Control> =
+                    controls.iter().filter(|c| c.target.in_today()).collect();
                 lines.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
                 let index = lines.iter().position(|c| c.target == self.focus);
                 let next = match (direction, index) {
@@ -1883,7 +1919,7 @@ impl State {
                 }
                 return vec![];
             }
-            // CS2 Score's and TV Shows' switches: Right does nothing and Up from the first
+            // CS2 Score's, TV Shows' and Lampa's rows: Right does nothing and Up from the first
             // reaches the tabs.
             if matches!(
                 self.focus,
@@ -1893,11 +1929,16 @@ impl State {
                     | Target::Cs2Results
                     | Target::ShowsToggle
                     | Target::ShowsLayout
+                    | Target::LampaAccount
+                    | Target::LampaToday
             ) {
                 match direction {
                     Direction::Right => return vec![],
                     Direction::Up
-                        if matches!(self.focus, Target::Cs2Toggle | Target::ShowsToggle) =>
+                        if matches!(
+                            self.focus,
+                            Target::Cs2Toggle | Target::ShowsToggle | Target::LampaAccount
+                        ) =>
                     {
                         self.focus(Target::Nav(2), controls);
                         return vec![];
@@ -2682,6 +2723,34 @@ impl State {
                     return self.open_show(&show);
                 }
             }
+            Target::TodayLampa(_) => {
+                let lampa = self.inventory.apps.iter().find(|app| {
+                    app.id.to_lowercase().contains("lampa")
+                        || app.title.to_lowercase().contains("lampa")
+                });
+                match lampa {
+                    Some(app) => return vec![Effect::Launch(app.id.clone())],
+                    None => self.notify(self.preferences.language.t("lampaNoApp").to_owned()),
+                }
+            }
+            Target::LampaAccount => {
+                if self.cub.signed_in() {
+                    self.cub.sign_out();
+                    self.cub_forget = true;
+                } else {
+                    self.cub.begin();
+                    self.overlay = Some(Overlay::CubSignIn);
+                    self.focus = Target::CloseDialog;
+                    self.pressed = None;
+                    if !self.preferences.reduced_motion {
+                        self.panel_started = Some(Instant::now());
+                    }
+                }
+            }
+            Target::LampaToday => {
+                self.preferences.lampa_today = !self.preferences.lampa_today;
+                return vec![Effect::Save];
+            }
             Target::Cs2Close => return self.back(),
             Target::ShowsToggle => {
                 self.preferences.show_shows = !self.preferences.show_shows;
@@ -2810,6 +2879,7 @@ impl State {
                     1 => (Subpage::Weather, Target::WeatherToggle),
                     6 => (Subpage::Cs2, Target::Cs2Toggle),
                     7 => (Subpage::Shows, Target::ShowsToggle),
+                    8 => (Subpage::Lampa, Target::LampaAccount),
                     2 => (Subpage::Shortcuts, Target::TileEditor),
                     4 => (Subpage::Date, Target::DateToggle),
                     5 => (Subpage::Crypto, Target::CryptoToggle),
@@ -3133,7 +3203,7 @@ impl State {
                     ) => {
                         return vec![];
                     }
-                    Some(Subpage::Cs2 | Subpage::Shows) => return vec![],
+                    Some(Subpage::Cs2 | Subpage::Shows | Subpage::Lampa) => return vec![],
                     None => return vec![],
                 }
                 self.close_subpage();
@@ -3306,6 +3376,12 @@ impl State {
             if matches!(overlay, Overlay::TileEditor) {
                 self.tile_editor = None;
                 self.focus = Target::TileEditor;
+                self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::CubSignIn) {
+                self.cub.cancel();
+                self.focus = Target::LampaAccount;
                 self.pressed = None;
                 return vec![];
             }

@@ -377,6 +377,8 @@ pub struct Preferences {
     pub cs2_today: bool,
     /// Today's episodes in the Today card instead of TV Shows' own row.
     pub shows_today: bool,
+    /// Lampa's releases and history (from CUB) in the Today card, in place of TVmaze's episodes.
+    pub lampa_today: bool,
     /// Liquipedia's tier 1 and 2 events only.
     #[serde(deserialize_with = "crate::cs2::deserialize_enabled")]
     pub cs2_major_only: bool,
@@ -443,6 +445,7 @@ impl Default for Preferences {
             show_shows: false,
             cs2_today: true,
             shows_today: true,
+            lampa_today: true,
             cs2_major_only: true,
             cs2_results: true,
             input_modes: BTreeMap::new(),

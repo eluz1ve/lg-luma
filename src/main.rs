@@ -14,6 +14,9 @@ mod crypto_service;
 mod cs2;
 #[path = "cs2-service.rs"]
 mod cs2_service;
+mod cub;
+#[path = "cub-service.rs"]
+mod cub_service;
 mod damage;
 mod diagnostics;
 mod egl_damage;
@@ -633,6 +636,79 @@ fn shows_tick(
     }
 }
 
+/// Lampa's CUB account: the sign-in's polls and the account's reads go to the worker while the
+/// TV shows Luma, and their answers come back into Today; the sign-in is kept at `path`.
+fn cub_tick(
+    state: &mut State,
+    service: &cub_service::Service,
+    path: &std::path::Path,
+    visible: bool,
+    offset: time::UtcOffset,
+) {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    if std::mem::take(&mut state.cub_forget) {
+        cub::forget(path);
+    }
+    if visible {
+        match state.cub.due(now) {
+            Some(cub::Due::SignIn) => service.send(cub_service::Command::SignIn),
+            Some(cub::Due::Poll(device_code)) => {
+                service.send(cub_service::Command::Poll { device_code })
+            }
+            Some(cub::Due::Read {
+                id,
+                tokens,
+                profile,
+            }) => {
+                let today = OffsetDateTime::now_utc().to_offset(offset).date();
+                service.send(cub_service::Command::Read {
+                    id,
+                    tokens,
+                    profile,
+                    range: cub::range(today),
+                });
+            }
+            None => {}
+        }
+    }
+    let keep = |cub: &cub::Cub| {
+        if let Some(tokens) = &cub.tokens
+            && let Err(error) = cub::save(path, tokens, cub.profile.as_ref())
+        {
+            eprintln!("Luma CUB sign-in could not be kept: {error}");
+        }
+    };
+    while let Ok(response) = service.receiver.try_recv() {
+        state.dirty = true;
+        match response {
+            cub_service::Response::Login(result) => state.cub.login(result, now),
+            cub_service::Response::Grant { device_code, grant } => {
+                if state.cub.grant(&device_code, grant, now).is_some() {
+                    keep(&state.cub);
+                    state.cub_signed_in();
+                }
+            }
+            cub_service::Response::Account {
+                id,
+                refreshed,
+                result,
+            } => match state.cub.account(id, refreshed, result, now) {
+                cub::Saved::Tokens => keep(&state.cub),
+                cub::Saved::Forget => cub::forget(path),
+                cub::Saved::Nothing => {}
+            },
+            cub_service::Response::Poster { path, image } => {
+                state.cub.accept_poster(path, image);
+            }
+        }
+    }
+    if visible {
+        for poster in state.cub.wanted_posters() {
+            service.poster(poster);
+        }
+    }
+}
+
 /// The country whose TV schedule joins the streaming one, from the UI language.
 fn shows_country(language: i18n::Language) -> &'static str {
     match language.code() {
@@ -871,6 +947,11 @@ fn run() -> Result<(), String> {
         options.test_update_version.is_some(),
     );
     let mut state = State::new(initial_preferences);
+    // Lampa's CUB sign-in, kept beside the preferences and never in them.
+    let cub_path = preferences_path.with_file_name("cub.json");
+    if let Some((tokens, profile)) = cub::load(&cub_path) {
+        state.cub.sign_in_with(tokens, profile);
+    }
     if let Some(version) = &options.test_update_version {
         eprintln!(
             "Luma update preview: simulated version {version}; public release check disabled"
@@ -927,6 +1008,7 @@ fn run() -> Result<(), String> {
         options.cs2_test_server.as_deref(),
     )?);
     let shows_service = shows_service::Service::new(shows_service::Client::new());
+    let cub_service = cub_service::Service::new(cub_service::Client::new());
     let updates = update::Worker::new(webos && public_update_checks);
     let homebrew = homebrew_updates::Worker::new(webos && public_update_checks);
     let platform = Platform::new(
@@ -1470,6 +1552,7 @@ fn run() -> Result<(), String> {
         }
         cs2_tick(&mut state, &cs2_service, visible);
         shows_tick(&mut state, &shows_service, visible, local_offset);
+        cub_tick(&mut state, &cub_service, &cub_path, visible, local_offset);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],
@@ -1950,6 +2033,7 @@ fn run() -> Result<(), String> {
         }
         cs2_tick(&mut state, &cs2_service, visible);
         shows_tick(&mut state, &shows_service, visible, local_offset);
+        cub_tick(&mut state, &cub_service, &cub_path, visible, local_offset);
         if weather_tick(&mut state, &weather_service, visible) {
             running &= effects(
                 vec![Effect::Save],

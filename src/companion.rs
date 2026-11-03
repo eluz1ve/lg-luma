@@ -63,18 +63,23 @@ pub fn listen(loopback_only: bool) -> Result<TcpListener, String> {
 
 pub fn session(address: SocketAddr, token: &str) -> Result<Session, String> {
     let url = format!("http://{address}/{token}/");
+    let (qr_size, qr) = qr(&url)?;
+    Ok(Session { url, qr_size, qr })
+}
+
+/// `text`'s QR code: its width in modules, and the modules row by row.
+pub fn qr(text: &str) -> Result<(i32, Vec<bool>), String> {
     // Highest correction reserves capacity for the small branded center mark.
-    let qr = qrcodegen::QrCode::encode_text(&url, qrcodegen::QrCodeEcc::High)
+    let qr = qrcodegen::QrCode::encode_text(text, qrcodegen::QrCodeEcc::High)
         .map_err(|e| e.to_string())?;
     let size = qr.size();
-    Ok(Session {
-        url,
-        qr_size: size,
-        qr: (0..size)
+    Ok((
+        size,
+        (0..size)
             .flat_map(|y| (0..size).map(move |x| (x, y)))
             .map(|(x, y)| qr.get_module(x, y))
             .collect(),
-    })
+    ))
 }
 
 pub fn read_exact(

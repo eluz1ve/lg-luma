@@ -491,6 +491,149 @@ fn tile_editor(out: &mut Scene, state: &State, assets: &Assets) {
     );
 }
 
+/// A QR code 336 pixels wide at most, centred on the screen from `y`, light on dark to sit in a
+/// modal, with Luma's mark in its middle.
+fn qr_code(out: &mut Scene, assets: &Assets, size: i32, qr: &[bool], y: f32) {
+    let scale = (336. / (size + 8) as f32).floor();
+    let side = (size + 8) as f32 * scale;
+    let x = (1920. - side) / 2.;
+    // Invert the normal QR polarity to blend into the dark modal, while
+    // retaining a high-contrast foreground and the full quiet zone.
+    let background = c(0x1b2023, 1.);
+    let modules = c(0xf5f4ef, 1.);
+    out.shape(Rect::new(x, y, side, side), 0., background);
+    for row in 0..size {
+        // Merge contiguous modules so QR rendering stays a few hundred quads.
+        let mut column = 0;
+        while column < size {
+            let mark_start = (size - 11) / 2;
+            let in_mark = (mark_start..mark_start + 11).contains(&row)
+                && (mark_start..mark_start + 11).contains(&column);
+            if in_mark {
+                column += 1;
+                continue;
+            }
+            if !qr[(row * size + column) as usize] {
+                column += 1;
+                continue;
+            }
+            let start = column;
+            while column < size {
+                let in_mark = (mark_start..mark_start + 11).contains(&row)
+                    && (mark_start..mark_start + 11).contains(&column);
+                if in_mark || !qr[(row * size + column) as usize] {
+                    break;
+                }
+                column += 1;
+            }
+            out.shape(
+                Rect::new(
+                    x + (start + 4) as f32 * scale,
+                    y + (row + 4) as f32 * scale,
+                    (column - start) as f32 * scale,
+                    scale,
+                ),
+                0.,
+                modules,
+            );
+        }
+    }
+    let mark_start = (size - 11) / 2;
+    let mark_plate = Rect::new(
+        x + (mark_start + 4) as f32 * scale,
+        y + (mark_start + 4) as f32 * scale,
+        11. * scale,
+        11. * scale,
+    );
+    out.shape(mark_plate, 1.1 * scale, background);
+    let mark = Rect::new(
+        mark_plate.x + 1.25 * scale,
+        mark_plate.y + 1.25 * scale,
+        8.5 * scale,
+        8.5 * scale,
+    );
+    out.icon(assets, "luma-mark", mark, WHITE);
+}
+
+/// Signing in to CUB for Lampa's shows: the code to type at cub.red/activate, and a QR code
+/// that opens the page with the code filled in. It closes itself once the user confirms.
+fn cub_sign_in(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let panel = Rect::new(520., 144., 880., 816.);
+    out.modal = Some(panel);
+    out.shadow(panel, 24., 40., 12., 0.3);
+    out.modal_glass(panel, 24.);
+    out.text(
+        language.t("lampaSignInTitle"),
+        Rect::new(584., 198., 752., 48.),
+        text(32., 550, -0.02),
+        WHITE,
+        true,
+    );
+    let login = state
+        .cub
+        .login
+        .as_ref()
+        .and_then(|login| Some((login, crate::companion::qr(&login.link).ok()?)));
+    match login {
+        Some((login, (size, modules))) => {
+            out.text(
+                language.format("lampaSignInHint", &[("uri", &login.uri)]),
+                Rect::new(604., 244., 712., 60.),
+                text(19., 400, 0.).leading(1.4),
+                c(0xffffff, 0.65),
+                true,
+            );
+            qr_code(out, assets, size, &modules, 310.);
+            out.text(
+                &login.user_code,
+                Rect::new(568., 672., 784., 64.),
+                text(52., 650, 0.12),
+                WHITE,
+                true,
+            );
+            out.text(
+                &login.uri,
+                Rect::new(568., 748., 784., 32.),
+                text(22., 500, 0.),
+                c(0xffffff, 0.75),
+                true,
+            );
+            out.text(
+                language.t("lampaSignInPrivate"),
+                Rect::new(604., 806., 712., 22.),
+                text(15., 400, 0.),
+                c(0xffffff, 0.5),
+                true,
+            );
+        }
+        None => {
+            let key = if state.cub.signing_in {
+                "lampaSignInStarting"
+            } else {
+                "lampaSignInError"
+            };
+            out.text(
+                language.t(key),
+                Rect::new(604., 470., 712., 90.),
+                text(22., 450, 0.).leading(1.5),
+                c(0xffffff, 0.75),
+                true,
+            );
+        }
+    }
+    let close = Rect::new(812., 862., 296., 56.);
+    out.pill(close, state.focus == Target::CloseDialog, false);
+    out.text(
+        language.t("close"),
+        Rect::new(close.x, close.y + 15., close.w, 28.),
+        text(20., 550, 0.),
+        c(0x171c20, 1.),
+        true,
+    );
+    out.control(Target::CloseDialog, close, false);
+}
+
 /// A QR code and address for a page on the owner's phone or computer, with a Close button.
 fn companion(
     out: &mut Scene,
@@ -520,66 +663,7 @@ fn companion(
     );
     match session {
         Some(Ok(session)) => {
-            let scale = (336. / (session.qr_size + 8) as f32).floor();
-            let size = (session.qr_size + 8) as f32 * scale;
-            let x = (1920. - size) / 2.;
-            let y = 310.;
-            // Invert the normal QR polarity to blend into the dark modal, while
-            // retaining a high-contrast foreground and the full quiet zone.
-            let background = c(0x1b2023, 1.);
-            let modules = c(0xf5f4ef, 1.);
-            out.shape(Rect::new(x, y, size, size), 0., background);
-            for row in 0..session.qr_size {
-                // Merge contiguous modules so QR rendering stays a few hundred quads.
-                let mut column = 0;
-                while column < session.qr_size {
-                    let mark_start = (session.qr_size - 11) / 2;
-                    let in_mark = (mark_start..mark_start + 11).contains(&row)
-                        && (mark_start..mark_start + 11).contains(&column);
-                    if in_mark {
-                        column += 1;
-                        continue;
-                    }
-                    if !session.qr[(row * session.qr_size + column) as usize] {
-                        column += 1;
-                        continue;
-                    }
-                    let start = column;
-                    while column < session.qr_size {
-                        let in_mark = (mark_start..mark_start + 11).contains(&row)
-                            && (mark_start..mark_start + 11).contains(&column);
-                        if in_mark || !session.qr[(row * session.qr_size + column) as usize] {
-                            break;
-                        }
-                        column += 1;
-                    }
-                    out.shape(
-                        Rect::new(
-                            x + (start + 4) as f32 * scale,
-                            y + (row + 4) as f32 * scale,
-                            (column - start) as f32 * scale,
-                            scale,
-                        ),
-                        0.,
-                        modules,
-                    );
-                }
-            }
-            let mark_start = (session.qr_size - 11) / 2;
-            let mark_plate = Rect::new(
-                x + (mark_start + 4) as f32 * scale,
-                y + (mark_start + 4) as f32 * scale,
-                11. * scale,
-                11. * scale,
-            );
-            out.shape(mark_plate, 1.1 * scale, background);
-            let mark = Rect::new(
-                mark_plate.x + 1.25 * scale,
-                mark_plate.y + 1.25 * scale,
-                8.5 * scale,
-                8.5 * scale,
-            );
-            out.icon(assets, "luma-mark", mark, WHITE);
+            qr_code(out, assets, session.qr_size, &session.qr, 310.);
             out.text(
                 language.t("wallpaperUploadBrowser"),
                 Rect::new(604., 670., 712., 32.),
@@ -835,6 +919,7 @@ pub fn scene_with_pill(
         | Overlay::Keyboard
         | Overlay::WallpaperUpload
         | Overlay::TileEditor
+        | Overlay::CubSignIn
         | Overlay::Cs2Match { .. }),
     ) = &state.overlay
     {
@@ -884,6 +969,7 @@ pub fn scene_with_pill(
             Overlay::Keyboard => keyboard(&mut out, state, assets),
             Overlay::WallpaperUpload => wallpaper_upload(&mut out, state, assets),
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
+            Overlay::CubSignIn => cub_sign_in(&mut out, state, assets),
             Overlay::Cs2Match { id, .. } => cs2_dialog(&mut out, state, assets, id, now),
             Overlay::SystemKeyboard | Overlay::Recents { .. } => {}
         }
@@ -2011,6 +2097,70 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
 }
 
+/// Widgets › Lampa: sign in to the CUB account Lampa syncs to (or out), and whether its shows
+/// fill the Today card; below, where they come from and how fresh they are.
+fn lampa_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let s = state.scroll;
+    let cub = &state.cub;
+    let name = cub.profile.as_ref().map(|profile| profile.name.as_str());
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::LampaAccount,
+            rect: Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, ROW_HEIGHT),
+            title: language.t(if cub.signed_in() {
+                "lampaSignOut"
+            } else {
+                "lampaSignIn"
+            }),
+            icon: Some("power"),
+            value: name.filter(|_| cub.signed_in()),
+            description: None,
+            selected: false,
+            chevron: !cub.signed_in(),
+        },
+    );
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::LampaToday,
+            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
+            title: language.t("lampaInToday"),
+            icon: Some("eye"),
+            value: Some(language.t(if state.preferences.lampa_today {
+                "stateOn"
+            } else {
+                "stateOff"
+            })),
+            description: None,
+            selected: false,
+            chevron: false,
+        },
+    );
+    let status = language.t(if cub.signed_in() && cub.failed {
+        "lampaUnavailable"
+    } else {
+        "lampaSource"
+    });
+    out.text(
+        status,
+        Rect::new(
+            LIST_X + 24.,
+            LIST_TOP + 2. * LIST_PITCH + 6. - s,
+            LIST_WIDTH - 48.,
+            120.,
+        ),
+        text(type_scale::CAPTION, 450, 0.).leading(1.4).shadow(),
+        c(0xf5f5f5, 0.72),
+        false,
+    );
+}
+
 /// Where a widget sits on Home: in the Today card, or in a row of its own.
 fn place(language: Language, today: bool) -> &'static str {
     language.t(if today { "placeToday" } else { "placeRow" })
@@ -2019,7 +2169,20 @@ fn place(language: Language, today: bool) -> &'static str {
 /// The Today card's lines for this moment, over the TV's local day.
 fn today_lines(state: &State, now: OffsetDateTime) -> crate::today::Today {
     let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
-    crate::today::today(state, now.unix_timestamp(), (midnight, midnight + 86_400))
+    crate::today::today(
+        state,
+        now.unix_timestamp(),
+        (midnight, midnight + 86_400),
+        now.date(),
+    )
+}
+
+/// A Lampa line's poster, or the TV icon until it loads.
+fn lampa_poster(out: &mut Scene, state: &State, assets: &Assets, path: Option<&str>, icon: Rect) {
+    match path.and_then(|path| state.cub.poster(path)) {
+        Some(poster) => out.draw.push(Draw::Cover(poster, icon, 8., [1.; 4])),
+        None => out.icon(assets, "tv", icon.inset(6.), c(0xf5f5f5, 0.7)),
+    }
 }
 
 const TODAY_PAD: f32 = 20.;
@@ -2080,6 +2243,9 @@ fn today_card(
         let target = match line {
             Line::Match { id } => Some(Target::TodayMatch(id.clone())),
             Line::Episode { show, .. } => Some(Target::TodayShow(*show)),
+            Line::Release { card, .. } | Line::Continue { card } => {
+                Some(Target::TodayLampa(card.clone()))
+            }
             Line::Crypto => None,
         };
         if let Some(target) = &target {
@@ -2153,6 +2319,57 @@ fn today_card(
                     None => time,
                 };
                 (title, when, c(0xe8e8e8, 0.62))
+            }
+            Line::Release { card, date } => {
+                let Some(release) = state
+                    .cub
+                    .releases
+                    .iter()
+                    .find(|r| &r.card == card && r.date == *date)
+                else {
+                    continue;
+                };
+                lampa_poster(out, state, assets, release.poster.as_deref(), icon);
+                use crate::cub::Badge;
+                let label = language.t(match release.badge {
+                    Badge::Finale => "lampaFinale",
+                    Badge::SeasonPremiere => "lampaSeasonPremiere",
+                    Badge::Premiere => "lampaPremiere",
+                    Badge::Movie => "lampaMovie",
+                    _ if release.date == now.date() => "lampaToday",
+                    _ => "lampaNew",
+                });
+                let episodes = match release.episodes.as_slice() {
+                    _ if release.season == 0 => None,
+                    [first] => Some(format!("S{} E{first}", release.season)),
+                    [first, .., last] => Some(format!("S{} E{first}–{last}", release.season)),
+                    [] => None,
+                };
+                let when = [episodes.as_deref(), Some(label)]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                // Out today: the line's news, in the accent; earlier ones wait in grey.
+                let tone = if release.date == now.date() {
+                    c(0x9fd0ff, 0.95)
+                } else {
+                    c(0xe8e8e8, 0.62)
+                };
+                (release.title.clone(), when, tone)
+            }
+            Line::Continue { card } => {
+                let Some(watched) = state.cub.watched.iter().find(|w| &w.card == card) else {
+                    continue;
+                };
+                lampa_poster(out, state, assets, watched.poster.as_deref(), icon);
+                let when = match watched.episode {
+                    Some((season, episode)) => {
+                        format!("{} · S{season} E{episode}", language.t("lampaContinue"))
+                    }
+                    None => language.t("lampaContinue").to_owned(),
+                };
+                (watched.title.clone(), when, c(0xe8e8e8, 0.62))
             }
             Line::Crypto => {
                 out.icon(assets, "globe", icon.inset(6.), c(0xf5f5f5, 0.7));
@@ -4711,6 +4928,7 @@ fn breadcrumb(state: &State) -> Vec<&str> {
             Subpage::Clock => language.t("clock"),
             Subpage::Cs2 => language.t("cs2Score"),
             Subpage::Shows => language.t("shows"),
+            Subpage::Lampa => language.t("lampa"),
             Subpage::Language => language.t("language"),
             Subpage::Appearance => language.t("uiScale"),
             Subpage::TextRendering => language.t("textRendering"),
@@ -4851,6 +5069,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             Subpage::WeatherLocation
                 | Subpage::Cs2
                 | Subpage::Shows
+                | Subpage::Lampa
                 | Subpage::Weather
                 | Subpage::Shortcuts
                 | Subpage::Inputs
@@ -4864,6 +5083,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Cs2 => cs2_settings(out, state, assets),
                 Subpage::Shows => shows_settings(out, state, assets),
+                Subpage::Lampa => lampa_settings(out, state, assets),
                 Subpage::Weather => weather_settings(out, state, assets),
                 Subpage::Shortcuts => shortcut_settings(out, state, assets),
                 Subpage::Inputs => inputs_settings(out, state, assets),
@@ -4942,6 +5162,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             Subpage::WeatherLocation
             | Subpage::Cs2
             | Subpage::Shows
+            | Subpage::Lampa
             | Subpage::Weather
             | Subpage::Shortcuts
             | Subpage::Inputs
@@ -5104,6 +5325,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 // Last, so the rows above keep their places.
                 (6, "cs2Score", "cs2ScoreAbout", "gaming"),
                 (7, "shows", "showsAbout", "tv"),
+                (8, "lampa", "lampaAbout", "tv"),
             ];
             let rects = list_rects(
                 state,
