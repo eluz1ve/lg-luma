@@ -218,6 +218,9 @@ pub struct Scene {
     pub regions: Vec<(Region, Rect)>,
     /// Where Settings wants Home drawn small (`home_preview`).
     pub preview: Option<PreviewSlot>,
+    /// The wallpapers behind the page and their opacities (two while they cross-fade), which
+    /// glass samples.
+    pub backdrop: Vec<(String, f32)>,
 }
 
 /// A part of Home that settings change.
@@ -248,6 +251,7 @@ impl Scene {
             modal: None,
             regions: Vec::new(),
             preview: None,
+            backdrop: Vec::new(),
         }
     }
     fn shape(&mut self, rect: Rect, radius: f32, fill: Color) {
@@ -347,18 +351,56 @@ impl Scene {
                 c(0xfafafa, 1.),
                 c(0xe5e5e5, 1.),
             ));
-        } else {
-            self.shape(
-                rect,
-                rect.h / 2.,
-                if selected {
-                    c(0x303438, 1.)
-                } else {
-                    c(0x171c20, 0.72)
-                },
-            );
+        } else if selected {
+            self.shape(rect, rect.h / 2., c(0x303438, 1.));
             self.border(rect, rect.h / 2., 1., c(0xffffff, 0.07));
+        } else {
+            self.glass(rect, rect.h / 2.);
         }
+    }
+    /// Chrome over the wallpaper: its blurred copy, tinted, with a hairline border and a
+    /// highlight along the top (spec, «Материалы»).
+    fn glass(&mut self, rect: Rect, radius: f32) {
+        self.glass_tinted(rect, radius, GLASS_TINT, 0.10);
+    }
+    /// Glass under a lighter tint or a stronger border, e.g. a focused chip.
+    fn glass_tinted(&mut self, rect: Rect, radius: f32, tint: Color, border: f32) {
+        self.frost(rect, radius);
+        self.shape(rect, radius, tint);
+        self.glass_edge(rect, radius, border);
+    }
+    /// An overlay's panel: glass under a heavier grey, so its text reads on any wallpaper.
+    fn modal_glass(&mut self, rect: Rect, radius: f32) {
+        self.frost(rect, radius);
+        self.draw.push(Draw::RoundedGradient(
+            rect,
+            radius,
+            c(0x34383b, 0.86),
+            c(0x24282d, 0.90),
+        ));
+        self.glass_edge(rect, radius, 0.12);
+    }
+    /// The wallpaper's blurred copy under `rect`, layered as the wallpapers are.
+    fn frost(&mut self, rect: Rect, radius: f32) {
+        for (path, alpha) in &self.backdrop {
+            self.draw.push(Draw::Glass(
+                path.clone(),
+                rect,
+                radius,
+                SCREEN,
+                [1., 1., 1., *alpha],
+            ));
+        }
+    }
+    fn glass_edge(&mut self, rect: Rect, radius: f32, border: f32) {
+        self.border(rect, radius, 1., c(0xffffff, border));
+        // Along the straight part of the top edge, as light catching the glass's rim.
+        let corner = radius.min(rect.w / 2.).min(rect.h / 2.);
+        self.shape(
+            Rect::new(rect.x + corner, rect.y, rect.w - 2. * corner, 1.),
+            0.5,
+            c(0xffffff, 0.16),
+        );
     }
     fn fade(&mut self, from: usize, alpha: f32, brightness: f32) {
         for draw in &mut self.draw[from..] {
@@ -449,8 +491,7 @@ fn companion(
     let panel = Rect::new(520., 144., 880., 816.);
     out.modal = Some(panel);
     out.shadow(panel, 24., 40., 12., 0.3);
-    out.shape(panel, 24., c(0x1b2023, 1.));
-    out.border(panel, 24., 1., c(0xffffff, 0.09));
+    out.modal_glass(panel, 24.);
     out.text(
         language.t(strings.title),
         Rect::new(584., 198., 752., 48.),
@@ -644,6 +685,13 @@ fn aerials_caption(out: &mut Scene, assets: &Assets, state: &State, rect: Rect) 
     );
 }
 
+/// The whole screen, where the wallpaper is laid out.
+const SCREEN: Rect = Rect::new(0., 0., 1920., 1080.);
+/// Glass's tint over the wallpaper's blurred copy: `rgba(18,22,30,.46)`.
+const GLASS_TINT: Color = [18. / 255., 22. / 255., 30. / 255., 0.46];
+/// A focused chip's lighter tint.
+const GLASS_FOCUSED: Color = [52. / 255., 58. / 255., 66. / 255., 0.50];
+
 fn text(size: f32, weight: u16, tracking: f32) -> TextStyle {
     TextStyle::new(size).weight(weight).tracking(tracking)
 }
@@ -681,28 +729,22 @@ pub fn scene_with_pill(
     now: OffsetDateTime,
 ) -> Scene {
     let mut out = Scene::new();
+    let current = assets.background(state, &state.background_key());
     if let Some((previous, start)) = &state.previous_background {
-        out.image(
-            assets.background(state, previous),
-            Rect::new(0., 0., 1920., 1080.),
-            0.,
-            false,
-        );
+        let previous = assets.background(state, previous);
+        out.image(previous.clone(), SCREEN, 0., false);
         let alpha = (start.elapsed().as_secs_f32() / state.background_fade).min(1.);
         out.draw.push(Draw::TintedImage(
-            assets.background(state, &state.background_key()),
-            Rect::new(0., 0., 1920., 1080.),
+            current.clone(),
+            SCREEN,
             0.,
             false,
             [1., 1., 1., alpha],
         ));
+        out.backdrop = vec![(previous, 1.), (current, alpha)];
     } else {
-        out.image(
-            assets.background(state, &state.background_key()),
-            Rect::new(0., 0., 1920., 1080.),
-            0.,
-            false,
-        );
+        out.image(current.clone(), SCREEN, 0., false);
+        out.backdrop = vec![(current, 1.)];
     }
     let content_start = out.draw.len();
     if recents_replaces_page(state) {
@@ -907,8 +949,7 @@ fn header(
     let layout = navigation(assets, language);
     let nav = layout.surface;
     out.shadow(nav, 48., 18., 4., 0.06);
-    out.shape(nav, 48., c(0x171c20, 0.72));
-    out.border(nav, 48., 1., c(0xffffff, 0.07));
+    out.glass(nav, 48.);
     let pill = Rect::new(pill_x, 52.3, pill_width, 49.);
     out.draw.push(Draw::RoundedGradient(
         pill,
@@ -1667,26 +1708,11 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
         let focused = state.focus == Target::Input(input.id.clone());
         let hit = rect;
         let (rect, lift_amount) = lift(out, state, &Target::Input(input.id.clone()), rect, 18.4);
-        out.draw.push(Draw::RoundedGradient(
-            rect,
-            18.4,
-            if focused {
-                c(0x30363c, 0.70)
-            } else {
-                c(0x20252b, 0.60)
-            },
-            if focused {
-                c(0x242a30, 0.65)
-            } else {
-                c(0x171c22, 0.55)
-            },
-        ));
-        out.border(
-            rect,
-            18.4,
-            1.,
-            c(0xffffff, if focused { 0.24 } else { 0.063 }),
-        );
+        if focused {
+            out.glass_tinted(rect, 18.4, GLASS_FOCUSED, 0.24);
+        } else {
+            out.glass(rect, 18.4);
+        }
         let art = Rect::new(rect.x + 20., rect.y + 20., 56., 56.);
         out.draw.push(Draw::RoundedGradient(
             art,
@@ -2005,13 +2031,7 @@ fn today_card(
         height,
     );
     out.shadow(rect, 24., 4., 1., 0.01);
-    out.draw.push(Draw::RoundedGradient(
-        rect,
-        24.,
-        c(0x20252b, 0.60),
-        c(0x171c22, 0.55),
-    ));
-    out.border(rect, 24., 1., c(0xffffff, 0.063));
+    out.glass(rect, 24.);
     let x = rect.x + 24.;
     let inner = rect.w - 48.;
     let mut eyebrow = language.t("today").to_owned();
@@ -2199,26 +2219,11 @@ fn crypto_row(out: &mut Scene, state: &State, y: f32) {
         let focused = state.focus == Target::Coin(index) && !state.pointer;
         let hit = rect;
         let (rect, lift_amount) = lift(out, state, &Target::Coin(index), rect, 18.4);
-        out.draw.push(Draw::RoundedGradient(
-            rect,
-            18.4,
-            if focused {
-                c(0x30363c, 0.70)
-            } else {
-                c(0x20252b, 0.60)
-            },
-            if focused {
-                c(0x242a30, 0.65)
-            } else {
-                c(0x171c22, 0.55)
-            },
-        ));
-        out.border(
-            rect,
-            18.4,
-            1.,
-            c(0xffffff, if focused { 0.24 } else { 0.063 }),
-        );
+        if focused {
+            out.glass_tinted(rect, 18.4, GLASS_FOCUSED, 0.24);
+        } else {
+            out.glass(rect, 18.4);
+        }
         let name = match crate::crypto::name(symbol) {
             name if name == symbol => "",
             name => name,
@@ -2659,13 +2664,7 @@ fn cs2_dialog(out: &mut Scene, state: &State, assets: &Assets, id: &str, now: Of
     let panel = Rect::new(296., 60., 1328., 960.);
     out.modal = Some(panel);
     out.shadow(panel, 28., 100., 24., 0.47);
-    out.draw.push(Draw::RoundedGradient(
-        panel,
-        28.,
-        c(0x34383b, 0.98),
-        c(0x24282d, 0.99),
-    ));
-    out.border(panel, 28., 1., c(0xffffff, 0.12));
+    out.modal_glass(panel, 28.);
     let close = Rect::new(panel.x + panel.w - 92., panel.y + 36., 56., 56.);
     let close_focused = state.focus == Target::Cs2Close && !state.pointer;
     out.shape(
@@ -3476,22 +3475,11 @@ fn search_field(out: &mut Scene, state: &State, assets: &Assets, right: f32, y: 
     let search = Rect::new(right - 320. * k, y - h / 2., 320. * k, h);
     let focused = live && matches!(state.focus, Target::Search | Target::ClearSearch);
     let query = if live { state.query.as_str() } else { "" };
-    out.shape(
-        search,
-        48.,
-        if focused {
-            c(0x303438, 1.)
-        } else {
-            c(0x171c20, 0.72)
-        },
-    );
-    out.border(
-        search,
-        48.,
-        1.,
-        c(0xffffff, if focused { 0.70 } else { 0.07 }),
-    );
-    if focused {
+    if !focused {
+        out.glass(search, 48.);
+    } else {
+        out.shape(search, 48., c(0x303438, 1.));
+        out.border(search, 48., 1., c(0xffffff, 0.70));
         out.border(search.inset(-3.), 51., 3., c(0xffffff, 0.063));
     }
     out.icon(
@@ -4122,22 +4110,11 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
     }
     let query = Rect::new(LIST_X, y, LIST_WIDTH - 84., ROW_HEIGHT);
     let focused = state.focus == Target::WeatherQuery;
-    out.shape(
-        query,
-        query.h / 2.,
-        if focused {
-            c(0x303438, 1.)
-        } else {
-            c(0x171c20, 0.72)
-        },
-    );
-    out.border(
-        query,
-        query.h / 2.,
-        1.,
-        c(0xffffff, if focused { 0.70 } else { 0.07 }),
-    );
-    if focused {
+    if !focused {
+        out.glass(query, query.h / 2.);
+    } else {
+        out.shape(query, query.h / 2., c(0x303438, 1.));
+        out.border(query, query.h / 2., 1., c(0xffffff, 0.70));
         out.border(query.inset(-3.), query.h / 2. + 3., 3., c(0xffffff, 0.063));
     }
     out.icon(
@@ -4159,7 +4136,7 @@ fn location_settings(out: &mut Scene, state: &State, assets: &Assets) {
     );
     out.control(Target::WeatherQuery, query, true);
     let search = Rect::new(LIST_X + LIST_WIDTH - ROW_HEIGHT, y, ROW_HEIGHT, ROW_HEIGHT);
-    out.shape(search, search.h / 2., c(0x171c20, 0.72));
+    out.glass(search, search.h / 2.);
     out.border(search, search.h / 2., 1., c(0xffffff, 0.07));
     out.icon(
         assets,
@@ -4788,8 +4765,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
     );
     let radius = SIDEBAR_COLLAPSED / 2.;
     out.shadow(panel, radius, 24., 6., 0.10 + 0.14 * open);
-    out.shape(panel, radius, c(0x14181d, 0.92));
-    out.border(panel, radius, 1., c(0xffffff, 0.08));
+    out.glass(panel, radius);
     // Names are laid out at the open width; while it opens they are cut at its edge.
     let opening = open > 0. && open < 1.;
     if opening {
@@ -5620,8 +5596,7 @@ fn system_summary(out: &mut Scene, state: &State, assets: &Assets) {
         c(0xf5f5f5, 0.72),
         false,
     );
-    out.shape(panel, 22., c(0x0a0d12, 0.42));
-    out.border(panel, 22., 1., c(0xffffff, 0.12));
+    out.glass(panel, 22.);
     let mut y = panel.y + 28.;
     out.text(
         language.t(title),
@@ -5641,8 +5616,7 @@ fn system_summary(out: &mut Scene, state: &State, assets: &Assets) {
 }
 
 fn settings_surface(out: &mut Scene, rect: Rect, radius: f32) {
-    out.shape(rect, radius, c(0x171c20, 0.72));
-    out.border(rect, radius, 1., c(0xffffff, 0.07));
+    out.glass(rect, radius);
 }
 
 fn shortcut_settings(out: &mut Scene, state: &State, assets: &Assets) {
@@ -5911,13 +5885,7 @@ fn options(out: &mut Scene, state: &State, assets: &Assets, id: &str, anchor: Op
     let panel_start = out.draw.len();
     out.modal = Some(panel);
     out.shadow(panel, 27.2, 120., 25., 0.47);
-    out.draw.push(Draw::RoundedGradient(
-        panel,
-        27.2,
-        c(0x34383b, 0.96),
-        c(0x24282d, 0.988),
-    ));
-    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    out.modal_glass(panel, 27.2);
     let hidden = state.preferences.hidden.iter().any(|item| item == id);
     let actions = if shortcut {
         vec![
@@ -6075,13 +6043,7 @@ fn delete_confirmation(out: &mut Scene, state: &State, assets: &Assets, id: &str
     let panel = Rect::new(640., (1080. - height) / 2., 640., height);
     out.modal = Some(panel);
     out.shadow(panel, 28., 100., 24., 0.47);
-    out.draw.push(Draw::RoundedGradient(
-        panel,
-        28.,
-        c(0x34383b, 0.98),
-        c(0x24282d, 0.99),
-    ));
-    out.border(panel, 28., 1., c(0xffffff, 0.12));
+    out.modal_glass(panel, 28.);
     out.text(
         body,
         Rect::new(panel.x + 36., panel.y + 36., 568., body_height),
@@ -6151,13 +6113,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
     let panel = Rect::new(350., 290., 1220., 530.);
     out.modal = Some(panel);
     out.shadow(panel, 27.2, 90., 20., 0.45);
-    out.draw.push(Draw::RoundedGradient(
-        panel,
-        27.2,
-        c(0x34383b, 0.98),
-        c(0x24282d, 1.),
-    ));
-    out.border(panel, 27.2, 1., c(0xffffff, 0.12));
+    out.modal_glass(panel, 27.2);
     out.text(
         match state.keyboard_field {
             TextField::Location => language.t("cityPostcode"),
@@ -6177,7 +6133,7 @@ fn keyboard(out: &mut Scene, state: &State, assets: &Assets) {
     if state.focus == Target::CloseDialog {
         out.border(close, 16.8, 2., WHITE);
     }
-    out.shape(Rect::new(389., 390., 1142., 56.), 28., c(0x171c20, 0.72));
+    out.glass(Rect::new(389., 390., 1142., 56.), 28.);
     out.icon(
         assets,
         "search",
@@ -6233,8 +6189,7 @@ fn toast(out: &mut Scene, state: &State, assets: &Assets, notice: &str) {
     let height = 20. + text_height;
     let rect = Rect::new(960. - width / 2., 1080. - 51.2 - height, width, height);
     out.shadow(rect, 16., 18., 4., 0.06);
-    out.shape(rect, 16., c(0x171c20, 0.72));
-    out.border(rect, 16., 1., c(0xffffff, 0.07));
+    out.glass(rect, 16.);
     out.text(
         notice,
         Rect::new(rect.x + 20., rect.y + 10., width - 40., text_height),
