@@ -14,18 +14,18 @@ widgets, and a tvOS-style layout.
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/home.png" alt="Luma+ Home screen, desktop preview">
+      <img src="docs/home.png" alt="Luma+ Home with the Today card and Lampa's Watching now row">
     </td>
     <td width="50%" align="center">
-      <img src="docs/apps.png" alt="Luma+ app library, desktop preview">
+      <img src="docs/today.png" alt="The Today card opened on CS2 Score's matches">
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/settings.png" alt="Luma+ General settings, desktop preview">
+      <img src="docs/settings.png" alt="Widgets › Lampa settings beside a live preview of Home">
     </td>
     <td width="50%" align="center">
-      <img src="docs/inputs.png" alt="Luma+ input settings, desktop preview">
+      <img src="docs/clean.png" alt="Clean Home: the clock, the greeting and favorites">
     </td>
   </tr>
 </table>
