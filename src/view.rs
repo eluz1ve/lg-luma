@@ -1957,9 +1957,9 @@ fn home(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDateTime) {
 
 /// Show cards in the middle of Home: posters with a 2:3 face, smaller than the favorites so
 /// the row fits between the header and them.
-const SHOW_WIDTH: f32 = 170.;
+const SHOW_WIDTH: f32 = 200.;
 const SHOW_POSTER_HEIGHT: f32 = SHOW_WIDTH * 1.5;
-const SHOW_PITCH: f32 = 210.;
+const SHOW_PITCH: f32 = 240.;
 /// The title and details below a poster.
 const SHOW_CAPTION: f32 = 60.;
 
@@ -2306,16 +2306,16 @@ fn today_card(
         );
         let icon = Rect::new(x, row.y + 8., 40., 40.);
         let text_x = icon.x + icon.w + 16.;
+        // A match ends its line with the second team's logo.
+        let mut second = None;
         // (what, when, when's colour)
         let (title, when, tone) = match line {
             Line::Match { id } => {
                 let Some(item) = state.cs2.find(id) else {
                     continue;
                 };
-                match item.icon.as_ref().and_then(|url| state.cs2.image(url)) {
-                    Some(image) => out.draw.push(Draw::Picture(image, icon, 0., [1.; 4])),
-                    None => out.icon(assets, "gaming", icon.inset(6.), c(0xf5f5f5, 0.7)),
-                }
+                cs2_logo(out, state, item.teams[0].as_ref(), icon.inset(2.));
+                second = Some(item.teams[1].as_ref());
                 let side = |index: usize| {
                     item.teams[index]
                         .as_ref()
@@ -2405,7 +2405,7 @@ fn today_card(
                 (watched.title.clone(), when, c(0xe8e8e8, 0.62))
             }
             Line::Crypto => {
-                out.icon(assets, "globe", icon.inset(6.), c(0xf5f5f5, 0.7));
+                out.icon(assets, "bitcoin", icon.inset(4.), c(0xf7931a, 0.95));
                 if state.crypto.quotes.is_empty() {
                     let status = language.t(if state.crypto.failed {
                         "cryptoUnavailable"
@@ -2424,23 +2424,46 @@ fn today_card(
                 let coins = &state.preferences.crypto_coins;
                 let slot = (rect.x + rect.w - 24. - text_x) / coins.len().max(1) as f32;
                 for (index, symbol) in coins.iter().enumerate() {
-                    let label = match state.crypto.quotes.iter().find(|q| &q.symbol == symbol) {
-                        Some(quote) => format!(
-                            "{symbol} {} {}{:.1}%",
-                            crate::crypto::format_compact(quote.price),
-                            if quote.change < 0. { "▼" } else { "▲" },
-                            quote.change.abs()
-                        ),
-                        None => symbol.clone(),
-                    };
+                    // As exchanges show it: the symbol quiet, the price white, the change green
+                    // or red.
+                    let quote = state.crypto.quotes.iter().find(|q| &q.symbol == symbol);
+                    let mut parts = vec![(symbol.clone(), c(0xf5f5f5, 0.55))];
+                    if let Some(quote) = quote {
+                        parts.push((crate::crypto::format_compact(quote.price), WHITE));
+                        parts.push((
+                            format!(
+                                "{}{:.1}%",
+                                if quote.change < 0. { "▼" } else { "▲" },
+                                quote.change.abs()
+                            ),
+                            market(quote.change),
+                        ));
+                    }
                     let style = text(type_scale::CAPTION, 550, 0.);
-                    out.text(
-                        &label,
-                        Rect::new(text_x + index as f32 * slot, row.y + 15., slot - 8., 28.),
-                        assets.fit_text(&label, style, slot - 8.),
-                        WHITE,
-                        false,
-                    );
+                    let gap = 7.;
+                    let whole = parts
+                        .iter()
+                        .map(|(label, _)| assets.width(label, style))
+                        .sum::<f32>()
+                        + gap * (parts.len() - 1) as f32;
+                    let room = slot - 8.;
+                    let scale = (room / whole).min(1.);
+                    let style = TextStyle {
+                        size: style.size * scale,
+                        ..style
+                    };
+                    let mut left = text_x + index as f32 * slot;
+                    for (label, colour) in parts {
+                        let width = assets.width(&label, style);
+                        out.text(
+                            &label,
+                            Rect::new(left, row.y + 15., width + 1., 28.),
+                            style,
+                            colour,
+                            false,
+                        );
+                        left += width + gap * scale;
+                    }
                 }
                 continue;
             }
@@ -2454,16 +2477,31 @@ fn today_card(
             tone,
             false,
         );
-        let room = right - when_width - 16. - text_x;
+        let logo = 32.;
+        let room = right - when_width - 16. - text_x - second.map_or(0., |_| logo + 12.);
+        let style = assets.fit_text(&title, main, room);
         out.text(
             &title,
             Rect::new(text_x, row.y + 13., room, 32.),
-            assets.fit_text(&title, main, room),
+            style,
             WHITE,
             false,
         );
+        if let Some(team) = second {
+            let after = text_x + assets.width(&title, style).min(room) + 12.;
+            cs2_logo(out, state, team, Rect::new(after, row.y + 12., logo, logo));
+        }
     }
     Some(rect)
+}
+
+/// A price change's colour, as exchanges show it: green up, red down.
+fn market(change: f64) -> Color {
+    if change < 0. {
+        c(0xf6465d, 1.)
+    } else {
+        c(0x0ecb81, 1.)
+    }
 }
 
 /// The opened Today card's section headings and lines.
@@ -2471,9 +2509,9 @@ const TODAY_SECTION: f32 = 48.;
 const TODAY_ROW: f32 = 84.;
 const TODAY_ROW_PITCH: f32 = 88.;
 
-/// The Today card opened in the center (spec «Сегодня» раскрытая): the whole day by section,
-/// one line focused at a time, scrolling under the heading. It grows out of the card, which
-/// stays on Home beneath it.
+/// The Today card opened in the center (spec «Сегодня» раскрытая): a tab per widget in Today,
+/// each with all it lists by section, one line focused at a time, scrolling under the heading.
+/// It grows out of the card, which stays on Home beneath it.
 fn today_open(
     out: &mut Scene,
     state: &State,
@@ -2484,7 +2522,15 @@ fn today_open(
     use crate::state::{TODAY_LIST, TODAY_PANEL};
     use crate::today::{Line, Section};
     let language = state.preferences.language;
-    let sections = crate::today::sections(state, now.unix_timestamp(), now.date());
+    let tabs = crate::today::tabs(state, now.unix_timestamp(), now.date());
+    let current = state
+        .today_tab
+        .and_then(|tab| tabs.iter().position(|(t, _)| *t == tab))
+        .unwrap_or(0);
+    let sections = tabs
+        .get(current)
+        .map(|(_, sections)| sections.clone())
+        .unwrap_or_default();
     out.controls.clear();
     let coins = &state.preferences.crypto_coins;
     let rows = |section: &Section, lines: &Vec<Line>| match section {
@@ -2492,17 +2538,24 @@ fn today_open(
         _ => lines.len(),
     };
     let count: usize = sections.iter().map(|(s, lines)| rows(s, lines)).sum();
-    // As tall as the day, up to the panel; the list scrolls past that.
-    let content = 8.
-        + sections
+    let height = |sections: &[(Section, Vec<Line>)]| {
+        8. + sections
             .iter()
             .map(|(s, lines)| TODAY_SECTION + rows(s, lines) as f32 * TODAY_ROW_PITCH + 12.)
-            .sum::<f32>();
+            .sum::<f32>()
+    };
+    // As tall as the longest tab, up to the panel, so switching tabs keeps its size; the list
+    // scrolls past that.
+    let content = height(&sections);
+    let tallest = tabs
+        .iter()
+        .map(|(_, sections)| height(sections))
+        .fold(content, f32::max);
     let list = Rect::new(
         TODAY_LIST.x,
         TODAY_LIST.y,
         TODAY_LIST.w,
-        content.min(TODAY_LIST.h),
+        tallest.min(TODAY_LIST.h),
     );
     let foot = TODAY_PANEL.y + TODAY_PANEL.h - (TODAY_LIST.y + TODAY_LIST.h);
     let whole = Rect::new(
@@ -2546,6 +2599,44 @@ fn today_open(
         c(0xf5f5f5, 0.6),
         false,
     );
+    // The widgets' tabs on the title's line, to the right: Left and Right switch them.
+    let tab_style = text(type_scale::CAPTION, 600, 0.01);
+    let widths: Vec<f32> = tabs
+        .iter()
+        .map(|(tab, _)| assets.width(language.t(tab.key()), tab_style) + 44.)
+        .collect();
+    let mut left = TODAY_PANEL.x + TODAY_PANEL.w
+        - 48.
+        - widths.iter().sum::<f32>()
+        - 10. * widths.len().saturating_sub(1) as f32;
+    for (index, ((tab, _), width)) in tabs.iter().zip(widths).enumerate() {
+        let pill = Rect::new(left, TODAY_PANEL.y + 44., width, 48.);
+        left += width + 10.;
+        let selected = index == current;
+        if selected {
+            out.shadow(pill, 24., 14., 4., 0.22);
+            out.draw.push(Draw::RoundedGradient(
+                pill,
+                24.,
+                c(0xfafafa, 1.),
+                c(0xe5e5e5, 1.),
+            ));
+        } else {
+            out.shape(pill, 24., c(0xffffff, 0.08));
+        }
+        out.text(
+            language.t(tab.key()),
+            Rect::new(pill.x, pill.y + 11., pill.w, 26.),
+            tab_style,
+            if selected {
+                c(0x171c20, 1.)
+            } else {
+                c(0xf5f5f5, 0.72)
+            },
+            true,
+        );
+        out.control(Target::TodayTab(*tab), pill, false);
+    }
     let visible = Rect::new(
         list.x.max(panel.x),
         list.y.max(panel.y),
@@ -2805,7 +2896,7 @@ fn today_coin(out: &mut Scene, state: &State, assets: &Assets, index: usize, row
         ));
     }
     let picture = Rect::new(row.x + 16., row.y + 14., 56., 56.);
-    out.icon(assets, "globe", picture.inset(10.), today_ink(focused, 0.7));
+    out.icon(assets, "bitcoin", picture.inset(8.), c(0xf7931a, 0.95));
     let symbol = &state.preferences.crypto_coins[index];
     let name = match crate::crypto::name(symbol) {
         name if name == symbol => "",
@@ -2819,10 +2910,15 @@ fn today_coin(out: &mut Scene, state: &State, assets: &Assets, index: usize, row
                 crate::crypto::format_price(quote.price),
                 crate::crypto::format_change(quote.change)
             ),
-            if quote.change < -0.005 {
-                c(0xff8a80, 0.95)
+            if focused {
+                // Deeper on a focused line's white.
+                if quote.change < 0. {
+                    c(0xcf304a, 1.)
+                } else {
+                    c(0x03a66d, 1.)
+                }
             } else {
-                c(0x7ee2a8, 0.95)
+                market(quote.change)
             },
         ),
         None => (
@@ -2838,7 +2934,6 @@ fn today_coin(out: &mut Scene, state: &State, assets: &Assets, index: usize, row
             c(0xe8e8e8, 0.62),
         ),
     };
-    let tone = if focused { today_ink(true, 0.75) } else { tone };
     today_texts(
         out, assets, row, picture, focused, symbol, name, &when, tone,
     );

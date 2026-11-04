@@ -207,7 +207,7 @@ fn the_date_shares_the_clock_line_and_the_greeting_rises() {
 }
 
 #[test]
-fn today_grows_up_to_five_lines_from_the_clock_line() {
+fn today_grows_up_to_three_lines_from_the_clock_line() {
     use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
@@ -239,7 +239,7 @@ fn today_grows_up_to_five_lines_from_the_clock_line() {
         .iter()
         .filter(|(text, rect, _)| text.starts_with("Show ") && rect.x >= view::TODAY_RECT.x)
         .count();
-    assert_eq!(lines, 5);
+    assert_eq!(lines, 3);
     assert!(
         card.y < 60. && card.y + card.h <= crate::layout::HEADER_BOTTOM,
         "{card:?}"
@@ -247,7 +247,7 @@ fn today_grows_up_to_five_lines_from_the_clock_line() {
     assert!(
         texts(&state)
             .iter()
-            .any(|(text, ..)| text.ends_with("2 MORE")),
+            .any(|(text, ..)| text.ends_with("4 MORE")),
         "the two left out are counted"
     );
 }

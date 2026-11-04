@@ -6,9 +6,10 @@ pub const SAFE_X: f32 = 80.;
 pub const GUTTER: f32 = 40.;
 /// Width inside the safe area: exactly six 260 px columns and five gutters.
 pub const WIDTH: f32 = 1920. - SAFE_X * 2.;
-/// Below the tab bar, where the page starts; Home's header fills down to `HEADER_BOTTOM`.
+/// Below the tab bar, where the page starts; Home's header fills down to `HEADER_BOTTOM`, room
+/// for the greeting and Today's three lines.
 pub const CONTENT_TOP: f32 = 150.;
-pub const HEADER_BOTTOM: f32 = 400.;
+pub const HEADER_BOTTOM: f32 = 300.;
 /// Home's foot: the favorites' focused name ends here, at the safe area.
 pub const HOME_BOTTOM: f32 = 1080. - 60.;
 

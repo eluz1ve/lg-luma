@@ -1335,19 +1335,19 @@
     "sv": "{count} totalt"
   },
   "todayHint": {
-    "zh-tw": "OK — 開啟 · 返回 — 收合",
-    "en": "OK — open · Back — collapse",
-    "de": "OK — öffnen · Zurück — einklappen",
-    "zh": "OK — 打开 · 返回 — 收起",
-    "es": "OK — abrir · Atrás — contraer",
-    "pt": "OK — abrir · Voltar — recolher",
-    "it": "OK — apri · Indietro — chiudi",
-    "ru": "OK — открыть · Назад — свернуть",
-    "pl": "OK — otwórz · Wstecz — zwiń",
-    "fr": "OK — ouvrir · Retour — réduire",
-    "vi": "OK — mở · Quay lại — thu gọn",
-    "nl": "OK — openen · Terug — inklappen",
-    "sv": "OK — öppna · Tillbaka — fäll ihop"
+    "zh-tw": "← → 小工具 · OK 開啟 · 返回 收合",
+    "en": "← → widgets · OK — open · Back — collapse",
+    "de": "← → Widgets · OK — öffnen · Zurück — einklappen",
+    "zh": "← → 小组件 · OK 打开 · 返回 收起",
+    "es": "← → widgets · OK — abrir · Atrás — contraer",
+    "pt": "← → widgets · OK — abrir · Voltar — recolher",
+    "it": "← → widget · OK — apri · Indietro — chiudi",
+    "ru": "← → виджеты · OK — открыть · Назад — свернуть",
+    "pl": "← → widżety · OK — otwórz · Wstecz — zwiń",
+    "fr": "← → widgets · OK — ouvrir · Retour — réduire",
+    "vi": "← → tiện ích · OK — mở · Quay lại — thu gọn",
+    "nl": "← → widgets · OK — openen · Terug — inklappen",
+    "sv": "← → widgetar · OK — öppna · Tillbaka — fäll ihop"
   },
   "showsSource": {
     "zh-tw": "Lampa 觀眾正在看、最近有新集數的影集，資料來自 CUB。按 OK 在 Lampa 中開啟。",

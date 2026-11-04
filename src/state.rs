@@ -135,6 +135,8 @@ pub enum Target {
     Show(usize),
     /// Home's Today card, whole: OK opens it in the center.
     TodayCard,
+    /// A tab of the opened Today card: a widget whose lines it shows.
+    TodayTab(crate::today::Tab),
     /// A match line of the opened Today card, by the match's id.
     TodayMatch(String),
     /// A TV Shows line of the opened Today card, by the series' TMDB id: opens Lampa.
@@ -425,6 +427,8 @@ pub struct State {
     pub menu_motion: Option<(Instant, bool)>,
     /// How far the opened Today card's list has scrolled.
     pub today_scroll: f32,
+    /// The opened Today card's tab; None for its first.
+    pub today_tab: Option<crate::today::Tab>,
     /// When the Today card began to open.
     pub today_motion: Option<Instant>,
     pub weather: weather::Weather,
@@ -491,6 +495,7 @@ impl State {
             menu_inputs: false,
             menu_motion: None,
             today_scroll: 0.,
+            today_tab: None,
             today_motion: None,
             weather: weather::Weather::default(),
             crypto: crate::crypto::Crypto::default(),
@@ -848,13 +853,28 @@ impl State {
             restore: Target::TodayCard,
         });
         self.today_scroll = 0.;
+        self.today_tab = None;
         self.today_motion = (!self.preferences.reduced_motion).then(Instant::now);
         self.pressed = None;
+    }
+
+    /// The opened Today card shows `tab`'s lines from the top; its first takes the focus once
+    /// drawn (`reveal_focus`).
+    fn show_today_tab(&mut self, tab: crate::today::Tab) {
+        self.today_tab = Some(tab);
+        self.today_scroll = 0.;
+        self.focus = Target::TodayTab(tab);
+        self.pressed = None;
+        self.dirty = true;
     }
 
     /// OK on a line of the opened Today card: a match opens over it, an app it plays closes it,
     /// and a line with nothing to open (no app for it) leaves it open with a notice.
     fn today_activate(&mut self) -> Vec<Effect> {
+        if let Target::TodayTab(tab) = self.focus {
+            self.show_today_tab(tab);
+            return vec![];
+        }
         let Some(Overlay::Today { restore }) = self.overlay.take() else {
             return vec![];
         };
@@ -1442,6 +1462,10 @@ impl State {
     /// line leaves), scrolled into the list. With no lines left it closes.
     fn reveal_today_line(&mut self, controls: &[Control]) -> bool {
         let previous = (self.focus.clone(), self.today_scroll);
+        let controls: Vec<&Control> = controls
+            .iter()
+            .filter(|c| !matches!(c.target, Target::TodayTab(_)))
+            .collect();
         if !controls.iter().any(|c| c.target == self.focus) {
             match controls.first() {
                 Some(first) => self.focus = first.target.clone(),
@@ -1966,15 +1990,42 @@ impl State {
             return vec![];
         }
         if matches!(self.overlay, Some(Overlay::Today { .. })) {
-            // Up and Down walk the lines, through the sections, and stop at either end.
-            let index = controls.iter().position(|c| c.target == self.focus);
+            // Left and Right switch between the widgets' tabs; Up and Down walk the tab's lines,
+            // through its sections. Both stop at either end.
+            if matches!(direction, Direction::Left | Direction::Right) {
+                let tabs: Vec<crate::today::Tab> = controls
+                    .iter()
+                    .filter_map(|c| match c.target {
+                        Target::TodayTab(tab) => Some(tab),
+                        _ => None,
+                    })
+                    .collect();
+                let current = self
+                    .today_tab
+                    .and_then(|tab| tabs.iter().position(|t| *t == tab))
+                    .unwrap_or(0);
+                let next = match direction {
+                    Direction::Left => current.checked_sub(1),
+                    _ => Some(current + 1),
+                };
+                if let Some(&tab) = next.and_then(|index| tabs.get(index)) {
+                    self.show_today_tab(tab);
+                }
+                return vec![];
+            }
+            let lines: Vec<Control> = controls
+                .iter()
+                .filter(|c| !matches!(c.target, Target::TodayTab(_)))
+                .cloned()
+                .collect();
+            let index = lines.iter().position(|c| c.target == self.focus);
             let next = match (direction, index) {
                 (Direction::Up, Some(index)) => index.checked_sub(1),
                 (Direction::Down, Some(index)) => Some(index + 1),
                 (Direction::Up | Direction::Down, None) => Some(0),
                 _ => None,
             };
-            if let Some(control) = next.and_then(|index| controls.get(index)) {
+            if let Some(control) = next.and_then(|index| lines.get(index)) {
                 self.focus(control.target.clone(), controls);
             }
             return vec![];

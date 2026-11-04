@@ -29,7 +29,12 @@ fn today_state() -> State {
         "matches": [{
             "id": "m1", "begin_at": "2026-11-01T19:00:00Z", "state": "live", "best_of": 3,
             "tournament": "IEM", "tier": 1, "score": [1, 0],
-            "teams": [{"name": "Natus Vincere", "short": "NAVI"}, {"name": "FaZe Clan", "short": "FaZe"}],
+            "teams": [
+                {"name": "Natus Vincere", "short": "NAVI",
+                 "image": "https://liquipedia.net/commons/images/navi.png"},
+                {"name": "FaZe Clan", "short": "FaZe",
+                 "image": "https://liquipedia.net/commons/images/faze.png"}
+            ],
             "maps": [{"map": "Mirage", "winner": null}]
         }]
     }))
@@ -78,6 +83,16 @@ fn first_tile_y(scene: &view::Scene) -> Option<f32> {
         .iter()
         .find(|c| matches!(c.target, Target::App(_)))
         .map(|c| c.rect.y)
+}
+
+/// The opened card's tabs, in order.
+fn tabs(scene: &view::Scene) -> Vec<Target> {
+    scene
+        .controls
+        .iter()
+        .filter(|c| matches!(c.target, Target::TodayTab(_)))
+        .map(|c| c.target.clone())
+        .collect()
 }
 
 fn today_controls(scene: &view::Scene) -> Vec<(Target, crate::state::Rect)> {
@@ -131,11 +146,16 @@ fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
     let panel = scene.modal.expect("the opened card is modal");
     assert!(panel.x == most.x && panel.y == most.y && panel.w == most.w);
     assert!(panel.h < most.h * 2. / 3., "{panel:?}");
+    use crate::today::Tab;
+    assert_eq!(
+        tabs(&scene),
+        [Target::TodayTab(Tab::Cs2), Target::TodayTab(Tab::Shows)]
+    );
     let lines = today_controls(&scene);
     assert_eq!(
         lines.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>(),
-        vec![Target::TodayMatch("m1".into()), Target::TodayShow(7)],
-        "the live match first, and nothing of Home beneath"
+        vec![Target::TodayMatch("m1".into())],
+        "CS2 Score's tab first, and nothing of Home beneath"
     );
     assert!(lines.iter().all(|(_, r)| r.x >= panel.x
         && r.x + r.w <= panel.x + panel.w
@@ -143,14 +163,12 @@ fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
         && r.y + r.h <= panel.y + panel.h));
     let texts = self::texts(&scene);
     for expected in [
+        "CS2 Score",
+        "TV Shows",
         "LIVE NOW",
-        "NEW EPISODES",
         "Natus Vincere 1–0 FaZe Clan",
         "IEM · BO3",
-        "Severance",
-        "S2 · ★ 8.3",
-        "New episode",
-        "2 in all",
+        "1 in all",
     ] {
         assert!(
             texts.iter().any(|t| t.ends_with(expected)),
@@ -172,9 +190,11 @@ fn a_match_opened_from_the_card_returns_to_it_and_back_collapses_it() {
     assert!(matches!(state.overlay, Some(Overlay::Today { .. })));
     assert_eq!(state.focus, Target::TodayMatch("m1".into()));
     state.direction(Direction::Down, &at(&state).controls);
-    assert_eq!(state.focus, Target::TodayShow(7));
-    state.direction(Direction::Down, &at(&state).controls);
-    assert_eq!(state.focus, Target::TodayShow(7), "the last line");
+    assert_eq!(
+        state.focus,
+        Target::TodayMatch("m1".into()),
+        "the tab's last line"
+    );
     state.back();
     assert!(state.overlay.is_none());
     assert_eq!(state.focus, Target::TodayCard);
@@ -183,7 +203,8 @@ fn a_match_opened_from_the_card_returns_to_it_and_back_collapses_it() {
 #[test]
 fn a_series_opened_from_the_card_opens_it_in_lampa_and_collapses_it() {
     let mut state = opened();
-    state.direction(Direction::Down, &at(&state).controls);
+    state.direction(Direction::Right, &at(&state).controls);
+    state.reveal_focus(&at(&state).controls);
     assert_eq!(
         state.activate(),
         vec![Effect::OpenCard {
@@ -204,6 +225,8 @@ fn the_opened_card_scrolls_to_keep_the_focused_line_in_view() {
     state.focus = Target::TodayCard;
     state.activate();
     state.reveal_focus(&at(&state).controls);
+    state.direction(Direction::Right, &at(&state).controls);
+    state.reveal_focus(&at(&state).controls);
     for _ in 0..12 {
         state.direction(Direction::Down, &at(&state).controls);
         state.reveal_focus(&at(&state).controls);
@@ -222,8 +245,83 @@ fn the_opened_card_scrolls_to_keep_the_focused_line_in_view() {
         state.direction(Direction::Up, &at(&state).controls);
         state.reveal_focus(&at(&state).controls);
     }
-    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    assert_eq!(state.focus, Target::TodayShow(0), "the tab's first line");
     assert_eq!(state.today_scroll, 0.);
+}
+
+#[test]
+fn left_and_right_switch_the_opened_card_between_its_widgets() {
+    use crate::today::Tab;
+    let mut state = opened();
+    state.direction(Direction::Left, &at(&state).controls);
+    assert!(
+        matches!(state.overlay, Some(Overlay::Today { .. })),
+        "the first tab: Left stays"
+    );
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    state.direction(Direction::Right, &at(&state).controls);
+    state.reveal_focus(&at(&state).controls);
+    assert_eq!(state.today_tab, Some(Tab::Shows));
+    assert_eq!(state.focus, Target::TodayShow(7));
+    let texts = texts(&at(&state));
+    for expected in ["NEW EPISODES", "Severance", "S2 · ★ 8.3", "New episode"] {
+        assert!(texts.iter().any(|t| t.ends_with(expected)), "{expected}");
+    }
+    state.direction(Direction::Right, &at(&state).controls);
+    assert_eq!(
+        state.today_tab,
+        Some(Tab::Shows),
+        "the last tab: Right stays"
+    );
+    state.direction(Direction::Left, &at(&state).controls);
+    state.reveal_focus(&at(&state).controls);
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+    // A pointer picks a tab too, and the card stays open on it.
+    state.focus = Target::TodayTab(Tab::Shows);
+    assert!(state.activate().is_empty());
+    state.reveal_focus(&at(&state).controls);
+    assert!(matches!(state.overlay, Some(Overlay::Today { .. })));
+    assert_eq!(state.focus, Target::TodayShow(7));
+    // Opened again, the card starts on its first tab.
+    state.back();
+    state.activate();
+    state.reveal_focus(&at(&state).controls);
+    assert_eq!(state.focus, Target::TodayMatch("m1".into()));
+}
+
+#[test]
+fn the_cards_match_line_shows_both_teams_logos() {
+    let mut state = today_state();
+    let logo = |name: &str| format!("https://liquipedia.net/commons/images/{name}.png");
+    state.cs2.logos.insert(
+        logo("navi"),
+        crate::cs2::Logo::Ready(std::sync::Arc::new(crate::app_artwork::Artwork {
+            key: "navi".into(),
+            pixels: image::RgbaImage::new(1, 1),
+            backdrop: [[0; 3]; 2],
+        })),
+    );
+    state.cs2.logos.insert(
+        logo("faze"),
+        crate::cs2::Logo::Ready(std::sync::Arc::new(crate::app_artwork::Artwork {
+            key: "faze".into(),
+            pixels: image::RgbaImage::new(1, 1),
+            backdrop: [[0; 3]; 2],
+        })),
+    );
+    let pictures: Vec<String> = at(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::AppImage(image, rect, ..)
+                if rect.x >= 1160. && rect.y < 300. =>
+            {
+                Some(image.key.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pictures, ["navi", "faze"]);
 }
 
 #[test]
@@ -307,6 +405,33 @@ fn format_compact_keeps_four_coins_on_one_line() {
             .iter()
             .all(|r| r.x >= 1160. && r.x + r.w <= 1840. - 24.)
     );
+}
+
+#[test]
+fn the_crypto_line_colours_each_change_as_exchanges_do() {
+    let mut state = ready();
+    state.preferences.show_crypto = true;
+    state.preferences.crypto_beside = true;
+    state.preferences.crypto_coins = ["BTC", "ETH"].map(String::from).to_vec();
+    state.crypto.quotes = [("BTC", 1.2), ("ETH", -0.8)]
+        .iter()
+        .map(|(symbol, change)| crate::crypto::Quote {
+            symbol: (*symbol).into(),
+            price: 1000.,
+            change: *change,
+        })
+        .collect();
+    let colour = |label: &str| {
+        at(&state).draw.iter().find_map(|draw| match draw {
+            crate::renderer::Draw::Text(text, _, _, colour, _) if text == label => Some(*colour),
+            _ => None,
+        })
+    };
+    let (up, down) = (colour("▲1.2%").unwrap(), colour("▼0.8%").unwrap());
+    assert!(up[1] > up[0] && up[1] > 0.6, "green: {up:?}");
+    assert!(down[0] > down[1] && down[0] > 0.8, "red: {down:?}");
+    let price = colour("1,000").unwrap();
+    assert!(price[0] > 0.9 && price[1] > 0.9, "the price stays white");
 }
 
 #[test]

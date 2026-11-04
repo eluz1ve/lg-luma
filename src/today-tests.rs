@@ -84,10 +84,10 @@ fn live_matches_come_first_then_matches_by_time_then_new_episodes() {
     let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
-        [matched("live"), matched("soon"), episode(1), episode(2)],
+        [matched("live"), matched("soon"), episode(1)],
         "the series in the feed's order"
     );
-    assert_eq!(today.more, 0);
+    assert_eq!(today.more, 1, "three lines at most");
 }
 
 #[test]
@@ -106,17 +106,8 @@ fn crypto_beside_is_always_the_last_line_and_the_rest_counts_as_more() {
         ],
     );
     let today = today(&state, NOW, DATE);
-    assert_eq!(
-        today.lines,
-        [
-            matched("a"),
-            matched("b"),
-            matched("c"),
-            matched("d"),
-            Line::Crypto
-        ]
-    );
-    assert_eq!(today.more, 1);
+    assert_eq!(today.lines, [matched("a"), matched("b"), Line::Crypto]);
+    assert_eq!(today.more, 3);
 }
 
 #[test]
@@ -265,15 +256,9 @@ fn each_kind_of_line_gets_one_before_any_gets_two() {
     let today = today(&state, NOW, DATE);
     assert_eq!(
         today.lines,
-        [
-            matched("live"),
-            fresh("tv_a", 0),
-            matched("soon"),
-            resume("tv_c"),
-            fresh("tv_b", 0)
-        ]
+        [matched("live"), fresh("tv_a", 0), matched("soon")]
     );
-    assert_eq!(today.more, 1);
+    assert_eq!(today.more, 3);
 }
 
 #[test]
@@ -288,7 +273,7 @@ fn with_lampa_in_today_the_feeds_series_leave_it() {
 }
 
 #[test]
-fn opened_the_card_lists_the_whole_day_by_section() {
+fn opened_each_widget_has_a_tab_with_all_it_has() {
     let mut state = state();
     state.preferences.show_crypto = true;
     state.preferences.crypto_beside = true;
@@ -296,40 +281,64 @@ fn opened_the_card_lists_the_whole_day_by_section() {
         &mut state,
         &[
             ("a", "live", NOW),
-            ("b", "live", NOW),
-            ("c", "live", NOW),
             ("soon", "upcoming", NOW + 3600),
-            ("later", "upcoming", NOW + 7200),
+            ("tomorrow", "upcoming", NOW + 30 * 3600),
+            ("done", "finished", NOW - 7200),
         ],
     );
-    state.shows.list = vec![show(1, 0), show(2, 1)];
-    // The card keeps five lines; opened, nothing is left out.
-    assert_eq!(today(&state, NOW, DATE).more, 3);
+    state.shows.list = vec![show(1, 0), show(2, 5)];
+    // The card keeps three lines; opened, every widget shows all of its own.
+    assert_eq!(today(&state, NOW, DATE).more, 1);
     assert_eq!(
-        sections(&state, NOW, DATE),
+        tabs(&state, NOW, DATE),
         [
             (
-                Section::Live,
-                vec![matched("a"), matched("b"), matched("c")]
+                Tab::Cs2,
+                vec![
+                    (Section::Live, vec![matched("a")]),
+                    (Section::Matches, vec![matched("soon"), matched("tomorrow")]),
+                    (Section::Results, vec![matched("done")]),
+                ]
             ),
-            (Section::Matches, vec![matched("soon"), matched("later")]),
-            (Section::Episodes, vec![episode(1), episode(2)]),
-            (Section::Prices, vec![Line::Crypto]),
+            (
+                Tab::Shows,
+                vec![(Section::Episodes, vec![episode(1), episode(2)])]
+            ),
+            (Tab::Crypto, vec![(Section::Prices, vec![Line::Crypto])]),
         ]
+    );
+    state.preferences.cs2_results = false;
+    assert_eq!(
+        tabs(&state, NOW, DATE)[0].1.last().unwrap().0,
+        Section::Matches,
+        "results only when CS2 Score shows them"
     );
 }
 
 #[test]
-fn opened_with_lampa_its_releases_and_series_to_continue_have_their_sections() {
+fn opened_with_lampa_its_tab_has_releases_and_series_to_continue() {
     let mut state = state();
     signed_in(&mut state);
+    state.shows.list = vec![show(1, 0)];
     state.cub.releases = vec![release("tv_a", 0, false), release("tv_b", 2, false)];
     state.cub.watched = vec![watched("tv_c", 5)];
     assert_eq!(
-        sections(&state, NOW, DATE),
-        [
-            (Section::Episodes, vec![fresh("tv_a", 0), fresh("tv_b", 2)]),
-            (Section::Continue, vec![resume("tv_c")]),
-        ]
+        tabs(&state, NOW, DATE),
+        [(
+            Tab::Lampa,
+            vec![
+                (Section::Episodes, vec![fresh("tv_a", 0), fresh("tv_b", 2)]),
+                (Section::Continue, vec![resume("tv_c")]),
+            ]
+        )],
+        "TV Shows give way to Lampa"
     );
+}
+
+#[test]
+fn a_widget_with_nothing_has_no_tab() {
+    let mut state = state();
+    feed(&mut state, &[("done", "finished", NOW - 7200)]);
+    state.preferences.cs2_results = false;
+    assert!(tabs(&state, NOW, DATE).is_empty());
 }

@@ -76,9 +76,9 @@ fn the_center_widget_sits_between_the_header_and_the_favorites() {
     assert_eq!(coins.len(), 3);
     let top = coins[0].y - 50.;
     let bottom = coins[0].y + coins[0].h;
-    assert!(top >= 400. && bottom <= 780.);
+    assert!(top >= 300. && bottom <= 780.);
     assert!(
-        ((top - 400.) - (780. - bottom)).abs() < 1.,
+        ((top - 300.) - (780. - bottom)).abs() < 1.,
         "centered: {top}..{bottom}"
     );
     // Nothing in the center without a widget there.
@@ -109,7 +109,7 @@ fn left_from_the_first_card_in_the_center_opens_the_menu() {
 }
 
 #[test]
-fn shows_in_the_center_have_smaller_posters() {
+fn shows_in_the_center_take_the_room_today_leaves() {
     use crate::shows::Show;
     let mut state = ready();
     state.preferences.show_shows = true;
@@ -119,8 +119,8 @@ fn shows_in_the_center_have_smaller_posters() {
         .collect();
     let posters = rects(&state, |t| matches!(t, Target::Show(_)));
     assert!(!posters.is_empty());
-    assert!(posters.iter().all(|p| p.w == 170.), "{posters:?}");
-    assert!(posters.windows(2).all(|pair| pair[1].x - pair[0].x == 210.));
+    assert!(posters.iter().all(|p| p.w == 200.), "{posters:?}");
+    assert!(posters.windows(2).all(|pair| pair[1].x - pair[0].x == 240.));
     let bottom = posters.iter().map(|p| p.y + p.h).fold(0., f32::max);
     assert!(bottom <= 780., "{bottom}");
     state.focus = Target::Show(0);

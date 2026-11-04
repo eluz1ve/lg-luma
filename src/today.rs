@@ -35,19 +35,42 @@ pub struct Today {
 }
 
 /// The card's lines at most.
-pub const LINES: usize = 5;
+pub const LINES: usize = 3;
 /// Upcoming matches count as today's this long before they start.
 const MATCH_AHEAD: i64 = 12 * 3600;
 /// A series watched within this long is offered to continue.
 const CONTINUE_WITHIN: i64 = 21 * 86_400;
 
-/// The opened card's sections, in the order its lines come.
+/// The opened card's tabs: each widget in Today, with all it has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum Tab {
+    Cs2,
+    Lampa,
+    Shows,
+    Crypto,
+}
+
+impl Tab {
+    /// Its name's message key: the widget's own.
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::Cs2 => "cs2Score",
+            Tab::Lampa => "lampa",
+            Tab::Shows => "shows",
+            Tab::Crypto => "crypto",
+        }
+    }
+}
+
+/// A tab's sections, in the order its lines come.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Section {
     /// Matches being played.
     Live,
-    /// Matches about to start.
+    /// Matches still to come.
     Matches,
+    /// Matches played lately.
+    Results,
     /// Today's new episodes, or Lampa's releases.
     Episodes,
     /// Lampa's series to pick up.
@@ -61,6 +84,7 @@ impl Section {
         match self {
             Section::Live => "todayLive",
             Section::Matches => "todayMatches",
+            Section::Results => "cs2Results",
             Section::Episodes => "todayEpisodes",
             Section::Continue => "todayContinue",
             Section::Prices => "todayPrices",
@@ -105,38 +129,68 @@ pub fn today(state: &State, now: i64, date: Date) -> Today {
     Today { lines, more }
 }
 
-/// The whole day for the opened card, by section, nothing left out; empty sections are dropped.
-pub fn sections(state: &State, now: i64, date: Date) -> Vec<(Section, Vec<Line>)> {
-    let Day {
-        live,
-        coming,
-        aired,
-        lampa,
-        crypto,
-    } = gather(state, now, date);
-    let (matches, mut episodes): (Vec<_>, Vec<_>) = coming
-        .into_iter()
-        .partition(|line| matches!(line, Line::Match { .. }));
-    episodes.extend(aired);
-    let mut resume = Vec::new();
-    if let Some([fresh, week, continued]) = lampa {
-        episodes.extend(fresh);
-        episodes.extend(week);
-        resume = continued;
+/// A tab's lines by section.
+pub type Sections = Vec<(Section, Vec<Line>)>;
+
+/// The opened card's tabs, by section: every widget in Today with all it lists, more than the
+/// card has room for. Empty sections and tabs are dropped.
+pub fn tabs(state: &State, now: i64, date: Date) -> Vec<(Tab, Sections)> {
+    let preferences = &state.preferences;
+    let lampa = preferences.lampa_today && state.cub.signed_in();
+    let mut tabs = Vec::new();
+    if preferences.in_today(crate::model::Center::Cs2)
+        && !state.cs2.stale(now)
+        && let Some(feed) = state.cs2.current(now)
+    {
+        let (mut live, mut matches, mut results) = (Vec::new(), Vec::new(), Vec::new());
+        for item in cs2::shown(feed, preferences.cs2_major_only, preferences.cs2_results) {
+            let line = Line::Match {
+                id: item.id.clone(),
+            };
+            match item.state {
+                cs2::State::Live => live.push(line),
+                cs2::State::Upcoming => matches.push(line),
+                cs2::State::Finished => results.push(line),
+            }
+        }
+        tabs.push((
+            Tab::Cs2,
+            vec![
+                (Section::Live, live),
+                (Section::Matches, matches),
+                (Section::Results, results),
+            ],
+        ));
     }
-    [
-        (Section::Live, live),
-        (Section::Matches, matches),
-        (Section::Episodes, episodes),
-        (Section::Continue, resume),
-        (
-            Section::Prices,
-            if crypto { vec![Line::Crypto] } else { vec![] },
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, lines)| !lines.is_empty())
-    .collect()
+    if lampa {
+        let [fresh, week, resume] = lampa_lines(&state.cub, now, date);
+        let episodes = fresh.into_iter().chain(week).collect();
+        tabs.push((
+            Tab::Lampa,
+            vec![(Section::Episodes, episodes), (Section::Continue, resume)],
+        ));
+    } else if preferences.in_today(crate::model::Center::Shows) {
+        let episodes = state
+            .shows
+            .list
+            .iter()
+            .map(|show| Line::Episode { show: show.id })
+            .collect();
+        tabs.push((Tab::Shows, vec![(Section::Episodes, episodes)]));
+    }
+    if preferences.in_today(crate::model::Center::Crypto) {
+        tabs.push((Tab::Crypto, vec![(Section::Prices, vec![Line::Crypto])]));
+    }
+    tabs.into_iter()
+        .map(|(tab, sections)| {
+            let sections: Vec<_> = sections
+                .into_iter()
+                .filter(|(_, lines)| !lines.is_empty())
+                .collect();
+            (tab, sections)
+        })
+        .filter(|(_, sections)| !sections.is_empty())
+        .collect()
 }
 
 fn gather(state: &State, now: i64, date: Date) -> Day {
