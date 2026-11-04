@@ -1,7 +1,8 @@
 /*
  * A Lampa plugin that opens the card Luma asks for. On webOS, Lampa reads a card only from
  * "?card=" in its own address, while Luma's launch parameters ({card, media, source}) arrive in
- * PalmSystem.launchParams; this reads them at start and whenever Luma relaunches Lampa.
+ * PalmSystem.launchParams; this hands them to Lampa as its start page, and opens the card
+ * whenever Luma relaunches a running Lampa.
  * Old webOS browsers run it, so it stays ES5.
  */
 (function () {
@@ -37,11 +38,12 @@
     if (window.luma_cards) return;
     window.luma_cards = true;
 
+    // Plugins load before Lampa picks its start page, which is the deep link when one is set;
+    // pushing the card as well would put the start page over it.
     if (window.appready) open();
     else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') open();
-        });
+        var card = link();
+        if (card) window.start_deep_link = card;
     }
     document.addEventListener('webOSRelaunch', open);
 })();
