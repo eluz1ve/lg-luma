@@ -611,3 +611,29 @@ fn the_lampa_settings_choose_what_the_widget_lists() {
     state.activate();
     assert_eq!(state.preferences.lampa_feed, LampaFeed::Watching);
 }
+
+#[test]
+fn the_plugin_row_explains_lampas_plugin_and_back_returns_to_it() {
+    let mut state = ready();
+    state.open(2);
+    state.focus = Target::Widget(7);
+    state.activate();
+    state.focus = Target::LampaPlugin;
+    state.activate();
+    assert!(matches!(state.overlay, Some(Overlay::LampaPlugin)));
+    assert_eq!(state.focus, Target::CloseDialog);
+    let shown = texts(&at(&state));
+    assert!(
+        shown.iter().any(|t| t == crate::shows::LAMPA_PLUGIN),
+        "{shown:?}"
+    );
+    assert!(shown.iter().any(|t| t.starts_with("In Lampa: Settings")));
+    state.back();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::LampaPlugin);
+    // Close does the same.
+    state.activate();
+    state.activate();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.focus, Target::LampaPlugin);
+}

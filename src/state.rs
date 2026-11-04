@@ -147,6 +147,7 @@ pub enum Target {
     LampaAccount,
     /// Widgets › Lampa: its lines in the Today card.
     LampaFeed,
+    LampaPlugin,
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
@@ -265,6 +266,8 @@ pub enum Overlay {
     TileEditor,
     /// Signing in to CUB: its code and QR code while the user confirms on their phone.
     CubSignIn,
+    /// Why Lampa needs Luma's plugin, and how to add it.
+    LampaPlugin,
     BackgroundOptions {
         id: String,
         restore: Target,
@@ -795,6 +798,7 @@ impl State {
                     self.tile_editor = None;
                     Target::TileEditor
                 }
+                Overlay::LampaPlugin => Target::LampaPlugin,
                 Overlay::CubSignIn => {
                     self.cub.cancel();
                     Target::LampaAccount
@@ -2000,7 +2004,12 @@ impl State {
         }
         if matches!(
             self.overlay,
-            Some(Overlay::WallpaperUpload | Overlay::TileEditor | Overlay::CubSignIn)
+            Some(
+                Overlay::WallpaperUpload
+                    | Overlay::TileEditor
+                    | Overlay::CubSignIn
+                    | Overlay::LampaPlugin
+            )
         ) {
             return vec![];
         }
@@ -2232,6 +2241,7 @@ impl State {
                     | Target::ShowsLayout
                     | Target::LampaAccount
                     | Target::LampaFeed
+                    | Target::LampaPlugin
                     | Target::Cs2Major
                     | Target::Cs2Results
                     | Target::InputMode(_)
@@ -2377,6 +2387,7 @@ impl State {
                     | Target::ShowsLayout
                     | Target::LampaAccount
                     | Target::LampaFeed
+                    | Target::LampaPlugin
             ) {
                 match direction {
                     Direction::Right => return vec![],
@@ -3159,6 +3170,14 @@ impl State {
                     }
                 }
             }
+            Target::LampaPlugin => {
+                self.overlay = Some(Overlay::LampaPlugin);
+                self.focus = Target::CloseDialog;
+                self.pressed = None;
+                if !self.preferences.reduced_motion {
+                    self.panel_started = Some(Instant::now());
+                }
+            }
             Target::LampaFeed => {
                 use crate::model::LampaFeed;
                 self.preferences.lampa_feed = match self.preferences.lampa_feed {
@@ -3807,6 +3826,11 @@ impl State {
             if matches!(overlay, Overlay::TileEditor) {
                 self.tile_editor = None;
                 self.focus = Target::TileEditor;
+                self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::LampaPlugin) {
+                self.focus = Target::LampaPlugin;
                 self.pressed = None;
                 return vec![];
             }

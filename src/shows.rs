@@ -11,6 +11,10 @@ const POSTER_ORIGINS: [&str; 2] = [
     "https://image.tmdb.org/t/p/w342",
     "https://imagetmdb.com/t/p/w342",
 ];
+/// The Lampa plugin that opens the cards Luma asks for (Lampa on webOS ignores launch
+/// parameters); it lives beside Luma in `lampa/` and is served from the branch the TV builds.
+pub const LAMPA_PLUGIN: &str =
+    "https://cdn.jsdelivr.net/gh/eluz1ve/lg-luma@integration/lampa/luma.js";
 /// The row lists; six cards show at a time, the favorites' width and pitch.
 pub const SHOWN: usize = 18;
 pub const VISIBLE: usize = 6;

@@ -651,6 +651,65 @@ fn cub_sign_in(out: &mut Scene, state: &State, assets: &Assets) {
     out.control(Target::CloseDialog, close, false);
 }
 
+/// Why Lampa needs Luma's plugin and how to add it: its address, and a QR code that brings the
+/// address to a phone, to paste with LG ThinQ's keyboard.
+fn lampa_plugin(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let panel = Rect::new(520., 144., 880., 816.);
+    out.modal = Some(panel);
+    out.shadow(panel, 24., 40., 12., 0.3);
+    out.modal_glass(panel, 24.);
+    out.text(
+        language.t("lampaPlugin"),
+        Rect::new(584., 198., 752., 48.),
+        text(32., 550, -0.02),
+        WHITE,
+        true,
+    );
+    out.text(
+        language.t("lampaPluginWhy"),
+        Rect::new(584., 254., 752., 84.),
+        text(19., 400, 0.).leading(1.4),
+        c(0xffffff, 0.65),
+        true,
+    );
+    let url = crate::shows::LAMPA_PLUGIN;
+    if let Ok((size, modules)) = crate::companion::qr(url) {
+        qr_code(out, assets, size, &modules, 352.);
+    }
+    out.text(
+        url,
+        Rect::new(568., 664., 784., 32.),
+        assets.fit_text(url, text(22., 600, 0.), 784.),
+        WHITE,
+        true,
+    );
+    out.text(
+        language.t("lampaPluginSteps"),
+        Rect::new(584., 712., 752., 56.),
+        text(19., 450, 0.).leading(1.4),
+        c(0xffffff, 0.8),
+        true,
+    );
+    out.text(
+        language.t("lampaPluginPhone"),
+        Rect::new(584., 784., 752., 48.),
+        text(15., 400, 0.).leading(1.4),
+        c(0xffffff, 0.5),
+        true,
+    );
+    let close = Rect::new(812., 870., 296., 56.);
+    out.pill(close, *state.page_focus() == Target::CloseDialog, false);
+    out.text(
+        language.t("close"),
+        Rect::new(close.x, close.y + 15., close.w, 28.),
+        text(20., 550, 0.),
+        c(0x171c20, 1.),
+        true,
+    );
+    out.control(Target::CloseDialog, close, false);
+}
+
 /// A QR code and address for a page on the owner's phone or computer, with a Close button.
 fn companion(
     out: &mut Scene,
@@ -912,6 +971,7 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
         | Overlay::WallpaperUpload
         | Overlay::TileEditor
         | Overlay::CubSignIn
+        | Overlay::LampaPlugin
         | Overlay::Cs2Match { .. }),
     ) = &state.overlay
     {
@@ -962,6 +1022,7 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
             Overlay::WallpaperUpload => wallpaper_upload(&mut out, state, assets),
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
             Overlay::CubSignIn => cub_sign_in(&mut out, state, assets),
+            Overlay::LampaPlugin => lampa_plugin(&mut out, state, assets),
             Overlay::Cs2Match { id, .. } => cs2_dialog(&mut out, state, assets, id, now),
             Overlay::SystemKeyboard
             | Overlay::Recents { .. }
@@ -2208,6 +2269,13 @@ fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
             "power",
             name.filter(|_| cub.signed_in()),
             !cub.signed_in(),
+        ),
+        (
+            Target::LampaPlugin,
+            language.t("lampaPlugin"),
+            "upload",
+            Some(language.t("lampaPluginHow")),
+            true,
         ),
     ];
     let count = rows.len() as f32;
