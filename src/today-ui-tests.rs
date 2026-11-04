@@ -164,7 +164,7 @@ fn today_card_is_one_control_and_ok_opens_it_in_the_center() {
     let texts = self::texts(&scene);
     for expected in [
         "CS2 Score",
-        "TV Shows",
+        "Lampa",
         "LIVE NOW",
         "Natus Vincere 1–0 FaZe Clan",
         "IEM · BO3",
@@ -539,4 +539,75 @@ fn the_opened_cards_prices_show_each_coins_own_mark() {
         })
         .collect();
     assert_eq!(marks, ["coin-btc", "coin-eth", "coins"]);
+}
+
+#[test]
+fn set_to_continue_the_lampa_row_lists_the_accounts_history() {
+    use crate::model::LampaFeed;
+    let mut state = ready();
+    state.preferences.show_shows = true;
+    state.preferences.shows_today = false;
+    state.shows.list = vec![series(7, "Severance")];
+    state.preferences.lampa_feed = LampaFeed::Continue;
+    let shown = texts(&at(&state));
+    assert!(shown.iter().any(|t| t == "Continue watching"), "{shown:?}");
+    assert!(
+        shown
+            .iter()
+            .any(|t| t == "Sign in to CUB in Settings to see what you watched"),
+        "{shown:?}"
+    );
+    assert!(!shown.iter().any(|t| t == "Severance"), "not the feed");
+    state.cub.sign_in_with(
+        crate::cub::Tokens {
+            access: "a".into(),
+            refresh: "r".into(),
+            expires: NOW + 86_400,
+        },
+        None,
+    );
+    state.cub.watched = vec![crate::cub::Watched {
+        card: "tv_5".into(),
+        title: "Dark".into(),
+        poster: None,
+        episode: Some((2, 3)),
+        at: NOW,
+    }];
+    let shown = texts(&at(&state));
+    for expected in ["Dark", "S2 E3"] {
+        assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
+    }
+    assert_eq!(state.lampa_cards(), ["tv_5"]);
+    state.preferences.lampa_feed = LampaFeed::Watching;
+    assert!(texts(&at(&state)).iter().any(|t| t == "Watching now"));
+    assert_eq!(state.lampa_cards(), ["tv_7"]);
+}
+
+#[test]
+fn the_lampa_settings_choose_what_the_widget_lists() {
+    use crate::model::LampaFeed;
+    let mut state = ready();
+    state.open(2);
+    state.focus = Target::Widget(7);
+    state.activate();
+    assert_eq!(state.subpage, Some(crate::state::Subpage::Shows));
+    let page = at(&state);
+    for target in [
+        Target::ShowsToggle,
+        Target::ShowsLayout,
+        Target::LampaFeed,
+        Target::LampaAccount,
+    ] {
+        assert!(
+            page.controls.iter().any(|c| c.target == target),
+            "{target:?}"
+        );
+    }
+    assert!(texts(&page).iter().any(|t| t == "Watching now"));
+    state.focus = Target::LampaFeed;
+    assert_eq!(state.activate(), vec![Effect::Save]);
+    assert_eq!(state.preferences.lampa_feed, LampaFeed::Continue);
+    assert!(texts(&at(&state)).iter().any(|t| t == "Continue watching"));
+    state.activate();
+    assert_eq!(state.preferences.lampa_feed, LampaFeed::Watching);
 }

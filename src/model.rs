@@ -301,6 +301,24 @@ pub const CUSTOM_TILE_PREFIX: &str = "custom.";
 pub const TILE_LIMIT: usize = 64;
 pub const TILE_URL_LIMIT: usize = 512;
 
+/// What the Lampa widget lists: series with a new episode that Lampa's viewers watch now (CUB's
+/// feed), or the account's history to continue with its bookmarks' new episodes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LampaFeed {
+    #[default]
+    Watching,
+    Continue,
+}
+
+/// Anything but a known feed leaves the default.
+fn deserialize_lampa_feed<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<LampaFeed, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DateFormat {
@@ -377,8 +395,9 @@ pub struct Preferences {
     pub cs2_today: bool,
     /// Today's new episodes in the Today card instead of TV Shows' own row.
     pub shows_today: bool,
-    /// Lampa's releases and history (from CUB) in the Today card, in place of TV Shows' series.
-    pub lampa_today: bool,
+    /// What the Lampa widget lists.
+    #[serde(deserialize_with = "deserialize_lampa_feed")]
+    pub lampa_feed: LampaFeed,
     /// Liquipedia's tier 1 and 2 events only.
     #[serde(deserialize_with = "crate::cs2::deserialize_enabled")]
     pub cs2_major_only: bool,
@@ -445,7 +464,7 @@ impl Default for Preferences {
             show_shows: false,
             cs2_today: true,
             shows_today: true,
-            lampa_today: true,
+            lampa_feed: LampaFeed::Watching,
             cs2_major_only: true,
             cs2_results: true,
             input_modes: BTreeMap::new(),

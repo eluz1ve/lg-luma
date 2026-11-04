@@ -146,7 +146,7 @@ pub enum Target {
     /// Widgets › Lampa: sign in to CUB, or out.
     LampaAccount,
     /// Widgets › Lampa: its lines in the Today card.
-    LampaToday,
+    LampaFeed,
     WeatherClear,
     WeatherResult(usize),
     CryptoToggle,
@@ -309,9 +309,8 @@ pub enum Subpage {
     TimeFormat,
     /// Widgets › CS2 Score.
     Cs2,
+    /// Widgets › Lampa: what it lists, and the CUB account its history comes from.
     Shows,
-    /// Widgets › Lampa: the CUB account whose shows Today lists.
-    Lampa,
     Input(String),
     WeatherLocation,
     Temperature,
@@ -1573,7 +1572,28 @@ impl State {
         }
         self.shows_first = self
             .shows_first
-            .min(self.shows.list.len().saturating_sub(visible));
+            .min(self.lampa_cards().len().saturating_sub(visible));
+    }
+
+    /// The cards of Home's Lampa row, as Lampa's card IDs: the series Lampa watches now, or the
+    /// account's history, latest first.
+    pub fn lampa_cards(&self) -> Vec<String> {
+        match self.preferences.lampa_feed {
+            crate::model::LampaFeed::Watching => self
+                .shows
+                .list
+                .iter()
+                .map(|show| format!("tv_{}", show.id))
+                .collect(),
+            crate::model::LampaFeed::Continue if self.cub.signed_in() => self
+                .cub
+                .watched
+                .iter()
+                .take(crate::shows::SHOWN)
+                .map(|watched| watched.card.clone())
+                .collect(),
+            crate::model::LampaFeed::Continue => Vec::new(),
+        }
     }
 
     /// Scrolls the CS2 Score row so the card at `index` is in view.
@@ -1934,7 +1954,6 @@ impl State {
             Some(Subpage::Weather) => Target::Widget(1),
             Some(Subpage::Cs2) => Target::Widget(6),
             Some(Subpage::Shows) => Target::Widget(7),
-            Some(Subpage::Lampa) => Target::Widget(8),
             Some(Subpage::Shortcuts) => Target::Widget(2),
             Some(Subpage::Inputs) => Target::Widget(3),
             Some(Subpage::Crypto) => Target::Widget(5),
@@ -2212,7 +2231,7 @@ impl State {
                     | Target::ShowsToggle
                     | Target::ShowsLayout
                     | Target::LampaAccount
-                    | Target::LampaToday
+                    | Target::LampaFeed
                     | Target::Cs2Major
                     | Target::Cs2Results
                     | Target::InputMode(_)
@@ -2335,7 +2354,7 @@ impl State {
             {
                 let next = match direction {
                     Direction::Left => index.checked_sub(1),
-                    _ => (index + 1 < self.shows.list.len()).then_some(index + 1),
+                    _ => (index + 1 < self.lampa_cards().len()).then_some(index + 1),
                 };
                 if let Some(next) = next {
                     self.shows_reveal(next);
@@ -2357,15 +2376,12 @@ impl State {
                     | Target::ShowsToggle
                     | Target::ShowsLayout
                     | Target::LampaAccount
-                    | Target::LampaToday
+                    | Target::LampaFeed
             ) {
                 match direction {
                     Direction::Right => return vec![],
                     Direction::Up
-                        if matches!(
-                            self.focus,
-                            Target::Cs2Toggle | Target::ShowsToggle | Target::LampaAccount
-                        ) =>
+                        if matches!(self.focus, Target::Cs2Toggle | Target::ShowsToggle) =>
                     {
                         return vec![];
                     }
@@ -3143,8 +3159,13 @@ impl State {
                     }
                 }
             }
-            Target::LampaToday => {
-                self.preferences.lampa_today = !self.preferences.lampa_today;
+            Target::LampaFeed => {
+                use crate::model::LampaFeed;
+                self.preferences.lampa_feed = match self.preferences.lampa_feed {
+                    LampaFeed::Watching => LampaFeed::Continue,
+                    LampaFeed::Continue => LampaFeed::Watching,
+                };
+                self.shows_first = 0;
                 return vec![Effect::Save];
             }
             Target::Cs2Close => return self.back(),
@@ -3153,8 +3174,7 @@ impl State {
                 return vec![Effect::Save];
             }
             Target::Show(index) => {
-                if let Some(show) = self.shows.list.get(index) {
-                    let card = format!("tv_{}", show.id);
+                if let Some(card) = self.lampa_cards().into_iter().nth(index) {
                     return self.open_lampa(&card);
                 }
             }
@@ -3275,7 +3295,6 @@ impl State {
                     1 => (Subpage::Weather, Target::WeatherToggle),
                     6 => (Subpage::Cs2, Target::Cs2Toggle),
                     7 => (Subpage::Shows, Target::ShowsToggle),
-                    8 => (Subpage::Lampa, Target::LampaAccount),
                     2 => (Subpage::Shortcuts, Target::TileEditor),
                     4 => (Subpage::Date, Target::DateToggle),
                     5 => (Subpage::Crypto, Target::CryptoToggle),
@@ -3599,7 +3618,7 @@ impl State {
                     ) => {
                         return vec![];
                     }
-                    Some(Subpage::Cs2 | Subpage::Shows | Subpage::Lampa) => return vec![],
+                    Some(Subpage::Cs2 | Subpage::Shows) => return vec![],
                     None => return vec![],
                 }
                 self.close_subpage();

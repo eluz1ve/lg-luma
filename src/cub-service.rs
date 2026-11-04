@@ -39,8 +39,8 @@ pub fn log(line: impl AsRef<str>) {
 /// A month of releases or a page of history is well under this.
 const LIMIT: usize = 2 * 1024 * 1024;
 const POSTER_LIMIT: usize = 512 * 1024;
-/// Today's lines show posters small; this keeps them sharp when focused.
-const POSTER_WIDTH: u32 = 160;
+/// Posters fill the Lampa row's cards as well as Today's lines; this keeps them sharp.
+const POSTER_WIDTH: u32 = 320;
 
 #[derive(Clone)]
 pub struct Client {

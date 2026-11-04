@@ -250,7 +250,7 @@ fn cs2_and_shows_take_turns_in_the_center_from_widgets() {
     };
     // In Today by default: no rows of their own.
     assert!(state.preferences.cs2_today && state.preferences.shows_today);
-    assert!(!heading(&state, "CS2 Score") && !heading(&state, "TV Shows"));
+    assert!(!heading(&state, "CS2 Score") && !heading(&state, "Watching now"));
     state.open(2);
     for (widget, layout) in [(6, Target::Cs2Layout), (7, Target::ShowsLayout)] {
         state.focus = Target::Widget(widget);
@@ -263,5 +263,5 @@ fn cs2_and_shows_take_turns_in_the_center_from_widgets() {
     // One widget at a time: Shows in the center sent CS2 back into Today.
     assert!(state.preferences.cs2_today && !state.preferences.shows_today);
     state.open(0);
-    assert!(!heading(&state, "CS2 Score") && heading(&state, "TV Shows"));
+    assert!(!heading(&state, "CS2 Score") && heading(&state, "Watching now"));
 }

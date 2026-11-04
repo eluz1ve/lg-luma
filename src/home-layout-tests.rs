@@ -170,7 +170,7 @@ fn cs2_and_shows_in_today_leave_the_center_empty() {
         texts(state)
             .into_iter()
             .map(|(text, ..)| text)
-            .filter(|text| text == "CS2 Score" || text == "TV Shows")
+            .filter(|text| text == "CS2 Score" || text == "Watching now")
             .collect()
     };
     assert!(headings(&state).is_empty(), "{:?}", headings(&state));

@@ -163,8 +163,8 @@ fn posters_come_from_tmdb_at_card_size() {
     assert_eq!(
         poster_urls("/1XS1.jpg"),
         [
-            "https://image.tmdb.org/t/p/w185/1XS1.jpg",
-            "https://imagetmdb.com/t/p/w185/1XS1.jpg"
+            "https://image.tmdb.org/t/p/w342/1XS1.jpg",
+            "https://imagetmdb.com/t/p/w342/1XS1.jpg"
         ]
     );
     assert!(poster_urls("../x.jpg").is_empty());

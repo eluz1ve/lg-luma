@@ -2763,7 +2763,7 @@ fn widgets_group_existing_settings_and_restore_each_parent_without_changing_pref
             _ => None,
         })
         .collect();
-    assert_eq!(widget_order, [4, 0, 1, 2, 3, 5, 6, 7, 8]);
+    assert_eq!(widget_order, [4, 0, 1, 2, 3, 5, 6, 7]);
     for (index, subpage) in [
         Subpage::Greeting,
         Subpage::Weather,
@@ -2845,7 +2845,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
                 .iter()
                 .filter(|c| matches!(c.target, Target::Widget(_)))
                 .count(),
-            9
+            8
         );
         for key in [
             "widgets",
@@ -2856,7 +2856,7 @@ fn widgets_are_localized_without_legacy_sidebar_entries() {
             "date",
             "crypto",
             "cs2Score",
-            "shows",
+            "lampa",
         ] {
             assert!(page.draw.iter().any(|draw| matches!(draw, crate::renderer::Draw::Text(label, ..) if label == language.t(key))), "{key}/{language:?}");
         }

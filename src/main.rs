@@ -598,11 +598,13 @@ fn shows_tick(
     offset: time::UtcOffset,
 ) {
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let (command, changed) = state.shows.sync(
-        state.preferences.show_shows,
-        visible && state.page == state::Page::Home,
-        now,
-    );
+    // Only "watching now" needs CUB's feed; the history comes with the account.
+    let enabled =
+        state.preferences.show_shows && state.preferences.lampa_feed == model::LampaFeed::Watching;
+    let (command, changed) =
+        state
+            .shows
+            .sync(enabled, visible && state.page == state::Page::Home, now);
     state.dirty |= changed;
     service.generation(state.shows.generation());
     if let Some(mut command) = command {
@@ -624,7 +626,7 @@ fn shows_tick(
             }
         };
     }
-    if state.preferences.show_shows && visible {
+    if enabled && visible {
         for path in state.shows.wanted_posters(state.shows_first) {
             service.poster(path);
         }

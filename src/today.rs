@@ -56,7 +56,7 @@ impl Tab {
         match self {
             Tab::Cs2 => "cs2Score",
             Tab::Lampa => "lampa",
-            Tab::Shows => "shows",
+            Tab::Shows => "lampa",
             Tab::Crypto => "crypto",
         }
     }
@@ -136,7 +136,10 @@ pub type Sections = Vec<(Section, Vec<Line>)>;
 /// card has room for. Empty sections and tabs are dropped.
 pub fn tabs(state: &State, now: i64, date: Date) -> Vec<(Tab, Sections)> {
     let preferences = &state.preferences;
-    let lampa = preferences.lampa_today && state.cub.signed_in();
+    let feed = preferences
+        .in_today(crate::model::Center::Shows)
+        .then_some(preferences.lampa_feed);
+    let lampa = feed == Some(crate::model::LampaFeed::Continue) && state.cub.signed_in();
     let mut tabs = Vec::new();
     if preferences.in_today(crate::model::Center::Cs2)
         && !state.cs2.stale(now)
@@ -169,7 +172,7 @@ pub fn tabs(state: &State, now: i64, date: Date) -> Vec<(Tab, Sections)> {
             Tab::Lampa,
             vec![(Section::Episodes, episodes), (Section::Continue, resume)],
         ));
-    } else if preferences.in_today(crate::model::Center::Shows) {
+    } else if feed == Some(crate::model::LampaFeed::Watching) {
         let episodes = state
             .shows
             .list
@@ -195,7 +198,10 @@ pub fn tabs(state: &State, now: i64, date: Date) -> Vec<(Tab, Sections)> {
 
 fn gather(state: &State, now: i64, date: Date) -> Day {
     let preferences = &state.preferences;
-    let lampa = preferences.lampa_today && state.cub.signed_in();
+    let feed = preferences
+        .in_today(crate::model::Center::Shows)
+        .then_some(preferences.lampa_feed);
+    let lampa = feed == Some(crate::model::LampaFeed::Continue) && state.cub.signed_in();
     let mut live = Vec::new();
     let mut coming = Vec::new();
     // An old feed's "live" may long be over.
@@ -216,7 +222,7 @@ fn gather(state: &State, now: i64, date: Date) -> Day {
             }
         }
     }
-    let aired = if preferences.in_today(crate::model::Center::Shows) && !lampa {
+    let aired = if feed == Some(crate::model::LampaFeed::Watching) {
         state
             .shows
             .list

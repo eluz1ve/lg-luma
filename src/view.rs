@@ -1963,10 +1963,16 @@ const SHOW_PITCH: f32 = 240.;
 /// The title and details below a poster.
 const SHOW_CAPTION: f32 = 60.;
 
-/// Home's TV Shows: a heading crediting Lampa, then posters in a row that slides six at a time.
+/// Home's Lampa row: a heading naming what it lists and crediting Lampa, then posters in a row
+/// that slides six at a time.
 fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time::Date) {
+    use crate::model::LampaFeed;
     let language = state.preferences.language;
-    let heading = language.t("shows");
+    let feed = state.preferences.lampa_feed;
+    let heading = language.t(match feed {
+        LampaFeed::Watching => "lampaWatching",
+        LampaFeed::Continue => "lampaHistory",
+    });
     let style = row_heading(out, heading, y);
     out.text(
         "Lampa",
@@ -1980,14 +1986,19 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time
         c(0xf5f5f5, 0.5),
         false,
     );
-    let list = &state.shows.list;
-    if list.is_empty() {
+    let cards = lampa_row(state, date);
+    if cards.is_empty() {
+        let cub = &state.cub;
+        let notice = match feed {
+            LampaFeed::Watching if state.shows.failed => "showsUnavailable",
+            LampaFeed::Watching => "showsLoading",
+            LampaFeed::Continue if !cub.signed_in() => "lampaNeedsAccount",
+            LampaFeed::Continue if cub.failed => "lampaUnavailable",
+            LampaFeed::Continue if cub.fetched.is_none() => "showsLoading",
+            LampaFeed::Continue => "lampaNoHistory",
+        };
         out.text(
-            language.t(if state.shows.failed {
-                "showsUnavailable"
-            } else {
-                "showsLoading"
-            }),
+            language.t(notice),
             Rect::new(SAFE_X, y + ROW_HEADING_GAP, 1200., 29.),
             text(type_scale::SECONDARY, 400, 0.).shadow(),
             c(0xf5f5f5, 0.6),
@@ -1996,14 +2007,14 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time
         return;
     }
     let visible = crate::shows::VISIBLE;
-    let first = state.shows_first.min(list.len().saturating_sub(visible));
-    if list.len() > visible {
+    let first = state.shows_first.min(cards.len().saturating_sub(visible));
+    if cards.len() > visible {
         out.text(
             format!(
                 "{}–{} / {}",
                 first + 1,
-                (first + visible).min(list.len()),
-                list.len()
+                (first + visible).min(cards.len()),
+                cards.len()
             ),
             Rect::new(SAFE_X + WIDTH - 400., y + 5., 400., 27.),
             text(type_scale::CAPTION, 500, 0.02).right().shadow(),
@@ -2017,32 +2028,91 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time
         Carousel {
             lane: crate::motion::Lane::Shows,
             first: state.shows_first,
-            count: list.len(),
+            count: cards.len(),
             visible,
             pitch: SHOW_PITCH,
             card: Rect::new(SAFE_X, y + ROW_HEADING_GAP, SHOW_WIDTH, SHOW_POSTER_HEIGHT),
             below: SHOW_CAPTION,
         },
-        |out, index, rect, hit| show_card(out, state, assets, &list[index], index, date, rect, hit),
+        |out, index, rect, hit| show_card(out, assets, state, &cards[index], index, rect, hit),
     );
 }
 
-/// A show's card: its poster, then the title and its details below; `date` is the TV's.
-#[allow(clippy::too_many_arguments)]
+/// What a card of the Lampa row shows: its poster, title, and a line of details, accented when
+/// it tells of a new episode.
+struct LampaCard {
+    poster: Option<std::sync::Arc<crate::app_artwork::Artwork>>,
+    title: String,
+    meta: String,
+    new: bool,
+}
+
+/// The Lampa row's cards, in the order of `State::lampa_cards`; `date` is the TV's.
+fn lampa_row(state: &State, date: time::Date) -> Vec<LampaCard> {
+    let language = state.preferences.language;
+    match state.preferences.lampa_feed {
+        crate::model::LampaFeed::Watching => state
+            .shows
+            .list
+            .iter()
+            .map(|show| {
+                // The season, then today's news or the rating.
+                let new = show.new_on(date);
+                let news = if new {
+                    Some(language.t("lampaNew").to_owned())
+                } else {
+                    show.rating.map(|rating| format!("★ {rating:.1}"))
+                };
+                LampaCard {
+                    poster: state.shows.poster(show),
+                    title: show.title(language).to_owned(),
+                    meta: [show.season.map(|season| format!("S{season}")), news]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    new,
+                }
+            })
+            .collect(),
+        crate::model::LampaFeed::Continue if state.cub.signed_in() => state
+            .cub
+            .watched
+            .iter()
+            .take(crate::shows::SHOWN)
+            .map(|watched| LampaCard {
+                poster: watched
+                    .poster
+                    .as_deref()
+                    .and_then(|path| state.cub.poster(path)),
+                title: watched.title.clone(),
+                meta: watched
+                    .episode
+                    .map(|(season, episode)| format!("S{season} E{episode}"))
+                    .unwrap_or_else(|| language.t("lampaMovie").to_owned()),
+                new: false,
+            })
+            .collect(),
+        crate::model::LampaFeed::Continue => Vec::new(),
+    }
+}
+
+/// A card of the Lampa row: its poster, then the title and its details below.
 fn show_card(
     out: &mut Scene,
-    state: &State,
     assets: &Assets,
-    show: &crate::shows::Show,
+    state: &State,
+    card: &LampaCard,
     index: usize,
-    date: time::Date,
     rect: Rect,
     hit: Option<Rect>,
 ) {
     let target = Target::Show(index);
     let (face, lift_amount) = lift(out, state, &target, rect, 18.4);
-    match state.shows.poster(show) {
-        Some(poster) => out.draw.push(Draw::Cover(poster, face, 18.4, [1.; 4])),
+    match &card.poster {
+        Some(poster) => out
+            .draw
+            .push(Draw::Cover(poster.clone(), face, 18.4, [1.; 4])),
         None => {
             out.draw.push(Draw::RoundedGradient(
                 face,
@@ -2064,10 +2134,8 @@ fn show_card(
         }
     }
     lift_edge(out, face, 18.4, lift_amount);
-    // Below the poster: the title, then its season and either today's news or its rating.
-    let language = state.preferences.language;
     let style = text(19.2, 550, -0.01);
-    let title = assets.ellipsize(show.title(language), style, rect.w);
+    let title = assets.ellipsize(&card.title, style, rect.w);
     let below = rect.y + rect.h + 12.;
     out.text(
         &title,
@@ -2076,22 +2144,11 @@ fn show_card(
         WHITE,
         false,
     );
-    let new = show.new_on(date);
-    let news = if new {
-        Some(language.t("lampaNew").to_owned())
-    } else {
-        show.rating.map(|rating| format!("★ {rating:.1}"))
-    };
-    let meta = [show.season.map(|season| format!("S{season}")), news]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
     out.text(
-        &meta,
+        &card.meta,
         Rect::new(rect.x, below + 29., rect.w, 20.),
-        assets.fit_text(&meta, text(14.4, 400, 0.), rect.w),
-        if new {
+        assets.fit_text(&card.meta, text(14.4, 400, 0.), rect.w),
+        if card.new {
             c(0x9fd0ff, 0.95)
         } else {
             c(0xf5f5f5, 0.6)
@@ -2103,112 +2160,89 @@ fn show_card(
     }
 }
 
+/// Widgets › Lampa: whether it shows and where, what it lists, and the CUB account its
+/// history comes from; below, where that comes from and how fresh it is.
 fn shows_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    use crate::model::LampaFeed;
     let language = state.preferences.language;
     let s = state.scroll;
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::ShowsToggle,
-            rect: Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, ROW_HEIGHT),
-            title: language.t("showWidget"),
-            icon: Some("eye"),
-            value: Some(language.t(if state.preferences.show_shows {
+    let cub = &state.cub;
+    let feed = state.preferences.lampa_feed;
+    let name = cub.profile.as_ref().map(|profile| profile.name.as_str());
+    let rows = [
+        (
+            Target::ShowsToggle,
+            language.t("showWidget"),
+            "eye",
+            Some(language.t(if state.preferences.show_shows {
                 "stateOn"
             } else {
                 "stateOff"
             })),
-            description: None,
-            selected: false,
-            chevron: false,
-        },
-    );
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::ShowsLayout,
-            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
-            title: language.t("cryptoLayout"),
-            icon: Some("grid"),
-            value: Some(place(language, state, crate::model::Center::Shows)),
-            description: None,
-            selected: false,
-            chevron: false,
-        },
-    );
-    out.text(
-        language.t("showsSource"),
-        Rect::new(
-            LIST_X + 24.,
-            LIST_TOP + 2. * LIST_PITCH + 6. - s,
-            LIST_WIDTH - 48.,
-            56.,
+            false,
         ),
-        text(type_scale::CAPTION, 450, 0.).shadow(),
-        c(0xf5f5f5, 0.72),
-        false,
-    );
-}
-
-/// Widgets › Lampa: sign in to the CUB account Lampa syncs to (or out), and whether its shows
-/// fill the Today card; below, where they come from and how fresh they are.
-fn lampa_settings(out: &mut Scene, state: &State, assets: &Assets) {
-    let language = state.preferences.language;
-    let s = state.scroll;
-    let cub = &state.cub;
-    let name = cub.profile.as_ref().map(|profile| profile.name.as_str());
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::LampaAccount,
-            rect: Rect::new(LIST_X, LIST_TOP - s, LIST_WIDTH, ROW_HEIGHT),
-            title: language.t(if cub.signed_in() {
+        (
+            Target::ShowsLayout,
+            language.t("cryptoLayout"),
+            "grid",
+            Some(place(language, state, crate::model::Center::Shows)),
+            false,
+        ),
+        (
+            Target::LampaFeed,
+            language.t("lampaFeed"),
+            "tv",
+            Some(language.t(match feed {
+                LampaFeed::Watching => "lampaWatching",
+                LampaFeed::Continue => "lampaHistory",
+            })),
+            false,
+        ),
+        (
+            Target::LampaAccount,
+            language.t(if cub.signed_in() {
                 "lampaSignOut"
             } else {
                 "lampaSignIn"
             }),
-            icon: Some("power"),
-            value: name.filter(|_| cub.signed_in()),
-            description: None,
-            selected: false,
-            chevron: !cub.signed_in(),
-        },
-    );
-    row(
-        out,
-        state,
-        assets,
-        Row {
-            target: Target::LampaToday,
-            rect: Rect::new(LIST_X, LIST_TOP + LIST_PITCH - s, LIST_WIDTH, ROW_HEIGHT),
-            title: language.t("lampaInToday"),
-            icon: Some("eye"),
-            value: Some(language.t(if state.preferences.lampa_today {
-                "stateOn"
-            } else {
-                "stateOff"
-            })),
-            description: None,
-            selected: false,
-            chevron: false,
-        },
-    );
-    let status = language.t(if cub.signed_in() && cub.failed {
-        "lampaUnavailable"
-    } else {
-        "lampaSource"
+            "power",
+            name.filter(|_| cub.signed_in()),
+            !cub.signed_in(),
+        ),
+    ];
+    let count = rows.len() as f32;
+    for (index, (target, title, icon, value, chevron)) in rows.into_iter().enumerate() {
+        row(
+            out,
+            state,
+            assets,
+            Row {
+                target,
+                rect: Rect::new(
+                    LIST_X,
+                    LIST_TOP + index as f32 * LIST_PITCH - s,
+                    LIST_WIDTH,
+                    ROW_HEIGHT,
+                ),
+                title,
+                icon: Some(icon),
+                value,
+                description: None,
+                selected: false,
+                chevron,
+            },
+        );
+    }
+    let status = language.t(match feed {
+        LampaFeed::Watching => "showsSource",
+        LampaFeed::Continue if cub.signed_in() && cub.failed => "lampaUnavailable",
+        LampaFeed::Continue => "lampaSource",
     });
     out.text(
         status,
         Rect::new(
             LIST_X + 24.,
-            LIST_TOP + 2. * LIST_PITCH + 6. - s,
+            LIST_TOP + count * LIST_PITCH + 6. - s,
             LIST_WIDTH - 48.,
             120.,
         ),
@@ -5494,8 +5528,7 @@ fn breadcrumb(state: &State) -> Vec<&str> {
             Subpage::Inputs => language.t("inputs"),
             Subpage::Clock => language.t("clock"),
             Subpage::Cs2 => language.t("cs2Score"),
-            Subpage::Shows => language.t("shows"),
-            Subpage::Lampa => language.t("lampa"),
+            Subpage::Shows => language.t("lampa"),
             Subpage::Language => language.t("language"),
             Subpage::Appearance => language.t("uiScale"),
             Subpage::TextRendering => language.t("textRendering"),
@@ -5636,7 +5669,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             Subpage::WeatherLocation
                 | Subpage::Cs2
                 | Subpage::Shows
-                | Subpage::Lampa
                 | Subpage::Weather
                 | Subpage::Shortcuts
                 | Subpage::Inputs
@@ -5650,7 +5682,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Cs2 => cs2_settings(out, state, assets),
                 Subpage::Shows => shows_settings(out, state, assets),
-                Subpage::Lampa => lampa_settings(out, state, assets),
                 Subpage::Weather => weather_settings(out, state, assets),
                 Subpage::Shortcuts => shortcut_settings(out, state, assets),
                 Subpage::Inputs => inputs_settings(out, state, assets),
@@ -5729,7 +5760,6 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             Subpage::WeatherLocation
             | Subpage::Cs2
             | Subpage::Shows
-            | Subpage::Lampa
             | Subpage::Weather
             | Subpage::Shortcuts
             | Subpage::Inputs
@@ -5891,8 +5921,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
                 (5, "crypto", "cryptoAbout", "globe"),
                 // Last, so the rows above keep their places.
                 (6, "cs2Score", "cs2ScoreAbout", "gaming"),
-                (7, "shows", "showsAbout", "tv"),
-                (8, "lampa", "lampaAbout", "tv"),
+                (7, "lampa", "lampaWidgetAbout", "tv"),
             ];
             let rects = list_rects(
                 state,

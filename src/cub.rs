@@ -13,10 +13,10 @@ pub const CLIENT_ID: &str = "ddcd0b0e58629088c5445df31fe1b9d5";
 pub const SCOPE: &str = "profile bookmarks:read history:read";
 /// cub.red is blocked in some countries; its mirrors serve the same API.
 pub const HOSTS: [&str; 3] = ["cub.red", "cub.best", "cub.black"];
-/// TMDB's posters at card size, and the mirror Lampa uses where TMDB is blocked.
+/// TMDB's posters a size above the row's cards, and the mirror Lampa uses where TMDB is blocked.
 const POSTER_ORIGINS: [&str; 2] = [
-    "https://image.tmdb.org/t/p/w185",
-    "https://imagetmdb.com/t/p/w185",
+    "https://image.tmdb.org/t/p/w342",
+    "https://imagetmdb.com/t/p/w342",
 ];
 
 /// The account's tokens: access lasts a day, refresh 90 days and works once.
@@ -349,14 +349,21 @@ impl Cub {
         }
     }
 
-    /// Posters Today may show and not asked for yet: unwatched releases and recent history.
+    /// Posters Today and the Lampa row may show and not asked for yet: unwatched releases and
+    /// recent history.
     pub fn wanted_posters(&mut self) -> Vec<String> {
         let paths: Vec<String> = self
             .releases
             .iter()
             .filter(|release| !release.watched)
             .filter_map(|release| release.poster.clone())
-            .chain(self.watched.iter().take(6).filter_map(|w| w.poster.clone()))
+            // The history fills Home's Lampa row as well as Today.
+            .chain(
+                self.watched
+                    .iter()
+                    .take(crate::shows::SHOWN)
+                    .filter_map(|w| w.poster.clone()),
+            )
             .collect();
         let mut wanted = Vec::new();
         for path in paths {

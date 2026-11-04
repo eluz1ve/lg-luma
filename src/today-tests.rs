@@ -153,10 +153,12 @@ fn old_preferences_without_today_flags_put_cs2_and_shows_in_today() {
     let preferences: Preferences = serde_json::from_str("{}").unwrap();
     assert!(preferences.cs2_today);
     assert!(preferences.shows_today);
-    assert!(preferences.lampa_today);
+    assert_eq!(preferences.lampa_feed, crate::model::LampaFeed::Watching);
 }
 
+/// Signed in to CUB, the Lampa widget set to the history.
 fn signed_in(state: &mut State) {
+    state.preferences.lampa_feed = crate::model::LampaFeed::Continue;
     state.cub.sign_in_with(
         crate::cub::Tokens {
             access: "a".into(),
@@ -262,14 +264,22 @@ fn each_kind_of_line_gets_one_before_any_gets_two() {
 }
 
 #[test]
-fn with_lampa_in_today_the_feeds_series_leave_it() {
+fn the_lampa_widget_lists_whichever_its_set_to() {
     let mut state = state();
     state.shows.list = vec![show(1, 0)];
     signed_in(&mut state);
-    assert_eq!(today(&state, NOW, DATE), Today::default());
-    state.preferences.lampa_today = false;
     state.cub.watched = vec![watched("tv_c", 5)];
+    assert_eq!(
+        today(&state, NOW, DATE).lines,
+        [resume("tv_c")],
+        "the history, not the feed"
+    );
+    state.preferences.lampa_feed = crate::model::LampaFeed::Watching;
     assert_eq!(today(&state, NOW, DATE).lines, [episode(1)]);
+    // Set to the history but signed out, it has nothing.
+    state.preferences.lampa_feed = crate::model::LampaFeed::Continue;
+    state.cub.sign_out();
+    assert_eq!(today(&state, NOW, DATE), Today::default());
 }
 
 #[test]
