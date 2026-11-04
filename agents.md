@@ -40,7 +40,7 @@ can omit a changeset.
 
 ## Build and identity
 
-`com.ecklf.luma` is the native app's ID and `luma` its executable. Root `appinfo.json` is the
+`com.eluz1ve.lumaplus` is the native app's ID and `luma` its executable. Root `appinfo.json` is the
 package metadata source. It installs separately from the former web app `com.luma.launcher` and
 prototypes `com.luma.launcher.native` and `com.luma.native`, all excluded from app inventory. Preferences are local JSON
 per installation; browser local storage and preferences from other IDs are not migrated.

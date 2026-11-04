@@ -54,6 +54,7 @@ fn show(id: i64, days: i64) -> Show {
         name: format!("Show {id}"),
         original: format!("Show {id}"),
         poster: None,
+        imdb: None,
         season: Some(1),
         aired: DATE - time::Duration::days(days),
         rating: None,
@@ -175,6 +176,7 @@ fn release(card: &str, days: i64, watched: bool) -> crate::cub::Release {
         card: card.into(),
         title: card.into(),
         poster: None,
+        imdb: None,
         date: DATE - time::Duration::days(days),
         season: 1,
         episodes: vec![1],
@@ -188,6 +190,7 @@ fn watched(card: &str, hours: i64) -> crate::cub::Watched {
         card: card.into(),
         title: card.into(),
         poster: None,
+        imdb: None,
         episode: Some((1, 1)),
         at: NOW - hours * 3600,
     }

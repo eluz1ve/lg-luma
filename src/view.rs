@@ -2035,8 +2035,14 @@ fn shows_row(out: &mut Scene, state: &State, assets: &Assets, y: f32, date: time
         LampaFeed::Continue => "lampaHistory",
     });
     let style = row_heading(out, heading, y);
+    // Outside Russian the posters are TVmaze's, which asks to be credited.
+    let credit = if language == crate::i18n::Language::Ru {
+        "Lampa"
+    } else {
+        "Lampa · TVmaze"
+    };
     out.text(
-        "Lampa",
+        credit,
         Rect::new(
             SAFE_X + assets.width(heading, style) + 20.,
             y + 5.,
@@ -2125,7 +2131,7 @@ fn lampa_row(state: &State, date: time::Date) -> Vec<LampaCard> {
                     show.rating.map(|rating| format!("★ {rating:.1}"))
                 };
                 LampaCard {
-                    poster: state.shows.poster(show),
+                    poster: state.shows.poster(show, state.preferences.language),
                     title: show.title(language).to_owned(),
                     meta: [show.season.map(|season| format!("S{season}")), news]
                         .into_iter()
@@ -2143,9 +2149,8 @@ fn lampa_row(state: &State, date: time::Date) -> Vec<LampaCard> {
             .take(crate::shows::SHOWN)
             .map(|watched| LampaCard {
                 poster: watched
-                    .poster
-                    .as_deref()
-                    .and_then(|path| state.cub.poster(path)),
+                    .poster_key(language)
+                    .and_then(|key| state.cub.poster(&key)),
                 title: watched.title.clone(),
                 meta: watched
                     .episode
@@ -2331,9 +2336,9 @@ fn today_lines(state: &State, now: OffsetDateTime) -> crate::today::Today {
     crate::today::today(state, now.unix_timestamp(), now.date())
 }
 
-/// A Lampa line's poster, or the TV icon until it loads.
-fn lampa_poster(out: &mut Scene, state: &State, assets: &Assets, path: Option<&str>, icon: Rect) {
-    match path.and_then(|path| state.cub.poster(path)) {
+/// A Lampa line's poster (by key), or the TV icon until it loads.
+fn lampa_poster(out: &mut Scene, state: &State, assets: &Assets, key: Option<String>, icon: Rect) {
+    match key.and_then(|key| state.cub.poster(&key)) {
         Some(poster) => out.draw.push(Draw::Cover(poster, icon, 8., [1.; 4])),
         None => out.icon(assets, "tv", icon.inset(6.), c(0xf5f5f5, 0.7)),
     }
@@ -2445,7 +2450,7 @@ fn today_card(
                 let Some(show) = state.shows.list.iter().find(|s| s.id == *show) else {
                     continue;
                 };
-                match state.shows.poster(show) {
+                match state.shows.poster(show, state.preferences.language) {
                     Some(poster) => out.draw.push(Draw::Cover(poster, icon, 8., [1.; 4])),
                     None => out.icon(assets, "tv", icon.inset(6.), c(0xf5f5f5, 0.7)),
                 }
@@ -2464,7 +2469,13 @@ fn today_card(
                 else {
                     continue;
                 };
-                lampa_poster(out, state, assets, release.poster.as_deref(), icon);
+                lampa_poster(
+                    out,
+                    state,
+                    assets,
+                    release.poster_key(state.preferences.language),
+                    icon,
+                );
                 use crate::cub::Badge;
                 let label = language.t(match release.badge {
                     Badge::Finale => "lampaFinale",
@@ -2497,7 +2508,13 @@ fn today_card(
                 let Some(watched) = state.cub.watched.iter().find(|w| &w.card == card) else {
                     continue;
                 };
-                lampa_poster(out, state, assets, watched.poster.as_deref(), icon);
+                lampa_poster(
+                    out,
+                    state,
+                    assets,
+                    watched.poster_key(state.preferences.language),
+                    icon,
+                );
                 let when = match watched.episode {
                     Some((season, episode)) => {
                         format!("{} · S{season} E{episode}", language.t("lampaContinue"))
@@ -2898,7 +2915,7 @@ fn today_line(
                 return false;
             };
             let focused = parts(Target::TodayShow(show.id));
-            match state.shows.poster(show) {
+            match state.shows.poster(show, state.preferences.language) {
                 Some(poster) => out.draw.push(Draw::Cover(poster, picture, 10., [1.; 4])),
                 None => out.icon(assets, "tv", picture.inset(10.), today_ink(focused, 0.7)),
             }
@@ -2924,7 +2941,13 @@ fn today_line(
                 return false;
             };
             let focused = parts(Target::TodayLampa(card.clone()));
-            lampa_poster(out, state, assets, release.poster.as_deref(), picture);
+            lampa_poster(
+                out,
+                state,
+                assets,
+                release.poster_key(state.preferences.language),
+                picture,
+            );
             use crate::cub::Badge;
             let label = language.t(match release.badge {
                 Badge::Finale => "lampaFinale",
@@ -2958,7 +2981,13 @@ fn today_line(
                 return false;
             };
             let focused = parts(Target::TodayLampa(card.clone()));
-            lampa_poster(out, state, assets, watched.poster.as_deref(), picture);
+            lampa_poster(
+                out,
+                state,
+                assets,
+                watched.poster_key(state.preferences.language),
+                picture,
+            );
             let detail = watched
                 .episode
                 .map(|(season, episode)| format!("S{season} E{episode}"))

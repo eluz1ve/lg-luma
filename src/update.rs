@@ -2,7 +2,7 @@ pub mod discovery {
     use serde::{Deserialize, Serialize};
     use std::{io::Read, sync::mpsc, thread, time::Duration};
 
-    const FEED: &str = "https://github.com/ecklf/lg-luma/releases/latest/download/repo.json";
+    const FEED: &str = "https://github.com/eluz1ve/lg-luma-plus/releases/latest/download/repo.json";
     const LIMIT: usize = 256 * 1024;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -129,11 +129,11 @@ pub mod discovery {
         let mut matching = feed
             .packages
             .into_iter()
-            .filter(|package| package.id == "com.ecklf.luma");
+            .filter(|package| package.id == "com.eluz1ve.lumaplus");
         let package = matching
             .next()
             .ok_or("Luma is missing from the release feed")?;
-        if matching.next().is_some() || package.manifest.id != "com.ecklf.luma" {
+        if matching.next().is_some() || package.manifest.id != "com.eluz1ve.lumaplus" {
             return Err("Ambiguous Luma release metadata".into());
         }
         let latest = version(&package.manifest.version).ok_or("Invalid release version")?;
@@ -170,7 +170,7 @@ pub mod discovery {
             }
         }
         fn feed(value: &str) -> Vec<u8> {
-            serde_json::to_vec(&serde_json::json!({"packages":[{"id":"com.ecklf.luma","manifest":{"id":"com.ecklf.luma","version":value}}]})).unwrap()
+            serde_json::to_vec(&serde_json::json!({"packages":[{"id":"com.eluz1ve.lumaplus","manifest":{"id":"com.eluz1ve.lumaplus","version":value}}]})).unwrap()
         }
         #[test]
         fn compares_numeric_versions_and_never_offers_equal_or_older_releases() {
@@ -202,7 +202,7 @@ pub mod discovery {
                 assert!(newer_version(&feed(value), "2.13.0").is_err());
             }
             assert!(newer_version(br#"{"packages":[]}"#, "2.13.0").is_err());
-            assert!(newer_version(br#"{"packages":[{"id":"com.ecklf.luma","manifest":{"id":"other","version":"9.0.0"}}]}"#, "2.13.0").is_err());
+            assert!(newer_version(br#"{"packages":[{"id":"com.eluz1ve.lumaplus","manifest":{"id":"other","version":"9.0.0"}}]}"#, "2.13.0").is_err());
             assert!(newer_version(b"not json", "2.13.0").is_err());
             let package: serde_json::Value = serde_json::from_slice(&feed("9.0.0")).unwrap();
             let entry = &package["packages"][0];
@@ -271,10 +271,10 @@ use std::{
     time::Instant,
 };
 
-pub const FEED: &str = "https://github.com/ecklf/lg-luma/releases/latest/download/repo.json";
+pub const FEED: &str = "https://github.com/eluz1ve/lg-luma-plus/releases/latest/download/repo.json";
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// Only IPKs from this project's own release assets are installed.
-const RELEASES: &str = "https://github.com/ecklf/lg-luma/releases/download/";
+const RELEASES: &str = "https://github.com/eluz1ve/lg-luma-plus/releases/download/";
 /// A fresh directory per attempt; never truncate a predictable path in shared /tmp.
 pub(crate) fn download_directory() -> Result<(String, PathBuf), String> {
     use ring::rand::SecureRandom;
@@ -355,12 +355,12 @@ pub fn parse_feed(feed: &Value) -> Result<Release, String> {
         .as_array()
         .ok_or("The release feed has no packages")?
         .iter()
-        .filter(|package| package["id"] == "com.ecklf.luma");
+        .filter(|package| package["id"] == "com.eluz1ve.lumaplus");
     let manifest = packages
         .next()
         .map(|package| &package["manifest"])
         .ok_or("The release feed has no Luma package")?;
-    if packages.next().is_some() || manifest["id"] != "com.ecklf.luma" {
+    if packages.next().is_some() || manifest["id"] != "com.eluz1ve.lumaplus" {
         return Err("Ambiguous Luma release metadata".into());
     }
     let text = |key: &str| manifest[key].as_str().unwrap_or_default().to_owned();
@@ -585,13 +585,12 @@ mod tests {
     use serde_json::json;
 
     fn feed(version: &str, url: &str, sha: &str, size: u64) -> Value {
-        json!({"packages": [{"id": "com.ecklf.luma", "manifest": {
-            "id": "com.ecklf.luma", "version": version, "ipkUrl": url, "ipkHash": {"sha256": sha}, "ipkSize": size
+        json!({"packages": [{"id": "com.eluz1ve.lumaplus", "manifest": {
+            "id": "com.eluz1ve.lumaplus", "version": version, "ipkUrl": url, "ipkHash": {"sha256": sha}, "ipkSize": size
         }}]})
     }
 
-    const URL: &str =
-        "https://github.com/ecklf/lg-luma/releases/download/v9.0.0/com.ecklf.luma_9.0.0_arm.ipk";
+    const URL: &str = "https://github.com/eluz1ve/lg-luma-plus/releases/download/v9.0.0/com.eluz1ve.lumaplus_9.0.0_arm.ipk";
 
     #[test]
     fn attempt_paths_are_private_unique_and_results_are_terminal_only_when_finished() {
@@ -668,13 +667,13 @@ mod tests {
         for bad in [
             feed(
                 "9.0.0",
-                "https://example.com/com.ecklf.luma_9.0.0_arm.ipk",
+                "https://example.com/com.eluz1ve.lumaplus_9.0.0_arm.ipk",
                 &sha,
                 1000,
             ),
             feed(
                 "9.0.0",
-                "https://github.com/ecklf/lg-luma/releases/download/../x_arm.ipk",
+                "https://github.com/eluz1ve/lg-luma-plus/releases/download/../x_arm.ipk",
                 &sha,
                 1000,
             ),

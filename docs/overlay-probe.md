@@ -1,7 +1,7 @@
 # Overlay window probe
 
 This is an opt-in diagnostic, not a shipping Luma feature. It packages a separate
-`com.ecklf.luma.overlayprobe` QML app using the TV's `Eos.Window` host. It follows
+`com.eluz1ve.lumaplus.overlayprobe` QML app using the TV's `Eos.Window` host. It follows
 the transparent `WebOSWindow` / `_WEBOS_WINDOW_TYPE_OVERLAY` mechanism in
 [Homebar](https://github.com/rawinek/webos-homebar/blob/main/webos10/app/main.qml).
 No Home takeover, system mounts, services, mapper rules or Luma preferences change.
@@ -17,7 +17,7 @@ With the normal project dependencies installed:
 
 ```sh
 pnpm probe:overlay
-pnpm exec ares-install --device tv .build/overlay-probe/ipk/com.ecklf.luma.overlayprobe_0.0.1_all.ipk
+pnpm exec ares-install --device tv .build/overlay-probe/ipk/com.eluz1ve.lumaplus.overlayprobe_0.0.1_all.ipk
 ```
 
 The package is deliberately outside `dist/` and the release feed. It does not need
@@ -31,7 +31,7 @@ ares profile named `tv`. If the firmware rejects QML developer apps or lacks
    leaving that source in front:
 
    ```sh
-   pnpm exec ares-launch --device tv com.ecklf.luma.overlayprobe
+   pnpm exec ares-launch --device tv com.eluz1ve.lumaplus.overlayprobe
    ```
 
 2. Check that the source stays visible through the untouched upper screen and the
@@ -60,8 +60,8 @@ The window hides rather than exiting, so its QML process may remain resident for
 warm relaunch testing. To terminate it or remove it:
 
 ```sh
-pnpm exec ares-launch --device tv --close com.ecklf.luma.overlayprobe
-pnpm exec ares-install --device tv --remove com.ecklf.luma.overlayprobe
+pnpm exec ares-launch --device tv --close com.eluz1ve.lumaplus.overlayprobe
+pnpm exec ares-install --device tv --remove com.eluz1ve.lumaplus.overlayprobe
 ```
 
 If this passes, the next experiment is a per-window overlay role in our pinned

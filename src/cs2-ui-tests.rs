@@ -264,4 +264,8 @@ fn cs2_and_shows_take_turns_in_the_center_from_widgets() {
     assert!(state.preferences.cs2_today && !state.preferences.shows_today);
     state.open(0);
     assert!(!heading(&state, "CS2 Score") && heading(&state, "Watching now"));
+    // Outside Russian its posters are TVmaze's, credited beside Lampa.
+    assert!(heading(&state, "Lampa · TVmaze"));
+    state.preferences.language = crate::i18n::Language::Ru;
+    assert!(heading(&state, "Lampa") && !heading(&state, "Lampa · TVmaze"));
 }

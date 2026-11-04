@@ -50,7 +50,7 @@ test('version sync changes only release versions and is idempotent', async (t) =
   );
   assert.equal(
     after[3],
-    before[3].replaceAll(`com.ecklf.luma_${previous}_arm.ipk`, 'com.ecklf.luma_3.1.0_arm.ipk'),
+    before[3].replaceAll(`com.eluz1ve.lumaplus_${previous}_arm.ipk`, 'com.eluz1ve.lumaplus_3.1.0_arm.ipk'),
   );
   assert.deepEqual((await syncVersions(directory, { check: true })).changed, []);
   assert.deepEqual((await syncVersions(directory)).changed, []);
@@ -90,11 +90,11 @@ test('the real release command combines changesets and synchronizes every file',
   await fs.symlink(path.join(root, 'node_modules'), path.join(directory, 'node_modules'), 'dir');
   await fs.writeFile(
     path.join(directory, '.changeset/fix.md'),
-    '---\n"lg-luma": patch\n---\n\nFix release behavior.\n',
+    '---\n"lg-luma-plus": patch\n---\n\nFix release behavior.\n',
   );
   await fs.writeFile(
     path.join(directory, '.changeset/feature.md'),
-    '---\n"lg-luma": minor\n---\n\nAdd a release feature.\n',
+    '---\n"lg-luma-plus": minor\n---\n\nAdd a release feature.\n',
   );
   const result = spawnSync('pnpm', ['version:release'], {
     cwd: directory,

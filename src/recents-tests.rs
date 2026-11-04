@@ -14,7 +14,7 @@ fn accept(state: &mut State, entries: Vec<recents::Entry>) {
 fn system_history_preserves_order_and_inputs_and_rejects_invalid_entries() {
     let entries = recents::normalize(&json!({"ready": true, "recentsAppList": [
         {"appId":"youtube.leanback.v4", "title":" YouTube\n "},
-        {"appId":"com.ecklf.luma"}, {"appId":"com.webos.app.home"},
+        {"appId":"com.eluz1ve.lumaplus"}, {"appId":"com.webos.app.home"},
         {"appId":"com.luma.launcher"}, {"appId":"invalid; command"},
         {"appId":"com.webos.app.hdmi1", "title":"Console"},
         {"appId":"netflix", "title":"Netflix"},
@@ -54,7 +54,7 @@ fn actions_match_stock_home_without_synthetic_process_kills() {
         )
     );
     for id in [
-        "com.ecklf.luma",
+        "com.eluz1ve.lumaplus",
         "com.webos.app.home",
         "invalid'; command",
         "",
@@ -380,7 +380,7 @@ fn close_all_uses_a_snapshot_and_closes_each_card_before_refreshing() {
 fn close_all_snapshot_excludes_inputs_and_home() {
     for id in [
         "com.webos.app.home",
-        "com.ecklf.luma",
+        "com.eluz1ve.lumaplus",
         "com.webos.app.hdmi1",
         "com.webos.app.livetv",
         "airplay",

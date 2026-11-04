@@ -5,7 +5,7 @@ import Eos.Window 0.1
 
 WebOSWindow {
     id: win
-    appId: "com.ecklf.luma.overlayprobe"
+    appId: "com.eluz1ve.lumaplus.overlayprobe"
     title: "Luma Overlay Probe"
     windowType: "_WEBOS_WINDOW_TYPE_OVERLAY"
     width: Screen.width > 0 && Screen.width < 1920 ? Screen.width : 1920

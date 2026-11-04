@@ -9,7 +9,7 @@ pub mod system;
 pub mod uninstall;
 
 pub type Result<T> = std::result::Result<T, String>;
-pub const APP: &str = "com.ecklf.luma";
+pub const APP: &str = "com.eluz1ve.lumaplus";
 pub const ROOTS: [&str; 5] = [
     "/media/developer/apps/usr/palm/applications",
     "/media/cryptofs/apps/usr/palm/applications",

@@ -58,6 +58,7 @@ fn series(id: i64, name: &str) -> Show {
         name: name.into(),
         original: name.into(),
         poster: None,
+        imdb: None,
         season: Some(2),
         aired: time::OffsetDateTime::from_unix_timestamp(NOW)
             .unwrap()
@@ -570,6 +571,7 @@ fn set_to_continue_the_lampa_row_lists_the_accounts_history() {
         card: "tv_5".into(),
         title: "Dark".into(),
         poster: None,
+        imdb: None,
         episode: Some((2, 3)),
         at: NOW,
     }];

@@ -627,7 +627,10 @@ fn shows_tick(
         };
     }
     if enabled && visible {
-        for path in state.shows.wanted_posters(state.shows_first) {
+        for path in state
+            .shows
+            .wanted_posters(state.shows_first, state.preferences.language)
+        {
             service.poster(path);
         }
     }
@@ -723,7 +726,7 @@ fn cub_tick(
         }
     }
     if visible {
-        for poster in state.cub.wanted_posters() {
+        for poster in state.cub.wanted_posters(state.preferences.language) {
             service.poster(poster);
         }
     }
@@ -1078,7 +1081,7 @@ fn run() -> Result<(), String> {
         eprintln!("Luma launch: preload={mode}; starting hidden until Home is launched");
     }
     let create_window = || {
-        let mut builder = video.window("Luma", requested.width, requested.height);
+        let mut builder = video.window("Luma+", requested.width, requested.height);
         builder.opengl().allow_highdpi().position_centered();
         if start_hidden {
             builder.hidden();

@@ -12,9 +12,9 @@ const POSTER_ORIGINS: [&str; 2] = [
     "https://imagetmdb.com/t/p/w342",
 ];
 /// The Lampa plugin that opens the cards Luma asks for (Lampa on webOS ignores launch
-/// parameters); it lives beside Luma in `lampa/` and is served from the branch the TV builds.
+/// parameters); it lives beside Luma+ in `lampa/` and is served from the fork's main branch.
 pub const LAMPA_PLUGIN: &str =
-    "https://cdn.jsdelivr.net/gh/eluz1ve/lg-luma@integration/lampa/luma.js";
+    "https://cdn.jsdelivr.net/gh/eluz1ve/lg-luma-plus@main/lampa/luma.js";
 /// The row lists; six cards show at a time, the favorites' width and pitch.
 pub const SHOWN: usize = 18;
 pub const VISIBLE: usize = 6;
@@ -27,6 +27,11 @@ pub const REFRESH_SECONDS: i64 = 3 * 3600;
 const RETRY_SECONDS: i64 = 5 * 60;
 /// Posters kept in memory; more are forgotten and fetched again if needed.
 const POSTER_CACHE: usize = 48;
+/// CUB has its posters only in Russian; elsewhere a series' poster comes from TVmaze (free, no
+/// key, CC BY-SA), found by its IMDb id. Such a poster's key is "tvmaze:{imdb}{tmdb path}".
+const TVMAZE: &str = "tvmaze:";
+const TVMAZE_SHOWS: &str = "https://api.tvmaze.com/shows/";
+const TVMAZE_IMAGES: &str = "https://static.tvmaze.com/uploads/images/";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Show {
@@ -37,6 +42,8 @@ pub struct Show {
     pub original: String,
     /// TMDB's poster path, e.g. "/1CGw.jpg".
     pub poster: Option<String>,
+    /// IMDb's id, e.g. "tt2531336", for its English poster.
+    pub imdb: Option<String>,
     /// The latest season.
     pub season: Option<u32>,
     /// The day its latest episode came out.
@@ -54,11 +61,63 @@ impl Show {
         }
     }
 
+    pub fn poster_key(&self, language: Language) -> Option<String> {
+        poster_key(self.poster.as_deref(), self.imdb.as_deref(), language)
+    }
+
     /// Whether a new episode is out on `date`: dated that day, or the day before where it aired
     /// west of the TV.
     pub fn new_on(&self, date: Date) -> bool {
         self.aired == date || date.previous_day() == Some(self.aired)
     }
+}
+
+/// The poster to show in `language`: TVmaze's English one where there is an IMDb id, falling back
+/// to CUB's (TMDB `path`), which is CUB's only one, in Russian.
+pub fn poster_key(path: Option<&str>, imdb: Option<&str>, language: Language) -> Option<String> {
+    match imdb {
+        Some(imdb) if language != Language::Ru => {
+            Some(format!("{TVMAZE}{imdb}{}", path.unwrap_or_default()))
+        }
+        _ => path.map(str::to_owned),
+    }
+}
+
+/// A poster key's IMDb id to ask TVmaze for, and its TMDB path.
+pub fn poster_source(key: &str) -> (Option<&str>, Option<&str>) {
+    match key.strip_prefix(TVMAZE) {
+        Some(rest) => match rest.find('/') {
+            Some(slash) => (Some(&rest[..slash]), Some(&rest[slash..])),
+            None => (Some(rest), None),
+        },
+        None => (None, Some(key)),
+    }
+}
+
+/// An IMDb title id: "tt" and digits.
+pub fn imdb_id(value: Option<&Value>) -> Option<String> {
+    let id = value?.as_str()?;
+    let digits = id.strip_prefix("tt")?;
+    ((5..=10).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| id.to_owned())
+}
+
+/// TVmaze's lookup, which redirects to the series' own address.
+pub fn tvmaze_lookup(imdb: &str) -> String {
+    format!("https://api.tvmaze.com/lookup/shows?imdb={imdb}")
+}
+
+/// Whether a lookup's redirect is to a series on TVmaze.
+pub fn tvmaze_show(url: &str) -> bool {
+    url.strip_prefix(TVMAZE_SHOWS)
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The series' full-size poster, from TVmaze's own image host.
+pub fn tvmaze_image(show: &Value) -> Option<String> {
+    let url = show.get("image")?.get("original")?.as_str()?;
+    (url.starts_with(TVMAZE_IMAGES) && !url.contains("..") && url.len() <= 300)
+        .then(|| url.to_owned())
 }
 
 /// Where a poster `path` may be fetched, in order.
@@ -97,6 +156,7 @@ fn show(value: &Value, date: Date) -> Option<Show> {
         original: cub::text(value.get("original_name"), 120).unwrap_or_else(|| name.clone()),
         name,
         poster,
+        imdb: imdb_id(value.get("imdb_id")),
         season,
         aired,
         rating,
@@ -193,19 +253,23 @@ impl Shows {
         }
         true
     }
-    /// Posters for the cards around `first` not fetched yet, marked as loading.
-    pub fn wanted_posters(&mut self, first: usize) -> Vec<String> {
+    /// Posters in `language` for the cards around `first` not fetched yet, marked as loading.
+    pub fn wanted_posters(&mut self, first: usize, language: Language) -> Vec<String> {
         let wanted: Vec<String> = self
             .list
             .iter()
             .skip(first.saturating_sub(VISIBLE))
             .take(VISIBLE * 3)
-            .filter_map(|show| show.poster.clone())
-            .filter(|path| !self.posters.contains_key(path))
+            .filter_map(|show| show.poster_key(language))
+            .filter(|key| !self.posters.contains_key(key))
             .collect();
         if self.posters.len() + wanted.len() > POSTER_CACHE {
-            let keep: Vec<&String> = self.list.iter().filter_map(|s| s.poster.as_ref()).collect();
-            self.posters.retain(|path, _| keep.contains(&path));
+            let keep: Vec<String> = self
+                .list
+                .iter()
+                .filter_map(|s| s.poster_key(language))
+                .collect();
+            self.posters.retain(|key, _| keep.contains(key));
         }
         for path in &wanted {
             self.posters.insert(path.clone(), Poster::Loading);
@@ -220,8 +284,8 @@ impl Shows {
             .insert(path, image.map_or(Poster::Missing, Poster::Ready));
         true
     }
-    pub fn poster(&self, show: &Show) -> Option<Arc<Artwork>> {
-        match self.posters.get(show.poster.as_ref()?) {
+    pub fn poster(&self, show: &Show, language: Language) -> Option<Arc<Artwork>> {
+        match self.posters.get(&show.poster_key(language)?) {
             Some(Poster::Ready(image)) => Some(image.clone()),
             _ => None,
         }
@@ -237,6 +301,7 @@ impl Show {
             name: title.into(),
             original: title.into(),
             poster: None,
+            imdb: None,
             season: Some(1),
             aired,
             rating: None,

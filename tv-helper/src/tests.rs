@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-const DIR: &str = "/media/developer/apps/usr/palm/applications/com.ecklf.luma";
+const DIR: &str = "/media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus";
 const EXE: &str = "/usr/bin/com.webos.app.home";
 
 #[test]
@@ -398,13 +398,13 @@ fn home_methods_reject_unknown_firmware_or_lifecycle() {
 #[test]
 fn only_luma_mounts_are_owned_even_after_package_replacement() {
     for root in [
-        "/developer/apps/usr/palm/applications/com.ecklf.luma/luma",
-        "/cryptofs/apps/usr/palm/applications/com.ecklf.luma/luma//deleted",
+        "/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus/luma",
+        "/cryptofs/apps/usr/palm/applications/com.eluz1ve.lumaplus/luma//deleted",
     ] {
         assert!(home::exe_owned(root));
     }
     assert!(!home::exe_owned("/var/lib/other/launcher"));
-    assert!(!home::exe_owned("/com.ecklf.luma/luma/../other"));
+    assert!(!home::exe_owned("/com.eluz1ve.lumaplus/luma/../other"));
 }
 #[test]
 fn executable_apply_mounts_marks_and_launches_then_restore_unmounts() {
@@ -800,7 +800,7 @@ fn missing_or_invalid_splash_sources_preserve_previous_images() {
         assert!(files::sync_splash(&f, Path::new(DIR), background).is_err());
         assert_eq!(f.read(&format!("{DIR}/splash.png")), b"default");
     }
-    assert!(files::sync_splash(&f, Path::new("/tmp/com.ecklf.luma"), "forest").is_err());
+    assert!(files::sync_splash(&f, Path::new("/tmp/com.eluz1ve.lumaplus"), "forest").is_err());
 }
 #[test]
 fn failed_atomic_write_cleans_its_private_temporary_file() {

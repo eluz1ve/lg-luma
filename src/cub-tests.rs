@@ -97,6 +97,7 @@ fn the_calendar_lists_releases_of_bookmarked_cards() {
             card: "tv_2190".into(),
             title: "Южный Парк".into(),
             poster: Some("/1CGw.jpg".into()),
+            imdb: None,
             date: Date::from_calendar_date(2026, Month::November, 3).unwrap(),
             season: 29,
             episodes: vec![4, 5],
@@ -135,6 +136,7 @@ fn the_history_gives_each_card_its_last_episode() {
             card: "tv_1399".into(),
             title: "Игра престолов".into(),
             poster: Some("/1XS1.jpg".into()),
+            imdb: None,
             episode: Some((2, 1)),
             at: 1_792_762_158,
         }
@@ -161,14 +163,14 @@ fn a_series_without_its_last_episode_takes_the_latest_of_its_episodes() {
 #[test]
 fn posters_come_from_tmdb_at_card_size() {
     assert_eq!(
-        poster_urls("/1XS1.jpg"),
+        crate::shows::poster_urls("/1XS1.jpg"),
         [
             "https://image.tmdb.org/t/p/w342/1XS1.jpg",
             "https://imagetmdb.com/t/p/w342/1XS1.jpg"
         ]
     );
-    assert!(poster_urls("../x.jpg").is_empty());
-    assert!(poster_urls("/a b.jpg").is_empty());
+    assert!(crate::shows::poster_urls("../x.jpg").is_empty());
+    assert!(crate::shows::poster_urls("/a b.jpg").is_empty());
 }
 
 fn tokens(expires: i64) -> Tokens {
@@ -346,6 +348,7 @@ fn release(card: &str, poster: Option<&str>, watched: bool) -> Release {
         card: card.into(),
         title: card.into(),
         poster: poster.map(Into::into),
+        imdb: None,
         date: Date::from_calendar_date(2026, Month::November, 3).unwrap(),
         season: 1,
         episodes: vec![1],
@@ -366,13 +369,14 @@ fn posters_are_fetched_once_for_what_today_may_show() {
             card: "tv_4".into(),
             title: "Four".into(),
             poster: Some("/c.jpg".into()),
+            imdb: None,
             episode: Some((1, 2)),
             at: 1_000,
         }],
         ..Default::default()
     };
-    assert_eq!(cub.wanted_posters(), ["/a.jpg", "/c.jpg"]);
-    assert!(cub.wanted_posters().is_empty(), "asked once");
+    assert_eq!(cub.wanted_posters(Language::Ru), ["/a.jpg", "/c.jpg"]);
+    assert!(cub.wanted_posters(Language::Ru).is_empty(), "asked once");
     assert!(cub.poster("/a.jpg").is_none());
     assert!(!cub.accept_poster("/zzz.jpg".into(), None), "never asked");
     assert!(cub.accept_poster("/a.jpg".into(), None));
@@ -406,4 +410,29 @@ fn coming_back_to_luma_reads_again_unless_just_read() {
     assert_eq!(cub.due(1_000 + FRESH), None, "hidden, nothing new");
     cub.shown(true, 1_000 + FRESH);
     assert!(matches!(cub.due(1_000 + FRESH), Some(Due::Read { .. })));
+}
+
+#[test]
+fn account_cards_keep_their_imdb_id_for_english_posters() {
+    let watched = parse_history(&json!({"history": [{
+        "card_id": "tv_1399", "card_type": "tv", "watched_at": 1_792_762_158_824i64,
+        "card": {"id": 1399, "name": "Игра престолов", "poster_path": "/1XS1.jpg", "imdb_id": "tt0944947"}
+    }]}));
+    assert_eq!(watched[0].imdb.as_deref(), Some("tt0944947"));
+    assert_eq!(
+        watched[0].poster_key(Language::En).as_deref(),
+        Some("tvmaze:tt0944947/1XS1.jpg")
+    );
+    assert_eq!(
+        watched[0].poster_key(Language::Ru).as_deref(),
+        Some("/1XS1.jpg")
+    );
+    let mut cub = Cub {
+        watched,
+        ..Default::default()
+    };
+    assert_eq!(
+        cub.wanted_posters(Language::En),
+        ["tvmaze:tt0944947/1XS1.jpg"]
+    );
 }

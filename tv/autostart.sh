@@ -1,6 +1,6 @@
 #!/bin/sh
 # Luma's optional cold-boot hook. Installed only when explicitly requested.
-APP_DIR=/media/developer/apps/usr/palm/applications/com.ecklf.luma
+APP_DIR=/media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus
 HOOK=/var/lib/webosbrew/init.d/65-luma
 case "${1:-}" in
   enable)
@@ -28,7 +28,7 @@ esac
     [ -f "$APP_DIR/appinfo.json" ] || exit 0
     sleep 25
     # -n prints the reply. -t is timing mode, not a firmware-specific flag.
-    RESULT="$(/usr/bin/luna-send -n 1 -w 5000 luna://com.webos.service.applicationmanager/launch '{"id":"com.ecklf.luma"}' 2>/dev/null)"
+    RESULT="$(/usr/bin/luna-send -n 1 -w 5000 luna://com.webos.service.applicationmanager/launch '{"id":"com.eluz1ve.lumaplus"}' 2>/dev/null)"
     printf '%s\n' "$RESULT"
     case "$RESULT" in *'"returnValue":true'*|*'"returnValue": true'*) touch /tmp/luma-boot-done ;; esac
 ) </dev/null >/tmp/luma-boot.log 2>&1 &

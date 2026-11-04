@@ -11,12 +11,12 @@ const manifest = JSON.parse(await fs.readFile(path.join(root, 'appinfo.json'), '
 const project = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 if (
   project.version !== manifest.version ||
-  manifest.id !== 'com.ecklf.luma' ||
+  manifest.id !== 'com.eluz1ve.lumaplus' ||
   manifest.type !== 'native' ||
   manifest.main !== 'luma'
 ) {
   throw new Error(
-    'Native package metadata must use com.ecklf.luma, main luma, and synchronized versions.',
+    'Native package metadata must use com.eluz1ve.lumaplus, main luma, and synchronized versions.',
   );
 }
 const binary = path.join(root, 'target/armv7-unknown-linux-gnueabi/release/luma');

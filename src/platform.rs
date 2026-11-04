@@ -11,7 +11,7 @@ use std::{collections::HashSet, sync::mpsc, thread};
 #[path = "platform-install.rs"]
 mod installation;
 
-pub const APP_ID: &str = "com.ecklf.luma";
+pub const APP_ID: &str = "com.eluz1ve.lumaplus";
 pub const HOME_ID: &str = "com.webos.app.home";
 pub const FULL_HOME_ID: &str = "com.webos.app.fullhome";
 

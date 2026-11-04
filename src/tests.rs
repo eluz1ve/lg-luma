@@ -1167,7 +1167,7 @@ fn text_rendering_choices_persist_and_back_restores_the_system_row() {
     settle(&mut state);
     assert!(scene(&state).draw.iter().any(|draw| matches!(
         draw,
-        crate::renderer::Draw::Text(label, ..) if label == "Restart Luma to apply changes."
+        crate::renderer::Draw::Text(label, ..) if label == "Restart Luma+ to apply changes."
     )));
     state.direction(Direction::Down, &controls(&state));
     assert_eq!(state.focus, Target::Choice(1));

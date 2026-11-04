@@ -1,4 +1,5 @@
 use super::*;
+use crate::i18n::Language;
 use serde_json::json;
 
 /// 4 November 2026, the TV's date.
@@ -132,11 +133,11 @@ fn posters_are_wanted_once_around_the_row() {
         list: parse_feed(&[page(results)], DATE),
         ..Default::default()
     };
-    let first = shows.wanted_posters(0);
+    let first = shows.wanted_posters(0, Language::En);
     assert_eq!(first.len(), SHOWN.min(VISIBLE * 3));
     assert_eq!(first[0], "/1.jpg");
     assert!(
-        shows.wanted_posters(0).is_empty(),
+        shows.wanted_posters(0, Language::En).is_empty(),
         "loading ones are not asked again"
     );
     assert!(shows.accept_poster(first[0].clone(), None));
@@ -153,4 +154,88 @@ fn posters_come_from_tmdb_or_its_mirror_only() {
         ]
     );
     assert!(poster_urls("https://example.com/a.jpg").is_empty());
+}
+
+fn with_imdb(id: i64, imdb: &str) -> Value {
+    let mut value = series(id, "Люпен", "2026-11-01");
+    value["imdb_id"] = json!(imdb);
+    value
+}
+
+#[test]
+fn outside_russian_a_series_asks_tvmaze_for_its_english_poster_and_keeps_cubs_as_the_fallback() {
+    let show = &parse_feed(&[page(vec![with_imdb(1, "tt2531336")])], DATE)[0];
+    assert_eq!(show.imdb.as_deref(), Some("tt2531336"));
+    let english = show.poster_key(Language::En);
+    assert_eq!(english.as_deref(), Some("tvmaze:tt2531336/1.jpg"));
+    assert_eq!(show.poster_key(Language::De), english);
+    assert_eq!(show.poster_key(Language::Ru).as_deref(), Some("/1.jpg"));
+    assert_eq!(
+        poster_source("tvmaze:tt2531336/1.jpg"),
+        (Some("tt2531336"), Some("/1.jpg"))
+    );
+    assert_eq!(poster_source("tvmaze:tt2531336"), (Some("tt2531336"), None));
+    assert_eq!(poster_source("/1.jpg"), (None, Some("/1.jpg")));
+}
+
+#[test]
+fn only_imdb_ids_are_looked_up() {
+    for bad in [
+        "",
+        "tt",
+        "tt12ab345",
+        "nm1234567",
+        "tt1234567/x",
+        "tt123456789012",
+        "../tt1234567",
+    ] {
+        let show = &parse_feed(&[page(vec![with_imdb(1, bad)])], DATE)[0];
+        assert_eq!(show.imdb, None, "{bad}");
+        assert_eq!(show.poster_key(Language::En).as_deref(), Some("/1.jpg"));
+    }
+}
+
+#[test]
+fn tvmaze_is_asked_by_imdb_id_and_only_its_own_addresses_are_followed() {
+    assert_eq!(
+        tvmaze_lookup("tt2531336"),
+        "https://api.tvmaze.com/lookup/shows?imdb=tt2531336"
+    );
+    assert!(tvmaze_show("https://api.tvmaze.com/shows/75026"));
+    for bad in [
+        "https://example.com/shows/75026",
+        "http://api.tvmaze.com/shows/75026",
+        "https://api.tvmaze.com/shows/",
+        "https://api.tvmaze.com/shows/1/../../x",
+    ] {
+        assert!(!tvmaze_show(bad), "{bad}");
+    }
+    let original = "https://static.tvmaze.com/uploads/images/original_untouched/641/1604671.jpg";
+    assert_eq!(
+        tvmaze_image(
+            &json!({"image": {"medium": "https://static.tvmaze.com/m.jpg", "original": original}})
+        )
+        .as_deref(),
+        Some(original)
+    );
+    assert_eq!(
+        tvmaze_image(&json!({"image": {"original": "https://example.com/uploads/images/x.jpg"}})),
+        None
+    );
+    assert_eq!(tvmaze_image(&json!({"image": null})), None);
+}
+
+#[test]
+fn a_language_change_asks_for_the_other_poster() {
+    let mut shows = Shows {
+        list: parse_feed(&[page(vec![with_imdb(1, "tt2531336")])], DATE),
+        ..Default::default()
+    };
+    assert_eq!(
+        shows.wanted_posters(0, Language::En),
+        ["tvmaze:tt2531336/1.jpg"]
+    );
+    assert!(shows.accept_poster("tvmaze:tt2531336/1.jpg".into(), None));
+    assert!(shows.poster(&shows.list[0], Language::En).is_none());
+    assert_eq!(shows.wanted_posters(0, Language::Ru), ["/1.jpg"]);
 }

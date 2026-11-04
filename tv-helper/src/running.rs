@@ -78,7 +78,7 @@ pub fn eligible(row: &Value) -> bool {
         && row["defaultWindowType"] == "card"
         && !matches!(
             id,
-            "com.webos.app.home" | "com.webos.app.livetv" | "com.ecklf.luma" | "airplay"
+            "com.webos.app.home" | "com.webos.app.livetv" | "com.eluz1ve.lumaplus" | "airplay"
         )
         && !id.starts_with("com.webos.app.hdmi")
         && !id.starts_with("com.luma.")
@@ -216,7 +216,7 @@ mod tests {
             "com.webos.app.home",
             "com.webos.app.hdmi3",
             "com.webos.app.livetv",
-            "com.ecklf.luma",
+            "com.eluz1ve.lumaplus",
             "com.luma.native",
             "airplay",
             "bad;id",

@@ -18,7 +18,7 @@ dist/                        Generated ARM IPK, checksum and Homebrew feed
 
 The launcher is rendered natively, without React, JSX, Vite or a browser runtime. Node/pnpm
 remain build/deployment tools for Sharp, the webOS CLI and formatting/linting. The installed app
-is the Rust executable `luma`, with app ID `com.ecklf.luma`. The companion pages in
+is the Rust executable `luma`, with app ID `com.eluz1ve.lumaplus`. The companion pages in
 `assets/wallpaper-upload/` and `assets/tile-editor/` are plain HTML/CSS/JavaScript, embedded in the
 native executable and served temporarily to the owner's phone or computer; they do not render the
 TV interface.
@@ -75,7 +75,7 @@ backend. Avoid copying the whole SDK library directory or the TV's graphics driv
 ### Documentation screenshots
 
 `pnpm screenshots` generates `docs/home.png`, `docs/apps.png`, `docs/settings.png` and
-`docs/inputs.png`, linked by the README. It builds the desktop executable without the TV feature,
+`docs/inputs.png`. It builds the desktop executable without the TV feature,
 uses isolated temporary preferences, sample inventory and a fixed date/time, and captures actual
 1920×1080 OpenGL framebuffers. Weather is unconfigured, so no real weather APIs are contacted.
 It does not execute the test suites. A desktop display is required; on headless Linux use
@@ -665,10 +665,10 @@ the original process arguments available to SDL/libhelpers. To expose the actual
 sandbox's stdout/stderr, close Luma and run in the TV's root SSH shell:
 
 ```sh
-APP=/media/developer/apps/usr/palm/applications/com.ecklf.luma
+APP=/media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus
 XDG_RUNTIME_DIR=/tmp/xdg RUST_BACKTRACE=1 /usr/bin/jailer \
-  -t native_devmode -i com.ecklf.luma -p "$APP" \
-  "$APP/luma" '{"@system_native_app":true,"nid":"com.ecklf.luma"}'
+  -t native_devmode -i com.eluz1ve.lumaplus -p "$APP" \
+  "$APP/luma" '{"@system_native_app":true,"nid":"com.eluz1ve.lumaplus"}'
 ```
 
 Startup prints accepted launch parameters, SDL driver, actual sample count, cumulative stage
@@ -781,7 +781,7 @@ never as a registered app: on every Home key it kills Luma and starts it again. 
 of LG's executable is not an option here, because LG Home's role
 (`/usr/share/luna-service2/roles.d/com.webos.app.home.app.json`) is app-ID based
 (`"appId": "com.webos.app.home"`, names `com.webos.app.home-*`), not bound to a path, and Luma's
-role only allows `com.ecklf.luma` or an anonymous name.
+role only allows `com.eluz1ve.lumaplus` or an anonymous name.
 
 The staged Home runs as root, and as root the system-bus `luna-send -a` may act for an app ID.
 So when `options.webos_home` is set outside LG's executable path and the effective user is root,
@@ -912,9 +912,9 @@ builds.
 ## Update availability
 
 On interactive desktop or TV startup a separate worker checks
-`https://github.com/ecklf/lg-luma/releases/latest/download/repo.json` once per process automatically.
+`https://github.com/eluz1ve/lg-luma-plus/releases/latest/download/repo.json` once per process automatically.
 **Settings → System → Check again** retries on the same worker, with one request in flight at a time.
-It only reads the `com.ecklf.luma` package/manifest version and compares numeric major/minor/patch
+It only reads the `com.eluz1ve.lumaplus` package/manifest version and compares numeric major/minor/patch
 components with the compiled version. Equal, older, malformed or prerelease versions do not offer
 updates. HTTP is HTTPS-only with bounded redirects, a ten-second timeout, a 256 KiB reply limit and
 no proxy; failures are logged without interrupting launch and the status card offers retry.
@@ -957,7 +957,7 @@ start and then every twelve hours it reads `https://repo.webosbrew.org/api/apps.
 (HTTPS-only agent shared with the update worker, 4 MiB limit). Packages with an invalid id or
 version, a non-HTTPS or escaping URL, a malformed SHA-256 or an implausible size are skipped. It
 compares the versions in `/media/developer/apps/usr/palm/applications/*/appinfo.json` (folders
-whose manifest names another app are ignored) and never downgrades or touches `com.ecklf.luma` or
+whose manifest names another app are ignored) and never downgrades or touches `com.eluz1ve.lumaplus` or
 `org.webosbrew.hbchannel`. A newer package is downloaded with the update worker's size and SHA-256
 check into a private random directory, then handed to `luma-helper app-update ID VERSION SHA256
 IPK` through Homebrew Channel's exec. The helper repeats every check as root: it copies the
@@ -1051,7 +1051,7 @@ or rerun a workflow to rebuild the same commit.
 Only the build job checks out PR code. It has read-only repository access, no persisted
 checkout credentials and no shared build caches. A separate job with comment-writing permission
 uses the trusted base-branch workflow and GitHub's artifact API without checking out PR code.
-The package keeps the normal `com.ecklf.luma` identity and version, so installing it replaces
+The package keeps the normal `com.eluz1ve.lumaplus` identity and version, so installing it replaces
 the existing Luma app. These builds are for manual TV verification; the ordinary CI checks still
 run independently.
 
@@ -1135,7 +1135,7 @@ existing takeover first, then explicitly select that target:
 
 ```sh
 sh /var/lib/luma-home/home.sh disable
-sh /media/developer/apps/usr/palm/applications/com.ecklf.luma/home.sh enable /media/developer/apps/usr/palm/applications/com.ecklf.luma com.webos.app.fullhome
+sh /media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus/home.sh enable /media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus com.webos.app.fullhome
 ```
 
 Use the installed package directory on production installations. The selected target is saved

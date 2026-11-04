@@ -38,9 +38,6 @@ pub fn log(line: impl AsRef<str>) {
 
 /// A month of releases or a page of history is well under this.
 const LIMIT: usize = 2 * 1024 * 1024;
-const POSTER_LIMIT: usize = 512 * 1024;
-/// Posters fill the Lampa row's cards as well as Today's lines; this keeps them sharp.
-const POSTER_WIDTH: u32 = 320;
 
 #[derive(Clone)]
 pub struct Client {
@@ -236,48 +233,9 @@ impl Client {
         (refreshed, result)
     }
 
-    /// A card's poster from TMDB (or its mirror), decoded and scaled on this worker.
-    pub fn poster(&self, path: &str) -> Option<Arc<Artwork>> {
-        cub::poster_urls(path).into_iter().find_map(|url| {
-            let mut response = self
-                .agent
-                .get(&url)
-                .header("User-Agent", "LumaNative")
-                .call()
-                .ok()?;
-            if !response.status().is_success() {
-                return None;
-            }
-            let mut bytes = Vec::new();
-            response
-                .body_mut()
-                .as_reader()
-                .take(POSTER_LIMIT as u64 + 1)
-                .read_to_end(&mut bytes)
-                .ok()?;
-            if bytes.len() > POSTER_LIMIT {
-                return None;
-            }
-            let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
-                .with_guessed_format()
-                .ok()?;
-            let mut limits = image::Limits::default();
-            limits.max_image_width = Some(2048);
-            limits.max_image_height = Some(2048);
-            limits.max_alloc = Some(32 * 1024 * 1024);
-            reader.limits(limits);
-            let image = reader.decode().ok()?;
-            let pixels = if image.width() > POSTER_WIDTH {
-                image.thumbnail(POSTER_WIDTH, POSTER_WIDTH * 2).into_rgba8()
-            } else {
-                image.into_rgba8()
-            };
-            Some(Arc::new(Artwork {
-                key: format!("cub-poster:{path}"),
-                pixels,
-                backdrop: [[0; 3]; 2],
-            }))
-        })
+    /// A card's poster for its key, from TVmaze or TMDB, decoded and scaled on this worker.
+    pub fn poster(&self, key: &str) -> Option<Arc<Artwork>> {
+        crate::shows_service::poster(&self.agent, key, "cub-poster")
     }
 }
 

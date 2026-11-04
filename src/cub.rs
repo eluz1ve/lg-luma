@@ -1,7 +1,7 @@
 //! Lampa's account on CUB (cub.red): what the user watches, for Home's Today card. The TV signs
 //! in by device code (OAuth 2.0 Device Flow): Luma shows a code, the user confirms it on their
 //! phone at cub.red/activate, and Luma reads the account with a token, never a password.
-use crate::app_artwork::Artwork;
+use crate::{app_artwork::Artwork, i18n::Language};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, path::Path, sync::Arc};
@@ -13,11 +13,6 @@ pub const CLIENT_ID: &str = "ddcd0b0e58629088c5445df31fe1b9d5";
 pub const SCOPE: &str = "profile bookmarks:read history:read";
 /// cub.red is blocked in some countries; its mirrors serve the same API.
 pub const HOSTS: [&str; 3] = ["cub.red", "cub.best", "cub.black"];
-/// TMDB's posters a size above the row's cards, and the mirror Lampa uses where TMDB is blocked.
-const POSTER_ORIGINS: [&str; 2] = [
-    "https://image.tmdb.org/t/p/w342",
-    "https://imagetmdb.com/t/p/w342",
-];
 
 /// The account's tokens: access lasts a day, refresh 90 days and works once.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,6 +79,8 @@ pub struct Release {
     pub title: String,
     /// TMDB's poster path, e.g. "/1CGw.jpg".
     pub poster: Option<String>,
+    /// IMDb's id, for its English poster.
+    pub imdb: Option<String>,
     pub date: Date,
     pub season: u32,
     pub episodes: Vec<u32>,
@@ -98,10 +95,23 @@ pub struct Watched {
     pub card: String,
     pub title: String,
     pub poster: Option<String>,
+    pub imdb: Option<String>,
     /// (season, episode) for a series.
     pub episode: Option<(u32, u32)>,
     /// Unix seconds.
     pub at: i64,
+}
+
+impl Release {
+    pub fn poster_key(&self, language: Language) -> Option<String> {
+        crate::shows::poster_key(self.poster.as_deref(), self.imdb.as_deref(), language)
+    }
+}
+
+impl Watched {
+    pub fn poster_key(&self, language: Language) -> Option<String> {
+        crate::shows::poster_key(self.poster.as_deref(), self.imdb.as_deref(), language)
+    }
 }
 
 /// The account is read this often, and sooner after a failed read.
@@ -186,7 +196,7 @@ pub struct Cub {
     request: u64,
     /// The last sign-in or read failed.
     pub failed: bool,
-    /// Posters by TMDB path; None while loading or when there is none.
+    /// Posters by key (see `shows::poster_key`); None while loading or when there is none.
     posters: HashMap<String, Option<Arc<Artwork>>>,
     /// Luma is on screen.
     visible: bool,
@@ -317,11 +327,16 @@ impl Cub {
                 self.profile = Some(account.profile);
                 self.releases = account.releases;
                 self.watched = account.watched;
-                // Keep only the posters of what the account still holds.
+                // Keep only the posters of what the account still holds, in either language.
                 let (releases, watched) = (&self.releases, &self.watched);
-                self.posters.retain(|path, _| {
-                    releases.iter().any(|r| r.poster.as_ref() == Some(path))
-                        || watched.iter().any(|w| w.poster.as_ref() == Some(path))
+                self.posters.retain(|key, _| {
+                    let source = crate::shows::poster_source(key);
+                    let holds = |poster: &Option<String>, imdb: &Option<String>| {
+                        source == (imdb.as_deref(), poster.as_deref())
+                            || source == (None, poster.as_deref())
+                    };
+                    releases.iter().any(|r| holds(&r.poster, &r.imdb))
+                        || watched.iter().any(|w| holds(&w.poster, &w.imdb))
                 });
                 self.fetched = Some(now);
                 self.failed = false;
@@ -349,20 +364,20 @@ impl Cub {
         }
     }
 
-    /// Posters Today and the Lampa row may show and not asked for yet: unwatched releases and
-    /// recent history.
-    pub fn wanted_posters(&mut self) -> Vec<String> {
+    /// Posters in `language` Today and the Lampa row may show and not asked for yet: unwatched
+    /// releases and recent history.
+    pub fn wanted_posters(&mut self, language: Language) -> Vec<String> {
         let paths: Vec<String> = self
             .releases
             .iter()
             .filter(|release| !release.watched)
-            .filter_map(|release| release.poster.clone())
+            .filter_map(|release| release.poster_key(language))
             // The history fills Home's Lampa row as well as Today.
             .chain(
                 self.watched
                     .iter()
                     .take(crate::shows::SHOWN)
-                    .filter_map(|w| w.poster.clone()),
+                    .filter_map(|w| w.poster_key(language)),
             )
             .collect();
         let mut wanted = Vec::new();
@@ -458,17 +473,6 @@ pub(crate) fn poster_path(value: Option<&Value>) -> Option<String> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')))
     .then(|| path.to_owned())
-}
-
-/// Where `path` (from a card) may be fetched, in order.
-pub fn poster_urls(path: &str) -> Vec<String> {
-    if poster_path(Some(&Value::from(path))).is_none() {
-        return Vec::new();
-    }
-    POSTER_ORIGINS
-        .iter()
-        .map(|origin| format!("{origin}{path}"))
-        .collect()
 }
 
 pub fn parse_login(reply: &Value, now: i64) -> Option<Login> {
@@ -572,6 +576,7 @@ pub fn parse_calendar(reply: &Value) -> Vec<Release> {
                 title: text(card.get("name"), 120)
                     .or_else(|| text(card.get("original_name"), 120))?,
                 poster: poster_path(card.get("poster_path")),
+                imdb: crate::shows::imdb_id(card.get("imdb_id")),
                 date,
                 season: small(item.get("season")),
                 episodes: item
@@ -631,6 +636,7 @@ pub fn parse_history(reply: &Value) -> Vec<Watched> {
                 title: text(card.get("name"), 120)
                     .or_else(|| text(card.get("original_name"), 120))?,
                 poster: poster_path(card.get("poster_path")),
+                imdb: crate::shows::imdb_id(card.get("imdb_id")),
                 episode,
                 at: millis / 1000,
             })

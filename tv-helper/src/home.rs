@@ -535,7 +535,7 @@ fn unescape(s: &str) -> String {
 pub fn exe_owned(root: &str) -> bool {
     root.strip_suffix("//deleted")
         .unwrap_or(root)
-        .ends_with("/com.ecklf.luma/luma")
+        .ends_with("/com.eluz1ve.lumaplus/luma")
 }
 pub fn home_process(
     args: &[String],

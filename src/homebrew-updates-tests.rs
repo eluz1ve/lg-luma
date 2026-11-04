@@ -49,7 +49,7 @@ fn only_newer_versions_of_installed_homebrew_apps_are_due_never_luma_or_homebrew
     let repo = parse_repo(&json!({"packages": [
         moonlight("1.6.37"),
         package("youtube.leanback.v4", "0.5.3", "https://example.com/y.ipk", SHA, 10),
-        package("com.ecklf.luma", "9.0.0", "https://example.com/l.ipk", SHA, 10),
+        package("com.eluz1ve.lumaplus", "9.0.0", "https://example.com/l.ipk", SHA, 10),
         package("org.webosbrew.hbchannel", "9.0.0", "https://example.com/h.ipk", SHA, 10),
         package("not.installed", "1.0.0", "https://example.com/n.ipk", SHA, 10),
     ]}))
@@ -57,7 +57,7 @@ fn only_newer_versions_of_installed_homebrew_apps_are_due_never_luma_or_homebrew
     let installed = BTreeMap::from([
         ("com.limelight.webos".to_string(), "1.6.36".to_string()),
         ("youtube.leanback.v4".to_string(), "0.5.3".to_string()),
-        ("com.ecklf.luma".to_string(), "2.16.0".to_string()),
+        ("com.eluz1ve.lumaplus".to_string(), "2.16.0".to_string()),
         ("org.webosbrew.hbchannel".to_string(), "0.7.3".to_string()),
         ("local.only".to_string(), "1.0.0".to_string()),
     ]);

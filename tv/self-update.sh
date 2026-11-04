@@ -15,7 +15,7 @@ case "$SHA" in ''|*[!0-9a-f]*) exit 1 ;; esac
 [ ${#SHA} = 64 ] || exit 1
 case "$VERSION" in ''|*[!0-9.]*) exit 1 ;; esac
 case "$APP_DIR" in
-  /media/developer/apps/usr/palm/applications/com.ecklf.luma|/media/cryptofs/apps/usr/palm/applications/com.ecklf.luma|/usr/palm/applications/com.ecklf.luma) ;;
+  /media/developer/apps/usr/palm/applications/com.eluz1ve.lumaplus|/media/cryptofs/apps/usr/palm/applications/com.eluz1ve.lumaplus|/usr/palm/applications/com.eluz1ve.lumaplus) ;;
   *) exit 1 ;;
 esac
 [ "$(id -u)" = 0 ] || exit 1
@@ -57,7 +57,7 @@ publish installing 'Installing Luma.'
 log "installing $VERSION"
 OUT="$WORK/install"
 luna-send -i -w 240000 luna://com.webos.appInstallService/dev/install \
-  "{\"id\":\"com.ecklf.luma\",\"ipkUrl\":\"$IPK\",\"subscribe\":true}" >"$OUT" 2>&1 </dev/null &
+  "{\"id\":\"com.eluz1ve.lumaplus\",\"ipkUrl\":\"$IPK\",\"subscribe\":true}" >"$OUT" 2>&1 </dev/null &
 SEND=$!
 i=0
 while [ $i -lt 240 ]; do
@@ -110,6 +110,6 @@ if grep -q '"enabled": *true' "$HOME_STATE/state.json" 2>/dev/null; then
   if ! printf 'y\n' | sh "$APP_DIR/home.sh" enable "$APP_DIR" "$HOME_ID" >>"$LOG" 2>&1; then recover_home; fi
   launch "$HOME_ID" || recover_home
 else
-  launch com.ecklf.luma || fail 'Update installed, but Luma could not be opened.'
+  launch com.eluz1ve.lumaplus || fail 'Update installed, but Luma could not be opened.'
 fi
 publish success 'Luma was updated and reopened.'

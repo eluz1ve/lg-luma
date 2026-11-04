@@ -64,7 +64,7 @@ jobs:
                 '',
                 '## Solution',
                 '',
-                `Release Luma **${version}** with the accumulated Changesets changelog.`,
+                `Release Luma+ **${version}** with the accumulated Changesets changelog.`,
                 '',
                 'Synchronize package.json, appinfo.json, the root Cargo.toml, Cargo.lock and the README IPK examples.',
                 'Merging this PR into main publishes the verified IPK and Homebrew feed after CI passes.',
