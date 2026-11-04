@@ -4,9 +4,7 @@ A remote-first launcher for rooted LG webOS TVs, inspired by Apple TV. Luma+ is 
 [Luma](https://github.com/ecklf/lg-luma) by ecklf and adds a Today card, Lampa, CS2 and crypto
 widgets, and a tvOS-style layout.
 
-<!-- The film: docs/luma-preview.mp4. Upload it in GitHub's README editor and put the
-     user-attachments link here so it plays inline. -->
-[![Luma+ for webOS](docs/luma-preview.jpg)](docs/luma-preview.mp4)
+https://github.com/user-attachments/assets/bac52f74-b36f-460f-8517-0e2bd9107b7e
 
 <details>
 <summary>Screenshots</summary>
