@@ -2761,7 +2761,8 @@ fn today_line(
                     .to_owned()
             };
             let live = item.state == crate::cs2::State::Live;
-            let title = match item.score.filter(|_| live) {
+            let finished = item.state == crate::cs2::State::Finished;
+            let title = match item.score.filter(|_| live || finished) {
                 Some([a, b]) => format!("{} {a}–{b} {}", side(0), side(1)),
                 None => format!("{} – {}", side(0), side(1)),
             };
@@ -2782,6 +2783,9 @@ fn today_line(
                     .collect::<Vec<_>>()
                     .join(" · ");
                 (focused, title, detail, when, c(0xff8a80, 0.95))
+            } else if finished {
+                let when = language.t("cs2Final").to_owned();
+                (focused, title, detail, when, c(0xe8e8e8, 0.62))
             } else {
                 let when = cs2_start(state, item.begins, now);
                 (focused, title, detail, when, c(0xe8e8e8, 0.62))
@@ -2896,8 +2900,15 @@ fn today_coin(out: &mut Scene, state: &State, assets: &Assets, index: usize, row
         ));
     }
     let picture = Rect::new(row.x + 16., row.y + 14., 56., 56.);
-    out.icon(assets, "bitcoin", picture.inset(8.), c(0xf7931a, 0.95));
     let symbol = &state.preferences.crypto_coins[index];
+    let (mark, tint) = crate::crypto::mark(symbol);
+    // Light marks would vanish on a focused line's white.
+    let tint = if focused && tint == 0xe8e8e8 {
+        today_ink(true, 0.8)
+    } else {
+        c(tint, 0.95)
+    };
+    out.icon(assets, mark, picture.inset(10.), tint);
     let name = match crate::crypto::name(symbol) {
         name if name == symbol => "",
         name => name,

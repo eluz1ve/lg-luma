@@ -47,6 +47,22 @@ pub fn name(symbol: &str) -> &str {
         .map_or(symbol, |(_, name)| name)
 }
 
+/// A coin's mark (a UI icon) and its brand colour, lightened where it would vanish on glass;
+/// coins without one get a generic coin in grey.
+pub fn mark(symbol: &str) -> (&'static str, u32) {
+    match symbol {
+        "BTC" => ("coin-btc", 0xf7931a),
+        "ETH" => ("coin-eth", 0x8c9eff),
+        "SOL" => ("coin-sol", 0xb98cff),
+        "BNB" => ("coin-bnb", 0xf3ba2f),
+        "XRP" => ("coin-xrp", 0xe8e8e8),
+        "ADA" => ("coin-ada", 0x5b8cff),
+        "DOGE" => ("coin-doge", 0xc2a633),
+        "TON" => ("coin-ton", 0x0098ea),
+        _ => ("coins", 0xb0b0b0),
+    }
+}
+
 /// Puts chosen coins in display order: the listed ones in their order, then the others in the
 /// order they were added.
 pub fn order(coins: &mut [String]) {

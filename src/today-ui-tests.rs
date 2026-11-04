@@ -486,3 +486,57 @@ fn a_long_weather_line_stays_in_the_header_beside_today() {
         }
     }
 }
+
+#[test]
+fn a_finished_match_in_the_opened_card_shows_its_score() {
+    let mut state = today_state();
+    let feed = crate::cs2::parse_feed(&serde_json::json!({
+        "updated": NOW,
+        "matches": [{
+            "id": "m0", "begin_at": "2026-11-01T16:00:00Z", "state": "finished", "best_of": 3,
+            "tournament": "IEM", "tier": 1, "score": [2, 1],
+            "teams": [{"name": "Team Vitality", "short": "VIT"}, {"name": "MOUZ", "short": "MOUZ"}]
+        }]
+    }))
+    .unwrap();
+    let (Some(command), _) = state.cs2.sync(true, true, NOW + 3600) else {
+        panic!("a fetch is due");
+    };
+    state.cs2.accept(command.id, Ok(feed), NOW + 3600);
+    state.focus = Target::TodayCard;
+    state.activate();
+    state.reveal_focus(&at(&state).controls);
+    let texts = texts(&at(&state));
+    assert!(
+        texts.iter().any(|t| t == "Team Vitality 2–1 MOUZ"),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|t| t == "Final"), "{texts:?}");
+}
+
+#[test]
+fn the_opened_cards_prices_show_each_coins_own_mark() {
+    let mut state = today_state();
+    state.preferences.show_crypto = true;
+    state.preferences.crypto_beside = true;
+    state.preferences.crypto_coins = ["BTC", "ETH", "PEPE"].map(String::from).to_vec();
+    let mut state = {
+        state.focus = Target::TodayCard;
+        state.activate();
+        state.today_tab = Some(crate::today::Tab::Crypto);
+        state
+    };
+    state.reveal_focus(&at(&state).controls);
+    let marks: Vec<String> = at(&state)
+        .draw
+        .iter()
+        .filter_map(|draw| match draw {
+            crate::renderer::Draw::TintedImage(path, rect, ..) if rect.x < 1100. => {
+                let name = path.rsplit('/').next()?.strip_suffix(".lvec")?;
+                name.starts_with("coin").then(|| name.to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks, ["coin-btc", "coin-eth", "coins"]);
+}
